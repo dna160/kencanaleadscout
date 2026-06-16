@@ -36,7 +36,8 @@
       .sync button { border: 1px solid var(--line); background: rgba(255,255,255,.05); color: var(--paper); border-radius: 9px; padding: 7px 12px; cursor: pointer; font-weight: 600; font-size: 12.5px; }
       a.back { color: var(--muted); text-decoration: none; font-size: 13px; }
 
-      .strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+      .strip { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 16px; }
+      .stat.clock1 .v { color: var(--gold); }
       .stat { border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; background: rgba(255,255,255,.04); }
       .stat .l { color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; }
       .stat .v { font-family: var(--display); font-size: 28px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
@@ -105,6 +106,7 @@
         <div class="stat"><div class="l">Awaiting reply</div><div class="v" id="cMessaged">0</div></div>
         <div class="stat"><div class="l">Meeting</div><div class="v" id="cMeeting">0</div></div>
         <div class="stat"><div class="l">Won</div><div class="v" id="cWon">0</div></div>
+        <div class="stat clock1"><div class="l">Avg to message</div><div class="v" id="cAvgMsg">—</div></div>
       </div>
 
       <div class="filters" id="filters">
@@ -166,6 +168,27 @@
         items = data.items;
         firstLoad = false;
         render();
+        loadAvgToMessage();
+      }
+
+      async function loadAvgToMessage() {
+        try {
+          const res = await fetch("/api/stats");
+          if (!res.ok) return;
+          const data = await res.json();
+          $("cAvgMsg").textContent = fmtMs(data.funnel.median_to_message_ms);
+        } catch { /* leave previous value on transient failure */ }
+      }
+
+      function fmtMs(ms) {
+        if (ms == null) return "—";
+        const sec = Math.round(ms / 1000);
+        if (sec < 60) return sec + "s";
+        const min = Math.round(sec / 60);
+        if (min < 60) return min + "m";
+        const hr = Math.round(min / 60);
+        if (hr < 48) return hr + "h";
+        return Math.round(hr / 24) + "d";
       }
 
       function showBanner(text) {
@@ -192,8 +215,12 @@
             ? `https://wa.me/${item.wa_number.replace("+", "")}?text=${encodeURIComponent(waMessage(item.company))}`
             : "#";
           const waBtnLabel = fresh ? "Open WhatsApp" : "Reopen chat";
-          const timer = item.stage === "messaged" && item.waiting_ms != null
-            ? `<div class="timer" data-messaged-at="${item.messaged_at}">waiting ${fmtDuration(item.waiting_ms)}</div>`
+          // Clock 1 (our speed): live, per-contact, ticking from captured_at until messaged.
+          // Clock 2 (their interest): live, per-contact, ticking from messaged_at until replied.
+          const timer = fresh && item.captured_at
+            ? `<div class="timer clock1" data-captured-at="${item.captured_at}">captured ${fmtDuration(Date.now() - new Date(item.captured_at).getTime())} ago — reach out</div>`
+            : item.stage === "messaged" && item.messaged_at
+            ? `<div class="timer clock2" data-messaged-at="${item.messaged_at}">waiting ${fmtDuration(Date.now() - new Date(item.messaged_at).getTime())} for a reply</div>`
             : "";
 
           const canReply = item.stage === "messaged";
@@ -296,9 +323,15 @@
       $("refresh").addEventListener("click", load);
 
       function tickTimers() {
-        document.querySelectorAll(".timer[data-messaged-at]").forEach((el) => {
+        // Clock 1 — live, per-contact, ticking since captured_at (fresh, not yet messaged).
+        document.querySelectorAll(".timer.clock1[data-captured-at]").forEach((el) => {
+          const ms = Date.now() - new Date(el.dataset.capturedAt).getTime();
+          el.textContent = `captured ${fmtDuration(ms)} ago — reach out`;
+        });
+        // Clock 2 — live, per-contact, ticking since messaged_at (the moment the WA message was sent).
+        document.querySelectorAll(".timer.clock2[data-messaged-at]").forEach((el) => {
           const ms = Date.now() - new Date(el.dataset.messagedAt).getTime();
-          el.textContent = `waiting ${fmtDuration(ms)}`;
+          el.textContent = `waiting ${fmtDuration(ms)} for a reply`;
         });
         const s = Math.floor((Date.now() - lastSync) / 1000);
         $("syncLabel").textContent = s < 2 ? "synced just now" : `synced ${s}s ago`;
