@@ -49,16 +49,35 @@ export async function outcomeRoutes(app: FastifyInstance): Promise<void> {
     }
 
     try {
+      // Part C: logging won_wa auto-creates the pipeline item (stage='captured',
+      // captured_at, handler) — but only the *first* time a lead becomes won_wa.
+      // If a hunter re-saves an already-captured lead (e.g. fixes the number),
+      // the handler's pipeline progress (stage/messaged_at/etc.) must not reset.
       const [saved] = await db`
-        insert into outcomes (lead_id, status, wa_number, pic_name, sample_sent, updated_by, updated_at)
-        values (${lead_id}, ${status}, ${wa_number}, ${pic_name}, ${sample_sent}, ${updated_by}, now())
+        insert into outcomes (
+          lead_id, status, wa_number, pic_name, sample_sent, updated_by, updated_at,
+          stage, captured_at, handler
+        )
+        values (
+          ${lead_id}, ${status}, ${wa_number}, ${pic_name}, ${sample_sent}, ${updated_by}, now(),
+          case when ${status} = 'won_wa' then 'captured' else null end,
+          case when ${status} = 'won_wa' then now() else null end,
+          case when ${status} = 'won_wa' then 'Handler' else null end
+        )
         on conflict (lead_id) do update set
           status      = excluded.status,
           wa_number   = excluded.wa_number,
           pic_name    = excluded.pic_name,
           sample_sent = excluded.sample_sent,
           updated_by  = excluded.updated_by,
-          updated_at  = now()
+          updated_at  = now(),
+          stage       = case
+                          when excluded.status = 'won_wa' and outcomes.captured_at is null
+                            then 'captured'
+                          else outcomes.stage
+                        end,
+          captured_at = coalesce(outcomes.captured_at, case when excluded.status = 'won_wa' then now() else null end),
+          handler     = coalesce(outcomes.handler, case when excluded.status = 'won_wa' then 'Handler' else null end)
         returning *
       `;
       return { ok: true, outcome: saved };

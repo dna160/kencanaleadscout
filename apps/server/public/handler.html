@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Handler · Kencana LeadScout</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --ink: #14213d; --ink-2: #1b2949; --red: #9b2226; --gold: #bb9457; --green: #2c6e49;
+        --paper: #f5f2ec; --muted: #8a96ad; --line: rgba(255,255,255,.09);
+        --p0: #9b2226; --p1: #d18a1e; --p2: #3b6ea5; --p3: #2c6e49;
+        --display: "Space Grotesk","Inter",system-ui,sans-serif;
+        --sans: "Inter",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; }
+      body {
+        font-family: var(--sans); color: var(--paper);
+        background: radial-gradient(1200px 600px at 90% -10%, rgba(187,148,87,.14), transparent 60%), var(--ink);
+        -webkit-font-smoothing: antialiased;
+      }
+      .wrap { max-width: 880px; margin: 0 auto; padding: 22px 22px 70px; }
+      header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
+      .brand { display: flex; align-items: center; gap: 12px; }
+      .mark { width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center;
+        background: linear-gradient(135deg, var(--gold), #8a6c3f); font-family: var(--display); font-weight: 700; color: #14213d; }
+      .brand b { font-family: var(--display); font-size: 17px; } .brand span { color: var(--muted); font-size: 12.5px; display: block; }
+      .sync { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12.5px; }
+      .sync .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px rgba(44,110,73,.25); }
+      .sync button { border: 1px solid var(--line); background: rgba(255,255,255,.05); color: var(--paper); border-radius: 9px; padding: 7px 12px; cursor: pointer; font-weight: 600; font-size: 12.5px; }
+      a.back { color: var(--muted); text-decoration: none; font-size: 13px; }
+
+      .strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+      .stat { border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; background: rgba(255,255,255,.04); }
+      .stat .l { color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; }
+      .stat .v { font-family: var(--display); font-size: 28px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
+      .stat.fresh { border-color: rgba(187,148,87,.5); background: rgba(187,148,87,.1); }
+      .stat.fresh .v { color: var(--gold); }
+
+      .banner { display: none; border: 1px solid rgba(187,148,87,.5); background: rgba(187,148,87,.14); color: var(--gold);
+        border-radius: 12px; padding: 11px 16px; margin-bottom: 14px; font-weight: 600; font-size: 13.5px; animation: pop 2.4s ease; }
+      .banner.show { display: block; }
+      @keyframes pop { 0% { background: rgba(187,148,87,.35); } 100% { background: rgba(187,148,87,.14); } }
+
+      .filters { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+      .filter { border: 1px solid var(--line); background: rgba(255,255,255,.04); color: var(--muted); border-radius: 99px;
+        padding: 7px 14px; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+      .filter.active { border-color: var(--gold); color: var(--gold); background: rgba(187,148,87,.12); }
+
+      .cards { display: flex; flex-direction: column; gap: 12px; }
+      .card { border: 1px solid var(--line); border-radius: 16px; padding: 16px 18px; background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02)); }
+      .card.fresh { border-color: rgba(187,148,87,.55); background: linear-gradient(180deg, rgba(187,148,87,.14), rgba(187,148,87,.04)); }
+      .card .top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+      .card .co { font-family: var(--display); font-weight: 700; font-size: 18px; }
+      .card .meta { color: var(--muted); font-size: 13px; margin-top: 2px; }
+      .tag.prio { font-family: var(--display); font-weight: 700; font-size: 11.5px; padding: 3px 9px; border-radius: 99px; color: #fff; white-space: nowrap; }
+      .tag.prio.P0 { background: var(--p0); } .tag.prio.P1 { background: var(--p1); } .tag.prio.P2 { background: var(--p2); } .tag.prio.P3 { background: var(--p3); }
+      .stagebadge { display: inline-block; border-radius: 99px; padding: 3px 10px; font-size: 11px; font-weight: 700; letter-spacing: .3px; margin-top: 8px; }
+      .stagebadge.captured { background: rgba(187,148,87,.2); color: var(--gold); }
+      .stagebadge.messaged { background: rgba(59,110,165,.2); color: #9fc4ec; }
+      .stagebadge.replied { background: rgba(44,110,73,.22); color: #9fe0b9; }
+      .stagebadge.meeting_set { background: rgba(209,138,30,.2); color: #ecb44f; }
+      .stagebadge.won { background: rgba(44,110,73,.3); color: #c6f3d6; }
+      .stagebadge.dead { background: rgba(155,34,38,.2); color: #ff9b9b; }
+      .timer { color: var(--gold); font-size: 12.5px; font-weight: 600; margin-top: 8px; font-variant-numeric: tabular-nums; }
+
+      .row { display: flex; gap: 9px; margin-top: 13px; flex-wrap: wrap; }
+      .btn { border: none; cursor: pointer; border-radius: 11px; padding: 10px 14px; font-weight: 700; font-size: 13px; font-family: var(--sans); }
+      .btn.wa { background: linear-gradient(135deg, var(--green), #245a3c); color: #fff; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
+      .btn.ghost { background: rgba(255,255,255,.06); color: var(--paper); border: 1px solid var(--line); }
+      .btn.reply { background: rgba(44,110,73,.18); color: #9fe0b9; border: 1px solid rgba(44,110,73,.5); }
+      .btn.meeting { background: rgba(209,138,30,.16); color: #ecb44f; border: 1px solid rgba(209,138,30,.5); }
+      .btn.won { background: rgba(44,110,73,.3); color: #c6f3d6; border: 1px solid rgba(44,110,73,.6); }
+      .btn.dead { background: rgba(155,34,38,.16); color: #ff9b9b; border: 1px solid rgba(155,34,38,.5); }
+      .btn:disabled { opacity: .35; cursor: not-allowed; }
+
+      .meetingRow { display: none; gap: 8px; margin-top: 10px; align-items: center; }
+      .meetingRow.show { display: flex; flex-wrap: wrap; }
+      .meetingRow input[type="datetime-local"] { background: rgba(255,255,255,.05); border: 1px solid var(--line); color: var(--paper);
+        border-radius: 9px; padding: 8px 10px; font-family: var(--sans); font-size: 13px; }
+
+      .note { width: 100%; margin-top: 11px; background: rgba(255,255,255,.04); border: 1px solid var(--line); border-radius: 10px;
+        padding: 9px 11px; color: var(--paper); font-family: var(--sans); font-size: 13px; resize: vertical; min-height: 36px; }
+      .note::placeholder { color: #5e6a82; }
+      .empty { color: var(--muted); font-size: 14px; text-align: center; padding: 50px 0; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <div class="brand"><div class="mark">H</div><div><b>Handler Cockpit</b><span>Kencana LeadScout · message → reply → meeting</span></div></div>
+        <div class="sync"><span class="dot"></span><span id="syncLabel">synced just now</span><button id="refresh">Refresh</button><a class="back" href="/champion">Champion ↗</a></div>
+      </header>
+
+      <div class="banner" id="banner"></div>
+
+      <div class="strip">
+        <div class="stat fresh"><div class="l">Fresh</div><div class="v" id="cFresh">0</div></div>
+        <div class="stat"><div class="l">Awaiting reply</div><div class="v" id="cMessaged">0</div></div>
+        <div class="stat"><div class="l">Meeting</div><div class="v" id="cMeeting">0</div></div>
+        <div class="stat"><div class="l">Won</div><div class="v" id="cWon">0</div></div>
+      </div>
+
+      <div class="filters" id="filters">
+        <div class="filter active" data-stage="">All</div>
+        <div class="filter" data-stage="captured">Fresh</div>
+        <div class="filter" data-stage="messaged">Awaiting reply</div>
+        <div class="filter" data-stage="replied">Replied</div>
+        <div class="filter" data-stage="meeting_set">Meeting set</div>
+        <div class="filter" data-stage="won">Won</div>
+        <div class="filter" data-stage="dead">Dead</div>
+      </div>
+
+      <div class="cards" id="cards"><div class="empty">Loading pipeline…</div></div>
+    </div>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const POLL_MS = 8000;
+      let items = [];
+      let activeFilter = "";
+      let knownFreshIds = new Set();
+      let firstLoad = true;
+      let lastSync = Date.now();
+
+      const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+      const STAGE_LABEL = { captured: "Fresh", messaged: "Messaged", replied: "Replied", meeting_set: "Meeting set", won: "Won", dead: "Dead" };
+
+      function fmtDuration(ms) {
+        const sec = Math.floor(ms / 1000);
+        const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+        if (h > 0) return `${h}h ${m}m`;
+        if (m > 0) return `${m}m ${s}s`;
+        return `${s}s`;
+      }
+
+      function waMessage(company) {
+        const text = `Selamat pagi 🙏 Saya dari Kencana Panelindo, pabrik ACP lokal pertama di Indonesia (TKDN 75%, fire-rated FR A2). Terima kasih sudah bersedia kami hubungi untuk *${company}*. Boleh saya kirimkan company profile + contoh proyek, dan sample gratis ke kantor? Tinggal konfirmasi alamatnya 📦`;
+        return text;
+      }
+
+      async function load() {
+        let data;
+        try {
+          const res = await fetch("/api/pipeline");
+          if (!res.ok) throw new Error();
+          data = await res.json();
+        } catch { $("syncLabel").textContent = "offline — retrying"; return; }
+
+        lastSync = Date.now();
+        const freshNow = new Set(data.items.filter((i) => i.stage === "captured").map((i) => i.lead_id));
+        if (!firstLoad) {
+          const newOnes = [...freshNow].filter((id) => !knownFreshIds.has(id));
+          if (newOnes.length) {
+            const item = data.items.find((i) => i.lead_id === newOnes[0]);
+            showBanner(`New lead: ${item.company} — reach out.`);
+          }
+        }
+        knownFreshIds = freshNow;
+        items = data.items;
+        firstLoad = false;
+        render();
+      }
+
+      function showBanner(text) {
+        const b = $("banner");
+        b.textContent = text;
+        b.classList.add("show");
+        clearTimeout(b._t);
+        b._t = setTimeout(() => b.classList.remove("show"), 6000);
+      }
+
+      function render() {
+        $("cFresh").textContent = items.filter((i) => i.stage === "captured").length;
+        $("cMessaged").textContent = items.filter((i) => i.stage === "messaged").length;
+        $("cMeeting").textContent = items.filter((i) => i.stage === "meeting_set").length;
+        $("cWon").textContent = items.filter((i) => i.stage === "won").length;
+
+        const list = activeFilter ? items.filter((i) => i.stage === activeFilter) : items;
+        const cards = $("cards");
+        if (!list.length) { cards.innerHTML = '<div class="empty">Nothing here yet.</div>'; return; }
+
+        cards.innerHTML = list.map((item) => {
+          const fresh = item.stage === "captured";
+          const waHref = item.wa_number
+            ? `https://wa.me/${item.wa_number.replace("+", "")}?text=${encodeURIComponent(waMessage(item.company))}`
+            : "#";
+          const waBtnLabel = fresh ? "Open WhatsApp" : "Reopen chat";
+          const timer = item.stage === "messaged" && item.waiting_ms != null
+            ? `<div class="timer" data-messaged-at="${item.messaged_at}">waiting ${fmtDuration(item.waiting_ms)}</div>`
+            : "";
+
+          const canReply = item.stage === "messaged";
+          const canMeeting = item.stage === "replied";
+          const canWon = item.stage === "meeting_set";
+          const canDead = item.stage !== "won" && item.stage !== "dead";
+
+          return `<div class="card ${fresh ? "fresh" : ""}" data-id="${esc(item.lead_id)}">
+            <div class="top">
+              <div>
+                <div class="co">${esc(item.company)}</div>
+                <div class="meta">${esc(item.ask_for || "—")} · ${esc(item.town || "")}${item.wa_number ? " · " + esc(item.wa_number) : ""}</div>
+                <span class="stagebadge ${esc(item.stage)}">${STAGE_LABEL[item.stage] || item.stage}</span>
+              </div>
+              <span class="tag prio ${esc(item.priority)}">${esc(item.priority)}</span>
+            </div>
+            ${timer}
+            <div class="row">
+              <a class="btn wa" target="_blank" rel="noopener" data-action="open-wa" href="${waHref}" ${item.wa_number ? "" : 'aria-disabled="true"'}>💬 ${waBtnLabel}</a>
+              <button class="btn reply" data-action="advance" data-to="replied" ${canReply ? "" : "disabled"}>Got a reply</button>
+              <button class="btn meeting" data-action="show-meeting" ${canMeeting ? "" : "disabled"}>Set meeting</button>
+              <button class="btn won" data-action="advance" data-to="won" ${canWon ? "" : "disabled"}>Won</button>
+              <button class="btn dead" data-action="advance" data-to="dead" ${canDead ? "" : "disabled"}>Dead</button>
+            </div>
+            <div class="meetingRow" id="meeting-${esc(item.lead_id)}">
+              <input type="datetime-local" />
+              <button class="btn ghost" data-action="confirm-meeting">Confirm meeting</button>
+            </div>
+            <textarea class="note" placeholder="Note (e.g. asked for price list, follow up Tue)" data-action="note">${esc(item.pipe_note || "")}</textarea>
+          </div>`;
+        }).join("");
+
+        wireCards();
+      }
+
+      function wireCards() {
+        document.querySelectorAll(".card").forEach((card) => {
+          const leadId = card.dataset.id;
+
+          const waLink = card.querySelector('[data-action="open-wa"]');
+          waLink.addEventListener("click", async () => {
+            const item = items.find((i) => i.lead_id === leadId);
+            if (item && item.stage === "captured") {
+              await advance(leadId, "messaged");
+            }
+          });
+
+          card.querySelectorAll('[data-action="advance"]').forEach((btn) =>
+            btn.addEventListener("click", () => advance(leadId, btn.dataset.to)),
+          );
+
+          const showMeetingBtn = card.querySelector('[data-action="show-meeting"]');
+          if (showMeetingBtn) {
+            showMeetingBtn.addEventListener("click", () => {
+              card.querySelector(`#meeting-${cssEscape(leadId)}`).classList.add("show");
+            });
+          }
+
+          const confirmBtn = card.querySelector('[data-action="confirm-meeting"]');
+          if (confirmBtn) {
+            confirmBtn.addEventListener("click", () => {
+              const input = card.querySelector('input[type="datetime-local"]');
+              if (!input.value) { input.focus(); return; }
+              advance(leadId, "meeting_set", new Date(input.value).toISOString());
+            });
+          }
+
+          const note = card.querySelector('[data-action="note"]');
+          note.addEventListener("change", () => {
+            const item = items.find((i) => i.lead_id === leadId);
+            advance(leadId, item.stage, undefined, note.value);
+          });
+        });
+      }
+
+      function cssEscape(s) { return String(s).replace(/[^a-zA-Z0-9_-]/g, "_"); }
+
+      async function advance(lead_id, to_stage, meeting_at, pipe_note) {
+        try {
+          const res = await fetch("/api/pipeline/advance", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ lead_id, to_stage, meeting_at, pipe_note }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) { alert(data.error || "Could not update."); return; }
+          await load();
+        } catch { alert("Network error — try again."); }
+      }
+
+      $("filters").addEventListener("click", (e) => {
+        const f = e.target.closest(".filter");
+        if (!f) return;
+        document.querySelectorAll(".filter").forEach((x) => x.classList.remove("active"));
+        f.classList.add("active");
+        activeFilter = f.dataset.stage;
+        render();
+      });
+
+      $("refresh").addEventListener("click", load);
+
+      function tickTimers() {
+        document.querySelectorAll(".timer[data-messaged-at]").forEach((el) => {
+          const ms = Date.now() - new Date(el.dataset.messagedAt).getTime();
+          el.textContent = `waiting ${fmtDuration(ms)}`;
+        });
+        const s = Math.floor((Date.now() - lastSync) / 1000);
+        $("syncLabel").textContent = s < 2 ? "synced just now" : `synced ${s}s ago`;
+      }
+
+      load();
+      setInterval(load, POLL_MS);
+      setInterval(tickTimers, 1000);
+    </script>
+  </body>
+</html>

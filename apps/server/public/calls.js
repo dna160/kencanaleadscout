@@ -16,6 +16,8 @@
   };
 
   const state = { role: null, day: null, leads: [], idx: 0 };
+  const DISPLAY_ROLE = { "Rep A": "Hunter A", "Rep B": "Hunter B" };
+  const displayRole = (role) => DISPLAY_ROLE[role] || role;
 
   /* ---------- view switching ---------- */
   function show(id) {
@@ -30,6 +32,7 @@
   );
   function pickRole(role) {
     if (role === "Champion") { location.href = "/champion"; return; }
+    if (role === "Handler") { location.href = "/handler"; return; }
     localStorage.setItem(ROLE_KEY, role);
     state.role = role;
     enterDays();
@@ -38,7 +41,7 @@
 
   /* ---------- day picker ---------- */
   async function enterDays() {
-    $("dWho").textContent = state.role;
+    $("dWho").textContent = displayRole(state.role);
     show("days");
     const grid = $("dayGrid");
     grid.innerHTML = "";
@@ -133,7 +136,7 @@
     const total = state.leads.length;
     const worked = state.leads.filter((l) => l.outcome).length;
 
-    $("cWho").textContent = `${state.role.toUpperCase()} · DAY ${state.day}`;
+    $("cWho").textContent = `${displayRole(state.role).toUpperCase()} · DAY ${state.day}`;
     $("cIdx").textContent = String(state.idx + 1).padStart(2, "0");
     $("cTotal").textContent = total;
     $("cFill").style.width = `${Math.round((worked / total) * 100)}%`;
@@ -311,7 +314,7 @@
     const dialed = state.leads.filter((l) => l.outcome).length;
     const captured = state.leads.filter((l) => l.outcome && l.outcome.status === "won_wa").length;
     const rate = dialed ? Math.round((captured / dialed) * 100) : 0;
-    $("xWho").textContent = `${state.role.toUpperCase()} · DAY ${state.day}`;
+    $("xWho").textContent = `${displayRole(state.role).toUpperCase()} · DAY ${state.day}`;
     $("xDialed").textContent = dialed;
     $("xCaptured").textContent = captured;
     $("xRate").textContent = rate + "%";

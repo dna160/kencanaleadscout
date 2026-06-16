@@ -100,6 +100,16 @@
       .badge.scraped { background: rgba(187,148,87,.2); color: var(--gold); }
       .tag.prio { font-family: var(--display); font-weight: 700; font-size: 11.5px; padding: 2px 8px; border-radius: 99px; color: #fff; }
       .tag.prio.P0 { background: var(--p0); } .tag.prio.P1 { background: var(--p1); } .tag.prio.P2 { background: var(--p2); } .tag.prio.P3 { background: var(--p3); }
+
+      .funnel { display: flex; align-items: stretch; gap: 6px; margin-top: 6px; }
+      .fstep { flex: 1; text-align: center; padding: 12px 6px; border-radius: 12px; border: 1px solid var(--line); background: rgba(255,255,255,.03); }
+      .fstep .v { font-family: var(--display); font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+      .fstep .l { color: var(--muted); font-size: 11px; margin-top: 2px; text-transform: uppercase; letter-spacing: .5px; }
+      .farrow { display: flex; align-items: center; color: var(--muted); font-size: 16px; padding: 0 2px; }
+      .clocks { display: flex; gap: 18px; margin-top: 14px; flex-wrap: wrap; }
+      .clock { color: var(--muted); font-size: 12.5px; }
+      .clock b { color: var(--gold); font-family: var(--display); font-size: 14px; }
+      .tierreply { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 14px; }
     </style>
   </head>
   <body>
@@ -116,7 +126,21 @@
         <div class="kpi"><div class="l">Samples Sent</div><div class="v" id="kSamples">—</div><div class="s">ACP + spec sheet</div></div>
       </div>
 
-      <div class="cols">
+      <div class="panel mt">
+        <h3>Pipeline funnel</h3>
+        <p class="cap">Captured → messaged → replied → meeting → won. The two clocks track our speed vs. their interest.</p>
+        <div class="funnel" id="funnel"></div>
+        <div class="clocks">
+          <div class="clock">Clock 1 (our speed) — median to message: <b id="medMessage">—</b></div>
+          <div class="clock">Clock 2 (their interest) — median to reply: <b id="medReply">—</b></div>
+        </div>
+        <p class="cap" style="margin-top:10px">Reply time is handler-marked and approximate — trust the relative comparison across tiers, not the absolute number.</p>
+        <h3 style="margin-top:18px">By tier — reply rate</h3>
+        <p class="cap">Which segment actually engages once messaged — what Phase 2 should scale.</p>
+        <div class="tierreply" id="tierReply"></div>
+      </div>
+
+      <div class="cols mt">
         <div class="panel">
           <h3>By rep</h3>
           <p class="cap">Who's converting — dialed, captured, capture rate.</p>
@@ -250,8 +274,40 @@
         URL.revokeObjectURL(url);
       }
 
+      function fmtMs(ms) {
+        if (ms == null) return "—";
+        const sec = Math.round(ms / 1000);
+        if (sec < 60) return sec + "s";
+        const min = Math.round(sec / 60);
+        if (min < 60) return min + "m";
+        const hr = Math.round(min / 60);
+        if (hr < 48) return hr + "h";
+        return Math.round(hr / 24) + "d";
+      }
+
+      function renderFunnel(f) {
+        const steps = [
+          ["Captured", f.captured], ["Messaged", f.messaged], ["Replied", f.replied],
+          ["Meeting", f.meeting_set], ["Won", f.won],
+        ];
+        $("funnel").innerHTML = steps.map(([label, v], i) =>
+          (i > 0 ? '<div class="farrow">→</div>' : "") +
+          `<div class="fstep"><div class="v">${v}</div><div class="l">${label}</div></div>`
+        ).join("");
+        $("medMessage").textContent = fmtMs(f.median_to_message_ms);
+        $("medReply").textContent = fmtMs(f.median_to_reply_ms);
+
+        const tiers = ["P0", "P1", "P2", "P3"];
+        const tmap = Object.fromEntries(f.by_tier_reply_rate.map((x) => [x.priority, x]));
+        $("tierReply").innerHTML = tiers.map((p) => {
+          const x = tmap[p] || { messaged: 0, replied: 0, reply_rate: 0 };
+          return `<div class="tcard ${p}"><span class="tag">${p}</span><div class="rt">${x.messaged ? fmtPct(x.reply_rate) : "—"}</div><div class="sub">${x.replied}/${x.messaged} replied</div></div>`;
+        }).join("");
+      }
+
       function render(d) {
         const t = d.totals;
+        renderFunnel(d.funnel);
         $("kDialed").textContent = t.dialed;
         $("kAssigned").textContent = `of ${t.assigned} assigned`;
         $("kCaptured").textContent = t.captured;

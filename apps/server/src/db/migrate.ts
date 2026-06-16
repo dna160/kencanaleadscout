@@ -40,6 +40,15 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
     )
   `;
 
+  // Part C — pipeline/handler additions (microPRD §24). Additive only; never drop.
+  await db`alter table outcomes add column if not exists stage       text default 'captured'`;
+  await db`alter table outcomes add column if not exists handler     text`;
+  await db`alter table outcomes add column if not exists captured_at timestamptz`;
+  await db`alter table outcomes add column if not exists messaged_at timestamptz`;
+  await db`alter table outcomes add column if not exists replied_at  timestamptz`;
+  await db`alter table outcomes add column if not exists meeting_at  timestamptz`;
+  await db`alter table outcomes add column if not exists pipe_note   text`;
+
   await db`
     create table if not exists enrichments (
       company_norm   text primary key,
@@ -56,6 +65,7 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
   // Helpful indexes for the cockpit + champion queries.
   await db`create index if not exists leads_rep_day_idx on leads (rep, day)`;
   await db`create index if not exists outcomes_status_idx on outcomes (status)`;
+  await db`create index if not exists outcomes_stage_idx on outcomes (stage)`;
 }
 
 // Allow `tsx src/db/migrate.ts` as a one-off.

@@ -66,6 +66,44 @@ export async function statsRoutes(app: FastifyInstance): Promise<void> {
       limit 15
     `;
 
+    // [C] Funnel (microPRD §23, §27): cumulative counts (has the item ever
+    // reached this stage), not "currently sitting at this stage."
+    const [funnelRow] = await db<
+      {
+        captured: string;
+        messaged: string;
+        replied: string;
+        meeting_set: string;
+        won: string;
+        dead: string;
+        median_to_message_ms: string | null;
+        median_to_reply_ms: string | null;
+      }[]
+    >`
+      select
+        (select count(*) from outcomes where status = 'won_wa')        as captured,
+        (select count(*) from outcomes where messaged_at is not null)  as messaged,
+        (select count(*) from outcomes where replied_at is not null)   as replied,
+        (select count(*) from outcomes where meeting_at is not null)   as meeting_set,
+        (select count(*) from outcomes where stage = 'won')            as won,
+        (select count(*) from outcomes where stage = 'dead')           as dead,
+        (select percentile_cont(0.5) within group (order by extract(epoch from (messaged_at - captured_at)) * 1000)
+           from outcomes where messaged_at is not null and captured_at is not null) as median_to_message_ms,
+        (select percentile_cont(0.5) within group (order by extract(epoch from (replied_at - messaged_at)) * 1000)
+           from outcomes where replied_at is not null and messaged_at is not null)  as median_to_reply_ms
+    `;
+
+    const byTierReply = await db<{ priority: string; messaged: string; replied: string }[]>`
+      select l.priority,
+             count(*) filter (where o.messaged_at is not null) as messaged,
+             count(*) filter (where o.replied_at is not null)  as replied
+      from outcomes o
+      join leads l on l.id = o.lead_id
+      where o.status = 'won_wa'
+      group by l.priority
+      order by l.priority
+    `;
+
     const assigned = Number(totalsRow?.assigned ?? 0);
     const dialed = Number(totalsRow?.dialed ?? 0);
     const captured = Number(totalsRow?.captured ?? 0);
@@ -96,6 +134,21 @@ export async function statsRoutes(app: FastifyInstance): Promise<void> {
         rep: r.rep,
         updated_at: r.updated_at,
       })),
+      funnel: {
+        captured: Number(funnelRow?.captured ?? 0),
+        messaged: Number(funnelRow?.messaged ?? 0),
+        replied: Number(funnelRow?.replied ?? 0),
+        meeting_set: Number(funnelRow?.meeting_set ?? 0),
+        won: Number(funnelRow?.won ?? 0),
+        dead: Number(funnelRow?.dead ?? 0),
+        median_to_message_ms: funnelRow?.median_to_message_ms == null ? null : Math.round(Number(funnelRow.median_to_message_ms)),
+        median_to_reply_ms: funnelRow?.median_to_reply_ms == null ? null : Math.round(Number(funnelRow.median_to_reply_ms)),
+        by_tier_reply_rate: byTierReply.map((r) => {
+          const messaged = Number(r.messaged);
+          const replied = Number(r.replied);
+          return { priority: r.priority, messaged, replied, reply_rate: rate(replied, messaged) };
+        }),
+      },
     };
   });
 }
