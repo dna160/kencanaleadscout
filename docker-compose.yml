@@ -1,0 +1,38 @@
+# Local stack: Postgres + the app, mirroring the Railway topology.
+# Usage:  docker compose up --build   then open http://localhost:8080
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: kencana
+      POSTGRES_PASSWORD: kencana
+      POSTGRES_DB: leadscout
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kencana -d leadscout"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: production
+      PORT: 8080
+      DATABASE_URL: postgres://kencana:kencana@db:5432/leadscout
+      CONCURRENCY: "10"
+      REQUEST_TIMEOUT_MS: "12000"
+      MAX_PAGES_PER_SITE: "4"
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:

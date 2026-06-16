@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Champion · Kencana LeadScout</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --ink: #14213d; --ink-2: #1b2949; --red: #9b2226; --gold: #bb9457; --green: #2c6e49;
+        --paper: #f5f2ec; --muted: #8a96ad; --line: rgba(255,255,255,.09);
+        --p0: #9b2226; --p1: #d18a1e; --p2: #3b6ea5; --p3: #2c6e49;
+        --display: "Space Grotesk","Inter",system-ui,sans-serif;
+        --sans: "Inter",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; }
+      body {
+        font-family: var(--sans); color: var(--paper);
+        background: radial-gradient(1200px 600px at 90% -10%, rgba(187,148,87,.14), transparent 60%), var(--ink);
+        -webkit-font-smoothing: antialiased;
+      }
+      .wrap { max-width: 1100px; margin: 0 auto; padding: 22px 22px 70px; }
+      header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 26px; flex-wrap: wrap; }
+      .brand { display: flex; align-items: center; gap: 12px; }
+      .mark { width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center;
+        background: linear-gradient(135deg, var(--red), #7a1a1d); font-family: var(--display); font-weight: 700; color: #fff; }
+      .brand b { font-family: var(--display); font-size: 17px; } .brand span { color: var(--muted); font-size: 12.5px; display: block; }
+      .sync { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12.5px; }
+      .sync .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px rgba(44,110,73,.25); }
+      .sync button { border: 1px solid var(--line); background: rgba(255,255,255,.05); color: var(--paper); border-radius: 9px; padding: 7px 12px; cursor: pointer; font-weight: 600; font-size: 12.5px; }
+
+      .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 18px; }
+      .kpi { border: 1px solid var(--line); border-radius: 18px; padding: 20px; position: relative; overflow: hidden;
+        background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02)); }
+      .kpi .l { color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: .8px; text-transform: uppercase; }
+      .kpi .v { font-family: var(--display); font-size: 40px; font-weight: 700; line-height: 1.1; margin-top: 8px; font-variant-numeric: tabular-nums; }
+      .kpi .s { color: var(--muted); font-size: 12.5px; margin-top: 4px; }
+      .kpi.hero { background: linear-gradient(135deg, rgba(187,148,87,.22), rgba(187,148,87,.06)); border-color: rgba(187,148,87,.4); }
+      .kpi.hero .v { color: var(--gold); font-size: 52px; }
+
+      .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+      @media (max-width: 820px) { .kpis { grid-template-columns: repeat(2, 1fr); } .cols { grid-template-columns: 1fr; } }
+      .panel { border: 1px solid var(--line); border-radius: 18px; padding: 20px; background: linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.015)); }
+      .panel h3 { font-family: var(--display); font-size: 16px; margin: 0 0 4px; }
+      .panel .cap { color: var(--muted); font-size: 12.5px; margin: 0 0 16px; }
+
+      .bars { display: flex; flex-direction: column; gap: 14px; }
+      .barrow .top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+      .barrow .nm { font-weight: 600; font-size: 14px; } .barrow .rt { font-family: var(--display); font-size: 15px; font-variant-numeric: tabular-nums; }
+      .barrow .track { height: 11px; border-radius: 99px; background: rgba(255,255,255,.07); overflow: hidden; }
+      .barrow .track > div { height: 100%; border-radius: 99px; transition: width .6s cubic-bezier(.2,.8,.2,1); }
+      .barrow .sub { color: var(--muted); font-size: 11.5px; margin-top: 5px; font-variant-numeric: tabular-nums; }
+
+      .tiergrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+      .tcard { border: 1px solid var(--line); border-radius: 13px; padding: 14px; text-align: center; }
+      .tcard .tag { font-family: var(--display); font-weight: 700; font-size: 13px; padding: 3px 9px; border-radius: 99px; color: #fff; display: inline-block; }
+      .tcard.P0 .tag { background: var(--p0); } .tcard.P1 .tag { background: var(--p1); } .tcard.P2 .tag { background: var(--p2); } .tcard.P3 .tag { background: var(--p3); }
+      .tcard .rt { font-family: var(--display); font-size: 28px; font-weight: 700; margin: 10px 0 2px; font-variant-numeric: tabular-nums; }
+      .tcard .sub { color: var(--muted); font-size: 11.5px; }
+      .scale-note { color: var(--gold); font-size: 12px; margin-top: 14px; font-weight: 500; }
+
+      .spark { display: flex; align-items: flex-end; gap: 6px; height: 110px; padding-top: 8px; }
+      .spark .col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; height: 100%; justify-content: flex-end; }
+      .spark .bar { width: 100%; border-radius: 6px 6px 2px 2px; background: linear-gradient(180deg, var(--green), #245a3c); min-height: 3px; transition: height .5s ease; }
+      .spark .d { color: var(--muted); font-size: 10.5px; } .spark .v { font-size: 11px; font-weight: 600; }
+
+      .feed { display: flex; flex-direction: column; gap: 9px; max-height: 360px; overflow-y: auto; }
+      .feed .item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 13px;
+        border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.03); }
+      .feed .item.new { animation: pop 1.6s ease; }
+      @keyframes pop { 0% { background: rgba(44,110,73,.3); } 100% { background: rgba(255,255,255,.03); } }
+      .feed .co { font-weight: 600; font-size: 14px; } .feed .wa { color: #9fe0b9; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+      .feed .rep { color: var(--muted); font-size: 12px; } .feed .ago { color: var(--muted); font-size: 11.5px; white-space: nowrap; }
+      .empty { color: var(--muted); font-size: 13.5px; text-align: center; padding: 26px 0; }
+      a.back { color: var(--muted); text-decoration: none; font-size: 13px; }
+      .mt { margin-top: 14px; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <div class="brand"><div class="mark">★</div><div><b>Champion Dashboard</b><span>Kencana LeadScout · live</span></div></div>
+        <div class="sync"><span class="dot"></span><span id="syncLabel">synced just now</span><button id="refresh">Refresh</button><a class="back" href="/calls">Cockpit ↗</a></div>
+      </header>
+
+      <div class="kpis">
+        <div class="kpi"><div class="l">Dialed</div><div class="v" id="kDialed">—</div><div class="s" id="kAssigned">of 600 assigned</div></div>
+        <div class="kpi"><div class="l">WA Captured</div><div class="v" id="kCaptured" style="color:var(--green)">—</div><div class="s">WhatsApp-ready</div></div>
+        <div class="kpi hero"><div class="l">Capture Rate</div><div class="v" id="kRate">—</div><div class="s">captured / dialed</div></div>
+        <div class="kpi"><div class="l">Samples Sent</div><div class="v" id="kSamples">—</div><div class="s">ACP + spec sheet</div></div>
+      </div>
+
+      <div class="cols">
+        <div class="panel">
+          <h3>By rep</h3>
+          <p class="cap">Who's converting — dialed, captured, capture rate.</p>
+          <div class="bars" id="byRep"><div class="empty">No calls logged yet.</div></div>
+        </div>
+        <div class="panel">
+          <h3>By tier</h3>
+          <p class="cap">Which segment converts — the strategic readout.</p>
+          <div class="tiergrid" id="byTier"></div>
+          <div class="scale-note">↑ Highest-converting tier = what Phase 2 should scale.</div>
+        </div>
+      </div>
+
+      <div class="cols mt">
+        <div class="panel">
+          <h3>By day</h3>
+          <p class="cap">Captures across the 10-day pilot.</p>
+          <div class="spark" id="byDay"></div>
+        </div>
+        <div class="panel">
+          <h3>Live capture feed</h3>
+          <p class="cap">Last 15 WhatsApp captures.</p>
+          <div class="feed" id="feed"><div class="empty">Waiting for the first capture…</div></div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const POLL_MS = 8000;
+      let lastSync = Date.now();
+      let knownWa = new Set();
+      let firstLoad = true;
+
+      const fmtPct = (r) => Math.round(r * 100) + "%";
+      const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+      function ago(iso) {
+        const sec = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+        if (sec < 60) return sec + "s ago";
+        const m = Math.floor(sec / 60); if (m < 60) return m + "m ago";
+        const h = Math.floor(m / 60); if (h < 24) return h + "h ago";
+        return Math.floor(h / 24) + "d ago";
+      }
+
+      async function load() {
+        let data;
+        try {
+          const res = await fetch("/api/stats");
+          if (!res.ok) throw new Error();
+          data = await res.json();
+        } catch { $("syncLabel").textContent = "offline — retrying"; return; }
+
+        lastSync = Date.now();
+        render(data);
+        firstLoad = false;
+      }
+
+      function render(d) {
+        const t = d.totals;
+        $("kDialed").textContent = t.dialed;
+        $("kAssigned").textContent = `of ${t.assigned} assigned`;
+        $("kCaptured").textContent = t.captured;
+        $("kRate").textContent = fmtPct(t.capture_rate);
+        $("kSamples").textContent = t.samples;
+
+        // By rep
+        const repWrap = $("byRep");
+        if (!d.by_rep.length) repWrap.innerHTML = '<div class="empty">No calls logged yet.</div>';
+        else {
+          const maxRate = Math.max(0.001, ...d.by_rep.map((r) => r.capture_rate));
+          repWrap.innerHTML = d.by_rep.map((r) => barRow(r.rep, r.capture_rate, maxRate, `${r.captured} captured · ${r.dialed} dialed`, "var(--green)")).join("");
+        }
+
+        // By tier
+        const tiers = ["P0", "P1", "P2", "P3"];
+        const tmap = Object.fromEntries(d.by_tier.map((x) => [x.priority, x]));
+        $("byTier").innerHTML = tiers.map((p) => {
+          const x = tmap[p] || { dialed: 0, captured: 0, capture_rate: 0 };
+          return `<div class="tcard ${p}"><span class="tag">${p}</span><div class="rt">${x.dialed ? fmtPct(x.capture_rate) : "—"}</div><div class="sub">${x.captured}/${x.dialed}</div></div>`;
+        }).join("");
+
+        // By day
+        const maxCap = Math.max(1, ...d.by_day.map((x) => x.captured));
+        const dmap = Object.fromEntries(d.by_day.map((x) => [x.day, x]));
+        let sp = "";
+        for (let day = 1; day <= 10; day++) {
+          const x = dmap[day] || { captured: 0, dialed: 0 };
+          const h = Math.round((x.captured / maxCap) * 90);
+          sp += `<div class="col"><div class="v">${x.captured || ""}</div><div class="bar" style="height:${h}px"></div><div class="d">${day}</div></div>`;
+        }
+        $("byDay").innerHTML = sp;
+
+        // Feed
+        const feed = $("feed");
+        if (!d.recent.length) feed.innerHTML = '<div class="empty">Waiting for the first capture…</div>';
+        else {
+          feed.innerHTML = d.recent.map((r) => {
+            const key = (r.wa_number || "") + r.updated_at;
+            const isNew = !firstLoad && !knownWa.has(key);
+            return `<div class="item ${isNew ? "new" : ""}"><div><div class="co">${esc(r.company)}</div><div class="wa">${esc(r.wa_number)}</div></div><div style="text-align:right"><div class="rep">${esc(r.rep)}</div><div class="ago">${ago(r.updated_at)}</div></div></div>`;
+          }).join("");
+          knownWa = new Set(d.recent.map((r) => (r.wa_number || "") + r.updated_at));
+        }
+      }
+
+      function barRow(name, rate, maxRate, sub, color) {
+        const w = Math.round((rate / maxRate) * 100);
+        return `<div class="barrow"><div class="top"><span class="nm">${esc(name)}</span><span class="rt">${fmtPct(rate)}</span></div><div class="track"><div style="width:${w}%;background:${color}"></div></div><div class="sub">${esc(sub)}</div></div>`;
+      }
+
+      function tickSync() {
+        const s = Math.floor((Date.now() - lastSync) / 1000);
+        $("syncLabel").textContent = s < 2 ? "synced just now" : `synced ${s}s ago`;
+      }
+
+      $("refresh").addEventListener("click", load);
+      load();
+      setInterval(load, POLL_MS);
+      setInterval(tickSync, 1000);
+    </script>
+  </body>
+</html>

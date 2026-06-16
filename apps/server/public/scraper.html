@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>WA Harvest · Kencana LeadScout</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --ink: #14213d; --ink-2: #1d2c4d; --red: #9b2226; --gold: #bb9457; --green: #2c6e49;
+        --paper: #f5f2ec; --muted: #9aa6bd; --line: rgba(255,255,255,.09);
+        --display: "Space Grotesk","Inter",system-ui,sans-serif;
+        --sans: "Inter",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; }
+      body {
+        font-family: var(--sans); color: var(--paper);
+        background: radial-gradient(1100px 600px at 85% -10%, rgba(187,148,87,.16), transparent 60%), var(--ink);
+        -webkit-font-smoothing: antialiased;
+      }
+      .wrap { max-width: 720px; margin: 0 auto; padding: 28px 22px 64px; }
+      a.back { color: var(--muted); text-decoration: none; font-size: 13px; font-weight: 500; }
+      a.back:hover { color: var(--paper); }
+      .head { margin: 26px 0 6px; }
+      .tag { font-size: 12px; font-weight: 600; letter-spacing: 1.4px; text-transform: uppercase; color: var(--gold); }
+      h1 { font-family: var(--display); font-size: clamp(28px, 5vw, 40px); margin: 6px 0 8px; letter-spacing: -.4px; }
+      .lede { color: #c1cad9; font-size: 15px; line-height: 1.55; margin: 0 0 28px; max-width: 56ch; }
+      .card {
+        background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
+        border: 1px solid var(--line); border-radius: 20px; padding: 26px;
+      }
+      .drop {
+        border: 2px dashed rgba(187,148,87,.45); border-radius: 16px; padding: 38px 22px; text-align: center;
+        cursor: pointer; transition: .18s; background: rgba(187,148,87,.04);
+      }
+      .drop:hover, .drop.over { border-color: var(--gold); background: rgba(187,148,87,.1); }
+      .drop .ic { font-size: 34px; }
+      .drop b { font-family: var(--display); display: block; font-size: 18px; margin: 10px 0 4px; }
+      .drop small { color: var(--muted); }
+      .file { margin-top: 16px; display: none; align-items: center; justify-content: space-between; gap: 12px;
+        background: rgba(255,255,255,.05); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; }
+      .file.show { display: flex; }
+      .file .name { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .file .clear { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 18px; }
+      button.primary {
+        margin-top: 20px; width: 100%; border: none; cursor: pointer; border-radius: 13px; padding: 16px;
+        font-family: var(--display); font-weight: 600; font-size: 17px; color: #fff;
+        background: linear-gradient(135deg, var(--red), #7a1a1d); box-shadow: 0 10px 26px rgba(155,34,38,.35);
+        transition: .15s;
+      }
+      button.primary:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
+      button.primary:not(:disabled):hover { transform: translateY(-2px); }
+      .err { margin-top: 14px; color: #ffb4b4; background: rgba(155,34,38,.18); border: 1px solid rgba(155,34,38,.4);
+        border-radius: 11px; padding: 12px 14px; font-size: 14px; display: none; }
+      .err.show { display: block; }
+      .progress { margin-top: 26px; display: none; }
+      .progress.show { display: block; }
+      .bar { height: 14px; border-radius: 99px; background: rgba(255,255,255,.08); overflow: hidden; }
+      .bar > div { height: 100%; width: 0%; border-radius: 99px;
+        background: linear-gradient(90deg, var(--green), #3f9c68); transition: width .4s ease; }
+      .stats { display: flex; justify-content: space-between; margin-top: 12px; font-variant-numeric: tabular-nums; }
+      .stats .k { font-family: var(--display); font-size: 26px; }
+      .stats .l { color: var(--muted); font-size: 12px; letter-spacing: .4px; text-transform: uppercase; }
+      .done { margin-top: 22px; display: none; text-align: center; }
+      .done.show { display: block; }
+      a.download { display: inline-flex; align-items: center; gap: 8px; text-decoration: none; color: #fff;
+        background: linear-gradient(135deg, var(--green), #245a3c); padding: 15px 26px; border-radius: 13px;
+        font-family: var(--display); font-weight: 600; box-shadow: 0 10px 26px rgba(44,110,73,.35); }
+      .hint { color: var(--muted); font-size: 12.5px; margin-top: 18px; line-height: 1.5; }
+      code { background: rgba(255,255,255,.08); padding: 1px 6px; border-radius: 5px; font-size: 12.5px; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <a class="back" href="/">← All surfaces</a>
+      <div class="head">
+        <div class="tag">Part A · Scraper</div>
+        <h1>WA Harvest</h1>
+        <p class="lede">
+          Upload an account list with a <code>Website</code> column. We visit each site, mine
+          WhatsApp-capable mobiles, and hand back an enriched spreadsheet with a
+          <code>wa_numbers</code> column. 600 rows in under five minutes.
+        </p>
+      </div>
+
+      <div class="card">
+        <form id="form">
+          <label class="drop" id="drop" for="file">
+            <div class="ic">📇</div>
+            <b>Drop your .xlsx / .csv here</b>
+            <small>or click to choose · required column: <code>Website</code></small>
+            <input id="file" type="file" accept=".xlsx,.xls,.csv" hidden />
+          </label>
+          <div class="file" id="fileRow">
+            <span class="name" id="fileName"></span>
+            <button class="clear" id="clear" type="button" title="Remove">✕</button>
+          </div>
+          <button class="primary" id="go" type="submit" disabled>Enrich list</button>
+          <div class="err" id="err"></div>
+        </form>
+
+        <div class="progress" id="progress">
+          <div class="bar"><div id="fill"></div></div>
+          <div class="stats">
+            <div><div class="k" id="kDone">0<span style="color:var(--muted)">/0</span></div><div class="l">Processed</div></div>
+            <div style="text-align:right"><div class="k" id="kFound" style="color:var(--green)">0</div><div class="l">WA found</div></div>
+          </div>
+        </div>
+
+        <div class="done" id="done">
+          <a class="download" id="download" href="#">⬇ Download enriched sheet</a>
+          <div class="hint" id="doneHint"></div>
+        </div>
+      </div>
+
+      <p class="hint">
+        Tip: the enriched numbers also flow into the call cockpit automatically — when a rep opens a
+        matching company, the WhatsApp field is pre-filled and badged <em>scraped</em>.
+      </p>
+    </div>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const fileInput = $("file"), drop = $("drop"), go = $("go"), err = $("err");
+      let chosen = null, jobId = null, es = null;
+
+      function setFile(f) {
+        chosen = f;
+        if (f) { $("fileName").textContent = f.name; $("fileRow").classList.add("show"); go.disabled = false; }
+        else { $("fileRow").classList.remove("show"); go.disabled = true; }
+        err.classList.remove("show");
+      }
+      fileInput.addEventListener("change", () => setFile(fileInput.files[0] || null));
+      $("clear").addEventListener("click", () => { fileInput.value = ""; setFile(null); });
+      ["dragover","dragenter"].forEach((e) => drop.addEventListener(e, (ev) => { ev.preventDefault(); drop.classList.add("over"); }));
+      ["dragleave","drop"].forEach((e) => drop.addEventListener(e, (ev) => { ev.preventDefault(); drop.classList.remove("over"); }));
+      drop.addEventListener("drop", (ev) => { const f = ev.dataTransfer.files[0]; if (f) { fileInput.files = ev.dataTransfer.files; setFile(f); } });
+
+      function showError(msg) { err.textContent = msg; err.classList.add("show"); }
+
+      $("form").addEventListener("submit", async (ev) => {
+        ev.preventDefault();
+        if (!chosen) return;
+        err.classList.remove("show"); $("done").classList.remove("show");
+        go.disabled = true; go.textContent = "Starting…";
+
+        const fd = new FormData(); fd.append("file", chosen);
+        let res;
+        try { res = await fetch("/api/enrich", { method: "POST", body: fd }); }
+        catch { go.disabled = false; go.textContent = "Enrich list"; return showError("Network error — try again."); }
+
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { go.disabled = false; go.textContent = "Enrich list"; return showError(data.error || "Upload failed."); }
+
+        jobId = data.jobId;
+        $("progress").classList.add("show");
+        $("kDone").innerHTML = `0<span style="color:var(--muted)">/${data.total}</span>`;
+        go.textContent = "Enriching…";
+        streamProgress(data.total);
+      });
+
+      function streamProgress(total) {
+        if (es) es.close();
+        es = new EventSource(`/api/progress/${jobId}`);
+        es.onmessage = (m) => {
+          const p = JSON.parse(m.data);
+          const pct = p.total ? Math.round((p.done / p.total) * 100) : 0;
+          $("fill").style.width = pct + "%";
+          $("kDone").innerHTML = `${p.done}<span style="color:var(--muted)">/${p.total}</span>`;
+          $("kFound").textContent = p.found;
+          if (p.status === "done") { es.close(); finish(p, total); }
+          if (p.status === "error") { es.close(); go.disabled = false; go.textContent = "Enrich list"; showError(p.error || "Job failed."); }
+        };
+        es.onerror = () => { es.close(); };
+      }
+
+      function finish(p, total) {
+        go.textContent = "Done ✓";
+        $("download").href = `/api/result/${jobId}`;
+        $("doneHint").textContent = `${p.found} of ${total} accounts now have a WhatsApp-ready number.`;
+        $("done").classList.add("show");
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,12 @@
+**/node_modules
+**/dist
+**/.turbo
+.git
+.gitignore
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store
+README.md
+docker-compose.yml

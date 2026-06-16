@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Kencana LeadScout</title>
+    <meta name="description" content="Kencana BD pilot — WhatsApp harvest + live call cockpit." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --ink: #14213d;
+        --ink-2: #1d2c4d;
+        --red: #9b2226;
+        --gold: #bb9457;
+        --green: #2c6e49;
+        --paper: #f5f2ec;
+        --muted: #9aa6bd;
+        --line: rgba(255, 255, 255, 0.08);
+        --display: "Space Grotesk", "Inter", system-ui, sans-serif;
+        --sans: "Inter", system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; }
+      body {
+        font-family: var(--sans);
+        color: var(--paper);
+        background:
+          radial-gradient(1200px 600px at 80% -10%, rgba(187, 148, 87, 0.18), transparent 60%),
+          radial-gradient(900px 500px at -10% 110%, rgba(155, 34, 38, 0.22), transparent 55%),
+          var(--ink);
+        -webkit-font-smoothing: antialiased;
+        display: flex;
+        flex-direction: column;
+        min-height: 100%;
+      }
+      .wrap { max-width: 1040px; margin: 0 auto; padding: clamp(28px, 5vw, 64px) 24px; width: 100%; }
+      .brand { display: flex; align-items: center; gap: 14px; margin-bottom: 56px; }
+      .mark {
+        width: 42px; height: 42px; border-radius: 11px; display: grid; place-items: center;
+        background: linear-gradient(135deg, var(--red), #7a1a1d);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,.25), 0 8px 24px rgba(155,34,38,.35);
+        font-family: var(--display); font-weight: 700; font-size: 20px; color: #fff;
+      }
+      .brand b { font-family: var(--display); font-weight: 700; letter-spacing: .2px; font-size: 18px; }
+      .brand span { color: var(--muted); font-size: 13px; display: block; margin-top: 1px; letter-spacing: .3px; }
+      h1 {
+        font-family: var(--display); font-weight: 700; line-height: 1.04;
+        font-size: clamp(34px, 6vw, 62px); margin: 0 0 18px; letter-spacing: -0.5px;
+      }
+      h1 em { font-style: normal; color: var(--gold); }
+      .lede { color: #c7cfde; font-size: clamp(15px, 2.4vw, 19px); max-width: 60ch; line-height: 1.55; margin: 0 0 48px; }
+      .grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+      a.card {
+        display: flex; flex-direction: column; gap: 10px; text-decoration: none; color: inherit;
+        background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
+        border: 1px solid var(--line); border-radius: 18px; padding: 24px 22px 22px;
+        transition: transform .18s ease, border-color .18s ease, background .18s ease;
+        position: relative; overflow: hidden; min-height: 180px;
+      }
+      a.card:hover { transform: translateY(-4px); border-color: rgba(187,148,87,.5); background: linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.03)); }
+      a.card .tag { font-size: 12px; font-weight: 600; letter-spacing: 1.4px; text-transform: uppercase; color: var(--muted); }
+      a.card h3 { font-family: var(--display); margin: 4px 0 0; font-size: 24px; font-weight: 600; }
+      a.card p { margin: 0; color: #aeb8cc; font-size: 14px; line-height: 1.5; flex: 1; }
+      a.card .go { font-weight: 600; color: var(--gold); font-size: 14px; display: inline-flex; align-items: center; gap: 6px; }
+      a.card .stripe { position: absolute; inset: 0 auto 0 0; width: 4px; }
+      .c-red .stripe { background: var(--red); }
+      .c-green .stripe { background: var(--green); }
+      .c-gold .stripe { background: var(--gold); }
+      footer { margin-top: auto; color: var(--muted); font-size: 12.5px; border-top: 1px solid var(--line); padding: 20px 24px; text-align: center; }
+      .dot { display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:7px;vertical-align:middle; box-shadow:0 0 0 3px rgba(44,110,73,.25);}
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="brand">
+        <div class="mark">K</div>
+        <div>
+          <b>Kencana LeadScout</b>
+          <span>BD Pilot · WA-Harvest</span>
+        </div>
+      </div>
+
+      <h1>Turn cold landlines into<br /><em>WhatsApp-ready</em> conversations.</h1>
+      <p class="lede">
+        One cockpit for the Kencana Panelindo field pilot: mine company websites for WhatsApp-capable
+        mobiles, then work the daily call list one lead at a time while the champion watches capture
+        rate climb in real time.
+      </p>
+
+      <div class="grid">
+        <a class="card c-red" href="/scraper">
+          <span class="stripe"></span>
+          <span class="tag">Part A · Scraper</span>
+          <h3>WA Harvest</h3>
+          <p>Upload an account list, mine each site for WhatsApp numbers, download an enriched sheet.</p>
+          <span class="go">Open scraper →</span>
+        </a>
+        <a class="card c-green" href="/calls">
+          <span class="stripe"></span>
+          <span class="tag">Part B · Rep</span>
+          <h3>Call Cockpit</h3>
+          <p>One lead per screen. Tap to call, run the script, capture the WA number, advance.</p>
+          <span class="go">Start calling →</span>
+        </a>
+        <a class="card c-gold" href="/champion">
+          <span class="stripe"></span>
+          <span class="tag">Part B · Champion</span>
+          <h3>Live Dashboard</h3>
+          <p>Capture rate by rep, tier and day — refreshed every 8 seconds across devices.</p>
+          <span class="go">View dashboard →</span>
+        </a>
+      </div>
+    </div>
+    <footer><span class="dot"></span>Kencana Panelindo — first local ACP manufacturer in Indonesia.</footer>
+  </body>
+</html>

@@ -1,0 +1,22 @@
+{
+  "name": "wa-harvest",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Kencana BD Pilot — WhatsApp harvest scraper + live call cockpit.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@10.32.1",
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "dev": "pnpm --filter @kencana/server dev",
+    "start": "node apps/server/dist/index.js",
+    "seed": "pnpm --filter @kencana/server seed",
+    "typecheck": "pnpm -r exec tsc --noEmit"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  }
+}

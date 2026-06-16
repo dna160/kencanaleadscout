@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+    <title>Call Cockpit · Kencana LeadScout</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --ink: #14213d; --ink-2: #1b2949; --red: #9b2226; --gold: #bb9457; --green: #2c6e49;
+        --paper: #f5f2ec; --muted: #8a96ad; --line: rgba(255,255,255,.09);
+        --p0: #9b2226; --p1: #d18a1e; --p2: #3b6ea5; --p3: #2c6e49;
+        --display: "Space Grotesk","Inter",system-ui,sans-serif;
+        --sans: "Inter",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+      }
+      * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+      html, body { margin: 0; min-height: 100%; }
+      body {
+        font-family: var(--sans); color: var(--paper); background: var(--ink);
+        -webkit-font-smoothing: antialiased; overscroll-behavior-y: contain;
+      }
+      .app { max-width: 560px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; }
+      .view { display: none; flex: 1; flex-direction: column; }
+      .view.active { display: flex; }
+
+      /* ---------- Gate ---------- */
+      #gate { justify-content: center; padding: 30px 22px; gap: 14px;
+        background: radial-gradient(900px 500px at 80% -10%, rgba(187,148,87,.16), transparent 60%), var(--ink); }
+      .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+      .mark { width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center;
+        background: linear-gradient(135deg, var(--red), #7a1a1d); font-family: var(--display); font-weight: 700; color: #fff; font-size: 19px; }
+      .brand b { font-family: var(--display); font-size: 17px; }
+      .brand span { color: var(--muted); font-size: 12.5px; display: block; }
+      #gate h2 { font-family: var(--display); font-size: 22px; margin: 0 0 4px; }
+      #gate p { color: var(--muted); margin: 0 0 14px; font-size: 14px; }
+      .role {
+        display: flex; align-items: center; gap: 14px; padding: 20px; border-radius: 16px; cursor: pointer;
+        border: 1px solid var(--line); background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
+        font-family: var(--display); font-size: 19px; font-weight: 600; transition: .15s;
+      }
+      .role:active { transform: scale(.985); }
+      .role .ava { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; font-size: 18px; color: #fff; }
+      .role small { display: block; font-family: var(--sans); font-weight: 400; color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+      .role.a .ava { background: var(--red); } .role.b .ava { background: var(--p2); } .role.c .ava { background: var(--gold); }
+
+      /* ---------- Top bar ---------- */
+      .top { position: sticky; top: 0; z-index: 5; background: rgba(20,33,61,.92); backdrop-filter: blur(10px);
+        border-bottom: 1px solid var(--line); padding: 10px 16px; }
+      .top .row1 { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+      .who { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13px; letter-spacing: .3px; }
+      .who .pill { background: rgba(255,255,255,.08); padding: 4px 10px; border-radius: 99px; cursor: pointer; }
+      .counter { font-family: var(--display); font-variant-numeric: tabular-nums; font-size: 14px; color: var(--muted); }
+      .counter b { color: var(--paper); }
+      .pbar { height: 5px; background: rgba(255,255,255,.08); border-radius: 99px; margin-top: 9px; overflow: hidden; }
+      .pbar > div { height: 100%; background: linear-gradient(90deg, var(--gold), #d8b277); width: 0%; transition: width .35s ease; border-radius: 99px; }
+
+      /* ---------- Lead body ---------- */
+      .lead { padding: 20px 18px 150px; flex: 1; }
+      .tier { display: inline-flex; align-items: center; gap: 7px; font-family: var(--display); font-weight: 600;
+        font-size: 12px; letter-spacing: .6px; padding: 5px 11px; border-radius: 99px; color: #fff; }
+      .tier.P0 { background: var(--p0); } .tier.P1 { background: var(--p1); } .tier.P2 { background: var(--p2); } .tier.P3 { background: var(--p3); }
+      .done-flag { float: right; color: var(--green); font-weight: 600; font-size: 13px; display: none; }
+      .done-flag.show { display: inline; }
+      .company { font-family: var(--display); font-weight: 700; font-size: clamp(26px, 7vw, 34px); line-height: 1.08;
+        letter-spacing: -.4px; margin: 14px 0 6px; }
+      .meta { color: var(--muted); font-size: 14.5px; }
+      .meta b { color: #cfd6e4; font-weight: 500; }
+
+      .askbox { margin: 18px 0; border: 1px solid rgba(187,148,87,.4); background: rgba(187,148,87,.08);
+        border-radius: 14px; padding: 14px 16px; }
+      .askbox .l { color: var(--gold); font-size: 12px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; }
+      .askbox .n { font-family: var(--display); font-size: 22px; font-weight: 600; margin-top: 2px; }
+      .askbox .r { color: var(--muted); font-size: 13px; }
+
+      .callbtn { display: flex; align-items: center; justify-content: center; gap: 12px; width: 100%; text-decoration: none;
+        color: #fff; background: linear-gradient(135deg, var(--green), #245a3c); border-radius: 16px; padding: 18px;
+        font-family: var(--display); font-weight: 600; font-size: 21px; box-shadow: 0 12px 30px rgba(44,110,73,.4);
+        font-variant-numeric: tabular-nums; }
+      .callbtn:active { transform: translateY(1px); }
+      .callbtn .ph { font-size: 22px; }
+
+      .xcheck { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 12px; }
+      .xbtn { display: flex; align-items: center; justify-content: center; gap: 6px; text-decoration: none; padding: 11px 8px;
+        border-radius: 11px; font-size: 13px; font-weight: 600; border: 1px solid var(--line); color: var(--paper);
+        background: rgba(255,255,255,.04); }
+      .xbtn.li { border-color: rgba(59,110,165,.6); background: rgba(59,110,165,.16); color: #cfe0f3; }
+      .xbtn[aria-disabled="true"] { opacity: .35; pointer-events: none; }
+      .xhint { color: var(--muted); font-size: 11.5px; margin-top: 7px; text-align: center; }
+
+      .script { margin-top: 18px; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: rgba(255,255,255,.03); }
+      .script summary { list-style: none; cursor: pointer; padding: 13px 16px; display: flex; align-items: center; justify-content: space-between;
+        font-weight: 600; font-size: 14px; }
+      .script summary::-webkit-details-marker { display: none; }
+      .script .body { padding: 0 16px 16px; font-size: 15px; line-height: 1.6; color: #d7dde8; }
+      .script .body b { color: var(--gold); }
+      .chev { color: var(--muted); transition: transform .2s; }
+      details[open] .chev { transform: rotate(180deg); }
+
+      .capture { margin-top: 18px; }
+      .label { font-size: 12px; font-weight: 600; letter-spacing: .8px; text-transform: uppercase; color: var(--muted); margin-bottom: 7px; display:flex; gap:8px; align-items:center;}
+      .scraped { background: rgba(44,110,73,.2); color: #9fe0b9; border: 1px solid rgba(44,110,73,.5); font-size: 10px;
+        padding: 2px 7px; border-radius: 99px; letter-spacing: .5px; }
+      input[type="tel"], input[type="text"] {
+        width: 100%; padding: 15px 16px; border-radius: 13px; border: 1px solid var(--line); background: rgba(255,255,255,.05);
+        color: var(--paper); font-size: 17px; font-family: var(--sans); outline: none; transition: .15s;
+      }
+      input::placeholder { color: #5e6a82; }
+      input:focus { border-color: var(--gold); background: rgba(255,255,255,.08); }
+      input.bad { border-color: var(--red); background: rgba(155,34,38,.12); }
+      .inline-err { color: #ffb4b4; font-size: 13px; margin-top: 6px; display: none; }
+      .inline-err.show { display: block; }
+      .field { margin-bottom: 14px; }
+      .toggle { display: flex; align-items: center; justify-content: space-between; padding: 13px 16px; border: 1px solid var(--line);
+        border-radius: 13px; background: rgba(255,255,255,.04); }
+      .toggle span { font-weight: 500; font-size: 15px; }
+      .sw { width: 50px; height: 30px; border-radius: 99px; background: rgba(255,255,255,.14); position: relative; cursor: pointer; transition: .18s; }
+      .sw::after { content: ""; position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 50%; background: #fff; transition: .18s; }
+      .sw.on { background: var(--green); } .sw.on::after { transform: translateX(20px); }
+
+      .chips { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 18px; }
+      .chip { display: flex; align-items: center; gap: 9px; padding: 14px 14px; border-radius: 13px; cursor: pointer;
+        border: 1px solid var(--line); background: rgba(255,255,255,.04); font-weight: 600; font-size: 14.5px; transition: .14s; }
+      .chip:active { transform: scale(.98); }
+      .chip.sel { border-color: currentColor; box-shadow: inset 0 0 0 1px currentColor; }
+      .chip.won { color: #7fdca3; } .chip.won.sel { background: rgba(44,110,73,.18); }
+      .chip.warm { color: #ecb44f; } .chip.warm.sel { background: rgba(209,138,30,.16); }
+      .chip.ni { color: #cdd5e3; } .chip.ni.sel { background: rgba(255,255,255,.08); }
+      .chip.na { color: #cdd5e3; } .chip.na.sel { background: rgba(255,255,255,.08); }
+      .chip.dead { color: #ff9b9b; } .chip.dead.sel { background: rgba(155,34,38,.16); }
+      .chip.span2 { grid-column: span 2; }
+
+      /* ---------- Bottom action bar ---------- */
+      .actions { position: fixed; bottom: 0; left: 0; right: 0; z-index: 8;
+        background: linear-gradient(180deg, rgba(20,33,61,0), rgba(20,33,61,.96) 26%); padding: 14px 18px calc(16px + env(safe-area-inset-bottom));
+        max-width: 560px; margin: 0 auto; }
+      .actions .save { width: 100%; border: none; cursor: pointer; border-radius: 14px; padding: 17px;
+        font-family: var(--display); font-weight: 600; font-size: 18px; color: #fff;
+        background: linear-gradient(135deg, var(--red), #7a1a1d); box-shadow: 0 12px 30px rgba(155,34,38,.4); transition: .15s; }
+      .actions .save:disabled { opacity: .4; box-shadow: none; cursor: not-allowed; }
+      .actions .save:not(:disabled):active { transform: translateY(1px); }
+      .actions .sub { display: flex; gap: 9px; margin-top: 9px; }
+      .actions .sub button { flex: 1; border: 1px solid var(--line); background: rgba(255,255,255,.05); color: #cdd5e3;
+        border-radius: 11px; padding: 11px; font-weight: 600; font-size: 14px; cursor: pointer; }
+      .actions .sub button:disabled { opacity: .4; cursor: not-allowed; }
+
+      /* ---------- Day picker & complete ---------- */
+      .pad { padding: 22px 18px 40px; }
+      .pad h2 { font-family: var(--display); font-size: 24px; margin: 6px 0 4px; }
+      .pad .sub { color: var(--muted); font-size: 14px; margin: 0 0 20px; }
+      .days { display: grid; grid-template-columns: repeat(2, 1fr); gap: 11px; }
+      .day { border: 1px solid var(--line); background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
+        border-radius: 15px; padding: 16px; cursor: pointer; transition: .15s; }
+      .day:active { transform: scale(.98); }
+      .day .d { font-family: var(--display); font-size: 19px; font-weight: 600; }
+      .day .focus { color: var(--muted); font-size: 12.5px; margin-top: 3px; height: 32px; line-height: 1.3; }
+      .day .mini { height: 5px; border-radius: 99px; background: rgba(255,255,255,.1); margin-top: 10px; overflow: hidden; }
+      .day .mini > div { height: 100%; background: var(--green); width: 0%; }
+      .day .stat { font-size: 12px; color: var(--muted); margin-top: 7px; font-variant-numeric: tabular-nums; }
+      .complete { text-align: center; padding: 60px 24px; }
+      .complete .big { font-family: var(--display); font-size: 64px; font-weight: 700; color: var(--green); line-height: 1; }
+      .complete h2 { font-family: var(--display); margin: 10px 0 6px; }
+      .complete .kpis { display: flex; justify-content: center; gap: 26px; margin: 24px 0 30px; }
+      .complete .kpis .v { font-family: var(--display); font-size: 30px; } .complete .kpis .l { color: var(--muted); font-size: 12px; }
+      .btn-ghost { display: inline-block; text-decoration: none; cursor: pointer; border: 1px solid var(--line);
+        background: rgba(255,255,255,.05); color: var(--paper); padding: 14px 26px; border-radius: 13px; font-weight: 600; font-family: var(--display); }
+      .loading { text-align: center; color: var(--muted); padding: 60px 0; }
+      a.back { color: var(--muted); text-decoration: none; font-size: 13px; }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <!-- GATE -->
+      <section id="gate" class="view">
+        <div class="brand"><div class="mark">K</div><div><b>Kencana LeadScout</b><span>Call Cockpit</span></div></div>
+        <h2>Who's calling?</h2>
+        <p>Pick your seat. We'll remember it on this device.</p>
+        <div class="role a" data-role="Rep A"><div class="ava">A</div><div>Rep A<small>Field caller</small></div></div>
+        <div class="role b" data-role="Rep B"><div class="ava">B</div><div>Rep B<small>Field caller</small></div></div>
+        <div class="role c" data-role="Champion"><div class="ava">★</div><div>Champion<small>Live dashboard</small></div></div>
+      </section>
+
+      <!-- DAY PICKER -->
+      <section id="days" class="view">
+        <div class="top"><div class="row1">
+          <div class="who"><span id="dWho">Rep A</span> <span class="pill" id="switchRole">switch</span></div>
+          <a class="back" href="/champion">Champion ↗</a>
+        </div></div>
+        <div class="pad">
+          <h2>Pick a day</h2>
+          <p class="sub">Ten days, 30 leads each. Work one day at a time.</p>
+          <div class="days" id="dayGrid"></div>
+        </div>
+      </section>
+
+      <!-- COCKPIT -->
+      <section id="cockpit" class="view">
+        <div class="top">
+          <div class="row1">
+            <div class="who"><span id="cWho">REP A · DAY 1</span></div>
+            <div class="counter"><b id="cIdx">01</b> / <span id="cTotal">30</span></div>
+          </div>
+          <div class="pbar"><div id="cFill"></div></div>
+        </div>
+        <div class="lead" id="leadBody"><div class="loading">Loading leads…</div></div>
+        <div class="actions" id="actions" style="display:none">
+          <button class="save" id="saveBtn" disabled>Save &amp; next →</button>
+          <div class="sub">
+            <button id="backBtn">← Back</button>
+            <button id="skipBtn">Skip</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- DAY COMPLETE -->
+      <section id="complete" class="view">
+        <div class="top"><div class="row1"><div class="who"><span id="xWho">REP A · DAY 1</span></div></div></div>
+        <div class="complete">
+          <div class="big">✓</div>
+          <h2>Day complete</h2>
+          <p class="sub" style="color:var(--muted)">Every lead worked. Nice run.</p>
+          <div class="kpis">
+            <div><div class="v" id="xDialed">0</div><div class="l">Dialed</div></div>
+            <div><div class="v" id="xCaptured" style="color:var(--green)">0</div><div class="l">Captured</div></div>
+            <div><div class="v" id="xRate" style="color:var(--gold)">0%</div><div class="l">Capture rate</div></div>
+          </div>
+          <a class="btn-ghost" id="backToDays">Back to day list</a>
+        </div>
+      </section>
+    </div>
+
+    <script src="/calls.js"></script>
+  </body>
+</html>
