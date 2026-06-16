@@ -47,6 +47,9 @@ export function normalizeNumber(raw: string): string | null {
   }
 
   if (parsed && parsed.isValid()) {
+    // A "+"-prefixed candidate can validate as a real number in any country
+    // (e.g. a UAE mobile). Only Indonesian numbers are in scope.
+    if (parsed.country !== "ID") return null;
     const type = parsed.getType();
     if (type === "MOBILE" || type === "FIXED_LINE_OR_MOBILE") {
       return parsed.number; // E.164, e.g. "+6281234567890"

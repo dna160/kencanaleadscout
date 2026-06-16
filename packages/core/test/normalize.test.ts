@@ -21,6 +21,8 @@ describe("normalizeNumber — rejects landlines & junk", () => {
     ["021-5551234"], // Jakarta landline
     ["+622150231100"], // Jakarta landline in E.164
     ["not a phone 123"], // not a phone
+    ["+971501234567"], // valid mobile, but not Indonesian (UAE)
+    ["+14155552671"], // valid mobile, but not Indonesian (US)
   ])("%s -> REJECTED", (input) => {
     expect(normalizeNumber(input)).toBeNull();
   });
