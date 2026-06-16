@@ -142,8 +142,16 @@
         return `${s}s`;
       }
 
-      function waMessage(company) {
-        const text = `Selamat pagi 🙏 Saya dari Kencana Panelindo, pabrik ACP lokal pertama di Indonesia (TKDN 75%, fire-rated FR A2). Terima kasih sudah bersedia kami hubungi untuk *${company}*. Boleh saya kirimkan company profile + contoh proyek, dan sample gratis ke kantor? Tinggal konfirmasi alamatnya 📦`;
+      function greeting() {
+        const h = new Date().getHours();
+        if (h < 11) return "pagi";
+        if (h < 15) return "siang";
+        return "sore";
+      }
+
+      function waMessage(company, askFor) {
+        const who = askFor ? `Bpk/Ibu *${askFor}*` : "Bpk/Ibu";
+        const text = `Selamat ${greeting()}, kami dari Kencana Panelindo pabrik ACP lokal pertama di Indonesia (TKDN 75%, fire-rated FR A2). Kami menghubungi untuk *${company}* untuk ${who}. Boleh saya kirimkan Company Profile + Contoh Proyek dan sample gratis ke kantor anda dalam waktu dekat? Terima kasih`;
         return text;
       }
 
@@ -212,7 +220,7 @@
         cards.innerHTML = list.map((item) => {
           const fresh = item.stage === "captured";
           const waHref = item.wa_number
-            ? `https://wa.me/${item.wa_number.replace("+", "")}?text=${encodeURIComponent(waMessage(item.company))}`
+            ? `https://wa.me/${item.wa_number.replace("+", "")}?text=${encodeURIComponent(waMessage(item.company, item.ask_for))}`
             : "#";
           const waBtnLabel = fresh ? "Open WhatsApp" : "Reopen chat";
           // Clock 1 (our speed): live, per-contact, ticking from captured_at until messaged.
