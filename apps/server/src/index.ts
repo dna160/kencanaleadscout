@@ -23,6 +23,7 @@ import { resultRoutes } from "./routes/result.js";
 import { leadsRoutes } from "./routes/leads.js";
 import { outcomeRoutes } from "./routes/outcome.js";
 import { statsRoutes } from "./routes/stats.js";
+import { capturesRoutes } from "./routes/captures.js";
 
 const PUBLIC_DIR = fileURLToPath(new URL("../public", import.meta.url));
 
@@ -77,6 +78,7 @@ async function main(): Promise<void> {
   await app.register(leadsRoutes);
   await app.register(outcomeRoutes);
   await app.register(statsRoutes);
+  await app.register(capturesRoutes);
 
   await bootDatabase(app);
 

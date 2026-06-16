@@ -80,6 +80,26 @@
       .empty { color: var(--muted); font-size: 13.5px; text-align: center; padding: 26px 0; }
       a.back { color: var(--muted); text-decoration: none; font-size: 13px; }
       .mt { margin-top: 14px; }
+
+      .panel.wide { margin-top: 14px; }
+      .panel .head-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+      .exportBtn { border: 1px solid rgba(187,148,87,.45); background: rgba(187,148,87,.12); color: var(--gold);
+        border-radius: 9px; padding: 8px 14px; cursor: pointer; font-weight: 700; font-size: 12.5px; white-space: nowrap; }
+      .exportBtn:disabled { opacity: .4; cursor: not-allowed; }
+      .tableWrap { overflow-x: auto; margin-top: 12px; }
+      table.captures { width: 100%; border-collapse: collapse; font-size: 13px; }
+      table.captures th { text-align: left; color: var(--muted); font-size: 11px; letter-spacing: .6px; text-transform: uppercase;
+        font-weight: 600; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+      table.captures td { padding: 9px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+      table.captures tr:last-child td { border-bottom: none; }
+      table.captures .co { font-weight: 600; }
+      table.captures a.wa { color: #9fe0b9; text-decoration: none; font-variant-numeric: tabular-nums; }
+      table.captures a.wa:hover { text-decoration: underline; }
+      .badge { display: inline-block; border-radius: 99px; padding: 3px 9px; font-size: 11px; font-weight: 700; }
+      .badge.confirmed { background: rgba(44,110,73,.22); color: #9fe0b9; }
+      .badge.scraped { background: rgba(187,148,87,.2); color: var(--gold); }
+      .tag.prio { font-family: var(--display); font-weight: 700; font-size: 11.5px; padding: 2px 8px; border-radius: 99px; color: #fff; }
+      .tag.prio.P0 { background: var(--p0); } .tag.prio.P1 { background: var(--p1); } .tag.prio.P2 { background: var(--p2); } .tag.prio.P3 { background: var(--p3); }
     </style>
   </head>
   <body>
@@ -122,6 +142,24 @@
           <div class="feed" id="feed"><div class="empty">Waiting for the first capture…</div></div>
         </div>
       </div>
+
+      <div class="panel wide">
+        <div class="head-row">
+          <div>
+            <h3>All WhatsApp numbers</h3>
+            <p class="cap">Confirmed (rep called) and scraped (not yet called) — company, number, status.</p>
+          </div>
+          <button class="exportBtn" id="exportCsv" disabled>Export CSV</button>
+        </div>
+        <div class="tableWrap">
+          <table class="captures" id="capturesTable">
+            <thead>
+              <tr><th>Day</th><th>Rep</th><th>Priority</th><th>Company</th><th>WA number</th><th>Status</th><th>Updated</th></tr>
+            </thead>
+            <tbody id="capturesBody"><tr><td colspan="7"><div class="empty">No WhatsApp numbers yet.</div></td></tr></tbody>
+          </table>
+        </div>
+      </div>
     </div>
 
     <script>
@@ -141,6 +179,8 @@
         return Math.floor(h / 24) + "d ago";
       }
 
+      let captures = [];
+
       async function load() {
         let data;
         try {
@@ -152,6 +192,62 @@
         lastSync = Date.now();
         render(data);
         firstLoad = false;
+        loadCaptures();
+      }
+
+      async function loadCaptures() {
+        try {
+          const res = await fetch("/api/captures");
+          if (!res.ok) throw new Error();
+          const data = await res.json();
+          captures = data.captures;
+          renderCaptures();
+        } catch { /* leave previous table state on transient failure */ }
+      }
+
+      function renderCaptures() {
+        const body = $("capturesBody");
+        $("exportCsv").disabled = captures.length === 0;
+        if (!captures.length) {
+          body.innerHTML = '<tr><td colspan="7"><div class="empty">No WhatsApp numbers yet.</div></td></tr>';
+          return;
+        }
+        body.innerHTML = captures.map((c) => {
+          const wa = c.wa_number ? `<a class="wa" target="_blank" rel="noopener" href="https://wa.me/${esc(c.wa_number.replace("+", ""))}">${esc(c.wa_number)}</a>` : "—";
+          const badge = c.status === "confirmed" ? '<span class="badge confirmed">Confirmed</span>' : '<span class="badge scraped">Scraped</span>';
+          const updated = c.updated_at ? ago(c.updated_at) : "—";
+          return `<tr>
+            <td>${esc(c.day)}</td>
+            <td>${esc(c.rep)}</td>
+            <td><span class="tag prio ${esc(c.priority)}">${esc(c.priority)}</span></td>
+            <td class="co">${esc(c.company)}</td>
+            <td>${wa}</td>
+            <td>${badge}</td>
+            <td>${updated}</td>
+          </tr>`;
+        }).join("");
+      }
+
+      function csvEscape(v) {
+        const s = String(v == null ? "" : v);
+        return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+      }
+
+      function exportCaptures() {
+        const header = ["Day", "Rep", "Priority", "Company", "WA Number", "Status", "Updated At"];
+        const lines = [header.join(",")];
+        for (const c of captures) {
+          lines.push([c.day, c.rep, c.priority, c.company, c.wa_number ?? "", c.status, c.updated_at ?? ""].map(csvEscape).join(","));
+        }
+        const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `kencana-wa-captures-${new Date().toISOString().slice(0, 10)}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
       }
 
       function render(d) {
@@ -213,6 +309,7 @@
       }
 
       $("refresh").addEventListener("click", load);
+      $("exportCsv").addEventListener("click", exportCaptures);
       load();
       setInterval(load, POLL_MS);
       setInterval(tickSync, 1000);
