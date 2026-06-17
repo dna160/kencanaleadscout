@@ -201,7 +201,7 @@
           return copy.sort((a, b) => new Date(a.captured_at) - new Date(b.captured_at));
         }
         if (stage === "messaged") {
-          return copy.sort((a, b) => new Date(a.messaged_at || a.captured_at) - new Date(b.messaged_at || b.captured_at));
+          return copy.sort((a, b) => new Date(b.messaged_at || b.captured_at) - new Date(a.messaged_at || a.captured_at));
         }
         if (stage === "replied") {
           // Most recently replied at top — "recently clicked" sorts first
