@@ -63,6 +63,7 @@ export async function leadsRoutes(app: FastifyInstance): Promise<void> {
       left join enrichments e
         on e.company_norm = btrim(regexp_replace(lower(l.company), '[^a-z0-9]+', ' ', 'g'))
       where l.rep = ${rep} and l.day = ${day}
+        and coalesce(l.sl_flag, false) = false
       order by l.priority asc, l.company asc
     `;
 
