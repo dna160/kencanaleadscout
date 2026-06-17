@@ -9,6 +9,7 @@
     "start": "node dist/index.js",
     "seed": "tsx src/db/seedLeads.ts",
     "migrate": "tsx src/db/migrate.ts",
+    "renew": "tsx src/db/renewDays3to10.ts",
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
