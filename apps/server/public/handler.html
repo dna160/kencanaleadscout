@@ -318,15 +318,10 @@
         $("cMeeting").textContent  = items.filter((i) => i.stage === "meeting_set").length;
         $("cWon").textContent      = items.filter((i) => i.stage === "won").length;
 
-        // Snapshot open meeting pickers so they survive the innerHTML rebuild.
-        const openMeetings = {};
-        document.querySelectorAll(".meetingRow.show").forEach((row) => {
-          const card = row.closest(".card");
-          if (card) {
-            const input = row.querySelector('input[type="datetime-local"]');
-            openMeetings[card.dataset.id] = input ? input.value : "";
-          }
-        });
+        // Don't rebuild the card DOM while the handler is interacting with a
+        // meeting date picker — datetime-local only exposes its value once all
+        // fields are complete, so any rebuild mid-entry resets the input.
+        if (document.querySelector(".meetingRow.show")) return;
 
         const container = $("cards");
 
@@ -357,16 +352,6 @@
 
           wireSections();
         }
-
-        // Restore any meeting pickers that were open before the rebuild.
-        Object.entries(openMeetings).forEach(([leadId, value]) => {
-          const row = document.getElementById(`meeting-${cssEscape(leadId)}`);
-          if (row) {
-            row.classList.add("show");
-            const input = row.querySelector('input[type="datetime-local"]');
-            if (input && value) input.value = value;
-          }
-        });
 
         wireCards();
       }
