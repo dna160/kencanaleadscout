@@ -150,8 +150,8 @@
       }
 
       function waMessage(company, askFor) {
-        const who = askFor ? `Bpk/Ibu *${askFor}*` : "Bpk/Ibu";
-        const text = `Selamat ${greeting()}, kami dari Kencana Panelindo pabrik ACP lokal pertama di Indonesia (TKDN 75%, fire-rated FR A2). Kami menghubungi untuk *${company}* untuk ${who}. Boleh saya kirimkan Company Profile + Contoh Proyek dan sample gratis ke kantor anda dalam waktu dekat? Terima kasih`;
+        const who = askFor ? `Bpk/Ibu ${askFor}` : "Bpk/Ibu";
+        const text = `Selamat ${greeting()}, kami dari Kencana Panelindo pabrik ACP lokal pertama di Indonesia. Kami menghubungi untuk ${company} untuk ${who} Boleh saya kirimkan Company Profile + Contoh Proyek dan sample gratis ke kantor bapak/ibu dalam waktu dekat? Terima kasih`;
         return text;
       }
 
