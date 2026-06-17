@@ -25,6 +25,7 @@ import { outcomeRoutes } from "./routes/outcome.js";
 import { statsRoutes } from "./routes/stats.js";
 import { capturesRoutes } from "./routes/captures.js";
 import { pipelineRoutes } from "./routes/pipeline.js";
+import { salesLeadRoutes } from "./routes/sales-lead.js";
 
 const PUBLIC_DIR = fileURLToPath(new URL("../public", import.meta.url));
 
@@ -70,6 +71,7 @@ async function main(): Promise<void> {
   app.get("/calls", (_req, reply) => reply.sendFile("calls.html"));
   app.get("/champion", (_req, reply) => reply.sendFile("champion.html"));
   app.get("/handler", (_req, reply) => reply.sendFile("handler.html"));
+  app.get("/sales-lead", (_req, reply) => reply.sendFile("sales-lead.html"));
 
   // [A] Scraper APIs.
   await app.register(enrichRoutes);
@@ -82,6 +84,7 @@ async function main(): Promise<void> {
   await app.register(statsRoutes);
   await app.register(capturesRoutes);
   await app.register(pipelineRoutes);
+  await app.register(salesLeadRoutes);
 
   await bootDatabase(app);
 

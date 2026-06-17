@@ -33,6 +33,7 @@
   function pickRole(role) {
     if (role === "Champion") { location.href = "/champion"; return; }
     if (role === "Handler") { location.href = "/handler"; return; }
+    if (role === "Sales Lead") { location.href = "/sales-lead"; return; }
     localStorage.setItem(ROLE_KEY, role);
     state.role = role;
     enterDays();

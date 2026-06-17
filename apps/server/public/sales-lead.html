@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+    <title>Sales Lead · Kencana LeadScout</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --ink: #14213d; --red: #9b2226; --gold: #bb9457; --green: #2c6e49;
+        --paper: #f5f2ec; --muted: #8a96ad; --line: rgba(255,255,255,.09);
+        --purple: #6b3fa0;
+        --p0: #9b2226; --p1: #d18a1e; --p2: #3b6ea5; --p3: #2c6e49;
+        --display: "Space Grotesk","Inter",system-ui,sans-serif;
+        --sans: "Inter",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+      }
+      * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+      html, body { margin: 0; height: 100%; overflow: hidden; }
+      body {
+        font-family: var(--sans); color: var(--paper);
+        background: radial-gradient(1200px 600px at 90% -10%, rgba(107,63,160,.12), transparent 60%), var(--ink);
+        -webkit-font-smoothing: antialiased;
+      }
+
+      .app { max-width: 640px; margin: 0 auto; height: 100%; display: flex; flex-direction: column; }
+
+      /* ── Views ── */
+      .view { display: none; flex-direction: column; flex: 1; overflow: hidden; }
+      .view.active { display: flex; }
+
+      /* ── Top bar ── */
+      .top-bar {
+        flex-shrink: 0; padding: 16px 20px;
+        border-bottom: 1px solid var(--line);
+        background: rgba(20,33,61,.95); backdrop-filter: blur(10px);
+      }
+      .brand { display: flex; align-items: center; gap: 11px; }
+      .mark { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center;
+        background: linear-gradient(135deg, var(--purple), #4e2a7a);
+        font-family: var(--display); font-weight: 700; color: #fff; font-size: 16px; }
+      .brand b { font-family: var(--display); font-size: 16px; }
+      .brand small { color: var(--muted); font-size: 12px; display: block; }
+
+      .list-header { display: flex; align-items: center; gap: 10px; }
+      .back-btn { border: 1px solid var(--line); background: rgba(255,255,255,.05); color: var(--paper);
+        border-radius: 9px; padding: 7px 12px; cursor: pointer; font-weight: 600; font-size: 13px; font-family: var(--sans); }
+      .day-label { font-family: var(--display); font-size: 16px; font-weight: 700; }
+      .flag-tally { margin-left: auto; font-size: 12.5px; font-variant-numeric: tabular-nums; color: var(--gold); font-weight: 600; }
+
+      /* ── Scroll area ── */
+      .scroll { flex: 1; overflow-y: auto; padding: 18px 20px 60px; }
+
+      /* ── Day picker ── */
+      .picker-intro { margin-bottom: 20px; }
+      .picker-intro h2 { font-family: var(--display); font-size: 22px; font-weight: 700; margin: 0 0 4px; }
+      .picker-intro p { color: var(--muted); font-size: 14px; margin: 0; }
+      .days-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+      .day-tile {
+        border: 1px solid var(--line); border-radius: 14px; padding: 16px;
+        background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
+        cursor: pointer; transition: .14s;
+      }
+      .day-tile:active { transform: scale(.98); }
+      .day-tile .dt { font-family: var(--display); font-size: 18px; font-weight: 600; }
+      .day-tile .ds { color: var(--muted); font-size: 12px; margin-top: 4px; font-variant-numeric: tabular-nums; }
+      .day-tile .bar { height: 4px; border-radius: 99px; background: rgba(255,255,255,.1); margin-top: 10px; overflow: hidden; }
+      .day-tile .bar > div { height: 100%; background: var(--purple); border-radius: 99px; width: 0%; transition: width .4s ease; }
+
+      /* ── Section headers ── */
+      .sec-hdr { font-size: 11px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase;
+        color: var(--muted); margin: 20px 0 10px; }
+      .sec-hdr:first-child { margin-top: 0; }
+      .sec-hdr.flagged-hdr { color: var(--gold); }
+
+      /* ── Lead cards ── */
+      .lead-card {
+        border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; margin-bottom: 10px;
+        background: linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.02));
+      }
+      .lead-card.flagged {
+        border-color: rgba(187,148,87,.5);
+        background: linear-gradient(180deg, rgba(187,148,87,.1), rgba(187,148,87,.03));
+      }
+      .lead-card .co { font-family: var(--display); font-size: 17px; font-weight: 700; line-height: 1.2; }
+      .lead-card .contact { font-size: 14px; color: #d0d8e8; margin-top: 4px; }
+      .lead-card .contact .role-txt { color: var(--muted); font-size: 13px; }
+      .lead-card .loc { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+      .lead-card .badges { display: flex; gap: 6px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+      .prio { font-family: var(--display); font-weight: 700; font-size: 11px; padding: 2px 8px; border-radius: 99px; color: #fff; }
+      .prio.P0 { background: var(--p0); } .prio.P1 { background: var(--p1); }
+      .prio.P2 { background: var(--p2); } .prio.P3 { background: var(--p3); }
+      .rep-tag { font-size: 11px; color: var(--muted); background: rgba(255,255,255,.07);
+        padding: 2px 8px; border-radius: 99px; }
+
+      /* ── Flag button ── */
+      .flag-btn {
+        width: 100%; margin-top: 12px; border-radius: 10px; padding: 10px 14px;
+        font-weight: 600; font-size: 13.5px; cursor: pointer; font-family: var(--sans);
+        border: 1px solid rgba(138,150,173,.3); background: rgba(138,150,173,.08); color: var(--muted);
+        transition: .14s; text-align: left;
+      }
+      .flag-btn.active {
+        border-color: rgba(187,148,87,.6); background: rgba(187,148,87,.18); color: var(--gold);
+      }
+      .flag-btn:active { transform: scale(.99); }
+
+      .empty { color: var(--muted); font-size: 14px; text-align: center; padding: 50px 0; }
+      .loading { color: var(--muted); font-size: 14px; text-align: center; padding: 50px 0; }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+
+      <!-- ── Day picker view ── -->
+      <div id="dayView" class="view active">
+        <div class="top-bar">
+          <div class="brand">
+            <div class="mark">S</div>
+            <div><b>Sales Lead</b><small>Kencana LeadScout · flag prior contacts</small></div>
+          </div>
+        </div>
+        <div class="scroll">
+          <div class="picker-intro">
+            <h2>Pick a day</h2>
+            <p>Review the lead list and flag any company you've previously contacted. Flagged leads are removed from the hunter pool.</p>
+          </div>
+          <div class="days-grid" id="daysGrid"></div>
+        </div>
+      </div>
+
+      <!-- ── Lead list view ── -->
+      <div id="listView" class="view">
+        <div class="top-bar">
+          <div class="list-header">
+            <button class="back-btn" id="backBtn">← Days</button>
+            <span class="day-label" id="dayLabel">Day —</span>
+            <span class="flag-tally" id="flagTally"></span>
+          </div>
+        </div>
+        <div class="scroll" id="leadsList">
+          <div class="loading">Loading…</div>
+        </div>
+      </div>
+
+    </div>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+      let currentDay = null;
+      let leads = [];  // leads for current day, mutated in-place on flag toggle
+
+      /* ── View switching ── */
+      function showView(id) {
+        document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
+        $(id).classList.add("active");
+      }
+
+      /* ── Day picker ── */
+      function buildDayPicker() {
+        const grid = $("daysGrid");
+        grid.innerHTML = "";
+        const tiles = [];
+        for (let d = 1; d <= 10; d++) {
+          const tile = document.createElement("div");
+          tile.className = "day-tile";
+          tile.innerHTML = `<div class="dt">Day ${d}</div><div class="ds" id="ds${d}">Loading…</div><div class="bar"><div id="db${d}"></div></div>`;
+          tile.addEventListener("click", () => openDay(d));
+          grid.appendChild(tile);
+          tiles.push(tile);
+        }
+        // Load counts for all days in parallel
+        for (let d = 1; d <= 10; d++) {
+          fetch(`/api/sales-lead?day=${d}`)
+            .then((r) => r.json())
+            .then((data) => {
+              const total = data.count || 0;
+              const flagged = data.flagged || 0;
+              $(`ds${d}`).textContent = flagged > 0
+                ? `${flagged} flagged · ${total} total`
+                : `${total} leads`;
+              const pct = total > 0 ? Math.round((flagged / total) * 100) : 0;
+              $(`db${d}`).style.width = pct + "%";
+            })
+            .catch(() => { $(`ds${d}`).textContent = "—"; });
+        }
+      }
+
+      /* ── Open a day ── */
+      async function openDay(day) {
+        currentDay = day;
+        $("dayLabel").textContent = `Day ${day}`;
+        $("flagTally").textContent = "";
+        $("leadsList").innerHTML = '<div class="loading">Loading…</div>';
+        showView("listView");
+
+        try {
+          const res = await fetch(`/api/sales-lead?day=${day}`);
+          if (!res.ok) throw new Error();
+          const data = await res.json();
+          leads = data.leads;
+          renderLeads();
+        } catch {
+          $("leadsList").innerHTML = '<div class="empty">Could not load leads.</div>';
+        }
+      }
+
+      /* ── Render lead list ── */
+      function renderLeads() {
+        const flagged = leads.filter((l) => l.sl_flag);
+        const unflagged = leads.filter((l) => !l.sl_flag);
+        const total = leads.length;
+
+        $("flagTally").textContent = flagged.length
+          ? `${flagged.length} / ${total} flagged`
+          : `${total} leads`;
+
+        let html = "";
+
+        if (flagged.length) {
+          html += `<div class="sec-hdr flagged-hdr">Previously Contacted (${flagged.length})</div>`;
+          html += flagged.map(cardHtml).join("");
+        }
+
+        if (unflagged.length) {
+          html += `<div class="sec-hdr">Hunter Pool (${unflagged.length})</div>`;
+          html += unflagged.map(cardHtml).join("");
+        }
+
+        if (!leads.length) {
+          html = '<div class="empty">No leads for this day.</div>';
+        }
+
+        $("leadsList").innerHTML = html;
+        wireFlags();
+      }
+
+      function cardHtml(lead) {
+        const contact = lead.ask_for
+          ? `${esc(lead.ask_for)}${lead.role ? ` <span class="role-txt">· ${esc(lead.role)}</span>` : ""}`
+          : "—";
+        const loc = [lead.town, lead.province].filter(Boolean).map(esc).join(", ");
+        const flagLabel = lead.sl_flag
+          ? "✓ Previously Contacted — removed from hunter pool"
+          : "Flag as previously contacted";
+        return `<div class="lead-card ${lead.sl_flag ? "flagged" : ""}" data-id="${esc(lead.id)}">
+          <div class="co">${esc(lead.company)}</div>
+          <div class="contact">${contact}</div>
+          ${loc ? `<div class="loc">${loc}</div>` : ""}
+          <div class="badges">
+            <span class="prio ${esc(lead.priority)}">${esc(lead.priority)}</span>
+            <span class="rep-tag">${esc(lead.rep)}</span>
+          </div>
+          <button class="flag-btn ${lead.sl_flag ? "active" : ""}" data-action="flag">${flagLabel}</button>
+        </div>`;
+      }
+
+      function wireFlags() {
+        $("leadsList").querySelectorAll('[data-action="flag"]').forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const card = btn.closest(".lead-card");
+            const lead_id = card.dataset.id;
+            const lead = leads.find((l) => l.id === lead_id);
+            if (!lead) return;
+
+            const newFlag = !lead.sl_flag;
+            // Optimistic update
+            lead.sl_flag = newFlag;
+            renderLeads();
+
+            try {
+              const res = await fetch("/api/sales-lead/flag", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ lead_id, flagged: newFlag }),
+              });
+              if (!res.ok) throw new Error();
+            } catch {
+              // Revert on failure
+              lead.sl_flag = !newFlag;
+              renderLeads();
+              alert("Could not save — try again.");
+            }
+          });
+        });
+      }
+
+      /* ── Back button ── */
+      $("backBtn").addEventListener("click", () => {
+        showView("dayView");
+        buildDayPicker(); // refresh counts
+      });
+
+      /* ── Boot ── */
+      buildDayPicker();
+    </script>
+  </body>
+</html>
