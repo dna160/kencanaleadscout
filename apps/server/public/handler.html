@@ -54,6 +54,33 @@
         padding: 7px 14px; font-size: 12.5px; font-weight: 600; cursor: pointer; }
       .filter.active { border-color: var(--gold); color: var(--gold); background: rgba(187,148,87,.12); }
 
+      /* ── Section headers (categorization) ── */
+      .section { margin-bottom: 4px; }
+      .section-header {
+        display: flex; align-items: center; gap: 10px;
+        padding: 9px 2px; cursor: pointer; user-select: none;
+        border-bottom: 1px solid var(--line); margin-bottom: 12px;
+      }
+      .section-title { font-family: var(--display); font-weight: 700; font-size: 11.5px; letter-spacing: .8px; text-transform: uppercase; }
+      .section-count { border-radius: 99px; padding: 2px 9px; font-size: 11.5px; font-weight: 700; }
+      .section-toggle { margin-left: auto; color: var(--muted); font-size: 12px; }
+      .section.collapsed .section-cards { display: none; }
+      .section-cards { display: flex; flex-direction: column; gap: 12px; margin-bottom: 24px; }
+
+      .section-header.captured .section-title  { color: var(--gold); }
+      .section-header.captured .section-count  { background: rgba(187,148,87,.2); color: var(--gold); }
+      .section-header.messaged .section-title  { color: #9fc4ec; }
+      .section-header.messaged .section-count  { background: rgba(59,110,165,.2); color: #9fc4ec; }
+      .section-header.replied .section-title   { color: #9fe0b9; }
+      .section-header.replied .section-count   { background: rgba(44,110,73,.2); color: #9fe0b9; }
+      .section-header.meeting_set .section-title { color: #ecb44f; }
+      .section-header.meeting_set .section-count { background: rgba(209,138,30,.2); color: #ecb44f; }
+      .section-header.won .section-title       { color: #c6f3d6; }
+      .section-header.won .section-count       { background: rgba(44,110,73,.3); color: #c6f3d6; }
+      .section-header.dead .section-title      { color: #ff9b9b; }
+      .section-header.dead .section-count      { background: rgba(155,34,38,.2); color: #ff9b9b; }
+
+      /* ── Cards ── */
       .cards { display: flex; flex-direction: column; gap: 12px; }
       .card { border: 1px solid var(--line); border-radius: 16px; padding: 16px 18px; background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02)); }
       .card.fresh { border-color: rgba(187,148,87,.55); background: linear-gradient(180deg, rgba(187,148,87,.14), rgba(187,148,87,.04)); }
@@ -79,6 +106,7 @@
       .btn.meeting { background: rgba(209,138,30,.16); color: #ecb44f; border: 1px solid rgba(209,138,30,.5); }
       .btn.won { background: rgba(44,110,73,.3); color: #c6f3d6; border: 1px solid rgba(44,110,73,.6); }
       .btn.dead { background: rgba(155,34,38,.16); color: #ff9b9b; border: 1px solid rgba(155,34,38,.5); }
+      .btn.undo { background: rgba(138,150,173,.1); color: var(--muted); border: 1px solid rgba(138,150,173,.25); font-size: 12px; padding: 9px 12px; }
       .btn:disabled { opacity: .35; cursor: not-allowed; }
 
       .meetingRow { display: none; gap: 8px; margin-top: 10px; align-items: center; }
@@ -130,9 +158,15 @@
       let knownFreshIds = new Set();
       let firstLoad = true;
       let lastSync = Date.now();
+      // Sections collapsed by default for lower-priority stages
+      let collapsedSections = new Set(["won", "dead"]);
 
       const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
       const STAGE_LABEL = { captured: "Fresh", messaged: "Messaged", replied: "Replied", meeting_set: "Meeting set", won: "Won", dead: "Dead" };
+      const SECTION_LABEL = { captured: "Fresh Leads", messaged: "Awaiting Reply", replied: "Got a Reply", meeting_set: "Meeting Set", won: "Won", dead: "Dead" };
+      const SECTION_ORDER = ["captured", "messaged", "replied", "meeting_set", "won", "dead"];
+      // Maps a stage to the stage it reverts to
+      const PREV_STAGE = { messaged: "captured", replied: "messaged", meeting_set: "replied", won: "meeting_set" };
 
       function fmtDuration(ms) {
         const sec = Math.floor(ms / 1000);
@@ -153,6 +187,71 @@
         const who = askFor ? `Bpk/Ibu ${askFor}` : "Bpk/Ibu";
         const text = `Selamat ${greeting()}, kami dari Kencana Panelindo pabrik ACP lokal pertama di Indonesia. Kami menghubungi untuk ${company} untuk ${who} Boleh saya kirimkan Company Profile + Contoh Proyek dan sample gratis ke kantor bapak/ibu dalam waktu dekat? Terima kasih`;
         return text;
+      }
+
+      function sortSection(stageItems, stage) {
+        const copy = [...stageItems];
+        if (stage === "captured") {
+          return copy.sort((a, b) => new Date(a.captured_at) - new Date(b.captured_at));
+        }
+        if (stage === "messaged") {
+          return copy.sort((a, b) => new Date(a.messaged_at || a.captured_at) - new Date(b.messaged_at || b.captured_at));
+        }
+        if (stage === "replied") {
+          // Most recently replied at top — "recently clicked" sorts first
+          return copy.sort((a, b) => new Date(b.replied_at || b.updated_at) - new Date(a.replied_at || a.updated_at));
+        }
+        if (stage === "meeting_set") {
+          return copy.sort((a, b) => new Date(a.meeting_at || a.updated_at) - new Date(b.meeting_at || b.updated_at));
+        }
+        return copy.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+      }
+
+      function renderCard(item) {
+        const fresh = item.stage === "captured";
+        const waHref = item.wa_number
+          ? `https://wa.me/${item.wa_number.replace("+", "")}?text=${encodeURIComponent(waMessage(item.company, item.ask_for))}`
+          : "#";
+        const waBtnLabel = fresh ? "Open WhatsApp" : "Reopen chat";
+
+        // Clock 1 (our speed): live, per-contact, ticking from captured_at until messaged.
+        // Clock 2 (their interest): live, per-contact, ticking from messaged_at until replied.
+        const timer = fresh && item.captured_at
+          ? `<div class="timer clock1" data-captured-at="${item.captured_at}">captured ${fmtDuration(Date.now() - new Date(item.captured_at).getTime())} ago — reach out</div>`
+          : item.stage === "messaged" && item.messaged_at
+          ? `<div class="timer clock2" data-messaged-at="${item.messaged_at}">waiting ${fmtDuration(Date.now() - new Date(item.messaged_at).getTime())} for a reply</div>`
+          : "";
+
+        const canReply   = item.stage === "messaged";
+        const canMeeting = item.stage === "replied";
+        const canWon     = item.stage === "meeting_set";
+        const canDead    = item.stage !== "won" && item.stage !== "dead";
+        const canUndo    = item.stage in PREV_STAGE;
+
+        return `<div class="card ${fresh ? "fresh" : ""}" data-id="${esc(item.lead_id)}">
+          <div class="top">
+            <div>
+              <div class="co">${esc(item.company)}</div>
+              <div class="meta">${esc(item.ask_for || "—")} · ${esc(item.town || "")}${item.wa_number ? " · " + esc(item.wa_number) : ""}</div>
+              <span class="stagebadge ${esc(item.stage)}">${STAGE_LABEL[item.stage] || item.stage}</span>
+            </div>
+            <span class="tag prio ${esc(item.priority)}">${esc(item.priority)}</span>
+          </div>
+          ${timer}
+          <div class="row">
+            <a class="btn wa" target="_blank" rel="noopener" data-action="open-wa" href="${waHref}" ${item.wa_number ? "" : 'aria-disabled="true"'}>💬 ${waBtnLabel}</a>
+            <button class="btn reply" data-action="advance" data-to="replied" ${canReply ? "" : "disabled"}>Got a reply</button>
+            <button class="btn meeting" data-action="show-meeting" ${canMeeting ? "" : "disabled"}>Set meeting</button>
+            <button class="btn won" data-action="advance" data-to="won" ${canWon ? "" : "disabled"}>Won</button>
+            <button class="btn dead" data-action="advance" data-to="dead" ${canDead ? "" : "disabled"}>Dead</button>
+            ${canUndo ? `<button class="btn undo" data-action="revert" title="Undo: move back to ${PREV_STAGE[item.stage]}">↩ Undo</button>` : ""}
+          </div>
+          <div class="meetingRow" id="meeting-${cssEscape(item.lead_id)}">
+            <input type="datetime-local" />
+            <button class="btn ghost" data-action="confirm-meeting">Confirm meeting</button>
+          </div>
+          <textarea class="note" placeholder="Note (e.g. asked for price list, follow up Tue)" data-action="note">${esc(item.pipe_note || "")}</textarea>
+        </div>`;
       }
 
       async function load() {
@@ -208,60 +307,55 @@
       }
 
       function render() {
-        $("cFresh").textContent = items.filter((i) => i.stage === "captured").length;
+        $("cFresh").textContent    = items.filter((i) => i.stage === "captured").length;
         $("cMessaged").textContent = items.filter((i) => i.stage === "messaged").length;
-        $("cMeeting").textContent = items.filter((i) => i.stage === "meeting_set").length;
-        $("cWon").textContent = items.filter((i) => i.stage === "won").length;
+        $("cMeeting").textContent  = items.filter((i) => i.stage === "meeting_set").length;
+        $("cWon").textContent      = items.filter((i) => i.stage === "won").length;
 
-        const list = activeFilter ? items.filter((i) => i.stage === activeFilter) : items;
-        const cards = $("cards");
-        if (!list.length) { cards.innerHTML = '<div class="empty">Nothing here yet.</div>'; return; }
+        const container = $("cards");
 
-        cards.innerHTML = list.map((item) => {
-          const fresh = item.stage === "captured";
-          const waHref = item.wa_number
-            ? `https://wa.me/${item.wa_number.replace("+", "")}?text=${encodeURIComponent(waMessage(item.company, item.ask_for))}`
-            : "#";
-          const waBtnLabel = fresh ? "Open WhatsApp" : "Reopen chat";
-          // Clock 1 (our speed): live, per-contact, ticking from captured_at until messaged.
-          // Clock 2 (their interest): live, per-contact, ticking from messaged_at until replied.
-          const timer = fresh && item.captured_at
-            ? `<div class="timer clock1" data-captured-at="${item.captured_at}">captured ${fmtDuration(Date.now() - new Date(item.captured_at).getTime())} ago — reach out</div>`
-            : item.stage === "messaged" && item.messaged_at
-            ? `<div class="timer clock2" data-messaged-at="${item.messaged_at}">waiting ${fmtDuration(Date.now() - new Date(item.messaged_at).getTime())} for a reply</div>`
-            : "";
+        if (activeFilter) {
+          // Single-stage view — flat list, no section header
+          const list = sortSection(items.filter((i) => i.stage === activeFilter), activeFilter);
+          if (!list.length) { container.innerHTML = '<div class="empty">Nothing here yet.</div>'; return; }
+          container.innerHTML = list.map(renderCard).join("");
+        } else {
+          // All-stages view — grouped sections
+          const sections = SECTION_ORDER
+            .map((stage) => ({ stage, list: sortSection(items.filter((i) => i.stage === stage), stage) }))
+            .filter((s) => s.list.length > 0);
 
-          const canReply = item.stage === "messaged";
-          const canMeeting = item.stage === "replied";
-          const canWon = item.stage === "meeting_set";
-          const canDead = item.stage !== "won" && item.stage !== "dead";
+          if (!sections.length) { container.innerHTML = '<div class="empty">Nothing here yet.</div>'; return; }
 
-          return `<div class="card ${fresh ? "fresh" : ""}" data-id="${esc(item.lead_id)}">
-            <div class="top">
-              <div>
-                <div class="co">${esc(item.company)}</div>
-                <div class="meta">${esc(item.ask_for || "—")} · ${esc(item.town || "")}${item.wa_number ? " · " + esc(item.wa_number) : ""}</div>
-                <span class="stagebadge ${esc(item.stage)}">${STAGE_LABEL[item.stage] || item.stage}</span>
+          container.innerHTML = sections.map(({ stage, list }) => {
+            const collapsed = collapsedSections.has(stage);
+            return `<div class="section ${collapsed ? "collapsed" : ""}" data-stage="${stage}">
+              <div class="section-header ${stage}" data-toggle>
+                <span class="section-title">${SECTION_LABEL[stage] || stage}</span>
+                <span class="section-count">${list.length}</span>
+                <span class="section-toggle">${collapsed ? "▸" : "▾"}</span>
               </div>
-              <span class="tag prio ${esc(item.priority)}">${esc(item.priority)}</span>
-            </div>
-            ${timer}
-            <div class="row">
-              <a class="btn wa" target="_blank" rel="noopener" data-action="open-wa" href="${waHref}" ${item.wa_number ? "" : 'aria-disabled="true"'}>💬 ${waBtnLabel}</a>
-              <button class="btn reply" data-action="advance" data-to="replied" ${canReply ? "" : "disabled"}>Got a reply</button>
-              <button class="btn meeting" data-action="show-meeting" ${canMeeting ? "" : "disabled"}>Set meeting</button>
-              <button class="btn won" data-action="advance" data-to="won" ${canWon ? "" : "disabled"}>Won</button>
-              <button class="btn dead" data-action="advance" data-to="dead" ${canDead ? "" : "disabled"}>Dead</button>
-            </div>
-            <div class="meetingRow" id="meeting-${esc(item.lead_id)}">
-              <input type="datetime-local" />
-              <button class="btn ghost" data-action="confirm-meeting">Confirm meeting</button>
-            </div>
-            <textarea class="note" placeholder="Note (e.g. asked for price list, follow up Tue)" data-action="note">${esc(item.pipe_note || "")}</textarea>
-          </div>`;
-        }).join("");
+              <div class="section-cards">${list.map(renderCard).join("")}</div>
+            </div>`;
+          }).join("");
+
+          wireSections();
+        }
 
         wireCards();
+      }
+
+      function wireSections() {
+        document.querySelectorAll(".section-header[data-toggle]").forEach((header) => {
+          header.addEventListener("click", () => {
+            const section = header.closest(".section");
+            const stage = section.dataset.stage;
+            const nowCollapsed = section.classList.toggle("collapsed");
+            header.querySelector(".section-toggle").textContent = nowCollapsed ? "▸" : "▾";
+            if (nowCollapsed) collapsedSections.add(stage);
+            else collapsedSections.delete(stage);
+          });
+        });
       }
 
       function wireCards() {
@@ -296,6 +390,11 @@
             });
           }
 
+          const undoBtn = card.querySelector('[data-action="revert"]');
+          if (undoBtn) {
+            undoBtn.addEventListener("click", () => revert(leadId));
+          }
+
           const note = card.querySelector('[data-action="note"]');
           note.addEventListener("change", () => {
             const item = items.find((i) => i.lead_id === leadId);
@@ -315,6 +414,20 @@
           });
           const data = await res.json().catch(() => ({}));
           if (!res.ok) { alert(data.error || "Could not update."); return; }
+          await load();
+        } catch { alert("Network error — try again."); }
+      }
+
+      async function revert(lead_id) {
+        try {
+          const res = await fetch("/api/pipeline/revert", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ lead_id }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) { alert(data.error || "Could not revert."); return; }
+          showBanner("Stage reverted — lead moved back one step.");
           await load();
         } catch { alert("Network error — try again."); }
       }

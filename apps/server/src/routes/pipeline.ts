@@ -24,6 +24,12 @@ function legalTransition(from: string, to: Stage): boolean {
   return fi !== -1 && ti === fi + 1;
 }
 
+/** Previous stage in the forward pipeline (used by revert). */
+function prevStage(stage: string): Stage | null {
+  const idx = STAGE_ORDER.indexOf(stage as Stage);
+  return idx > 0 ? STAGE_ORDER[idx - 1] : null;
+}
+
 interface PipelineRow {
   lead_id: string;
   company: string | null;
@@ -67,8 +73,16 @@ export async function pipelineRoutes(app: FastifyInstance): Promise<void> {
       where o.status = 'won_wa'
         ${stage ? db`and o.stage = ${stage}` : db``}
       order by
-        case o.stage when 'captured' then 0 when 'messaged' then 1 else 2 end,
-        o.messaged_at asc nulls last,
+        case o.stage
+          when 'captured'     then 0
+          when 'messaged'     then 1
+          when 'replied'      then 2
+          when 'meeting_set'  then 3
+          when 'won'          then 4
+          when 'dead'         then 5
+          else 6
+        end,
+        -- per-stage secondary sort handled client-side; server provides a stable base
         o.updated_at desc
     `;
 
@@ -134,6 +148,37 @@ export async function pipelineRoutes(app: FastifyInstance): Promise<void> {
         replied_at  = case when ${to_stage} = 'replied'  and replied_at  is null then now() else replied_at  end,
         meeting_at  = ${to_stage === "meeting_set" ? meeting_at : db`meeting_at`},
         pipe_note   = ${pipe_note ?? db`pipe_note`},
+        updated_at  = now()
+      where lead_id = ${lead_id} and status = 'won_wa'
+      returning *
+    `;
+    return { ok: true, item: saved };
+  });
+
+  app.post<{ Body: { lead_id?: string } }>("/api/pipeline/revert", async (request, reply) => {
+    const db = getSql();
+    if (!db) return reply.code(503).send({ error: "Database not configured." });
+
+    const lead_id = String((request.body ?? {}).lead_id ?? "").trim();
+    if (!lead_id) return reply.code(400).send({ error: "lead_id is required." });
+
+    const [current] = await db<{ stage: string }[]>`
+      select stage from outcomes where lead_id = ${lead_id} and status = 'won_wa'
+    `;
+    if (!current) return reply.code(404).send({ error: "No pipeline item for that lead_id." });
+
+    const prev = prevStage(current.stage);
+    if (!prev) {
+      return reply.code(400).send({ error: `Cannot revert from '${current.stage}'.` });
+    }
+
+    const fromStage = current.stage;
+    const [saved] = await db`
+      update outcomes set
+        stage      = ${prev},
+        messaged_at = case when ${fromStage} = 'messaged'     then null else messaged_at end,
+        replied_at  = case when ${fromStage} = 'replied'      then null else replied_at  end,
+        meeting_at  = case when ${fromStage} = 'meeting_set'  then null else meeting_at  end,
         updated_at  = now()
       where lead_id = ${lead_id} and status = 'won_wa'
       returning *
