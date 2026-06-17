@@ -109,6 +109,19 @@
       }
       .flag-btn:active { transform: scale(.99); }
 
+      /* ── Note textarea (shown only when flagged) ── */
+      .sl-note {
+        display: none; width: 100%; margin-top: 10px;
+        background: rgba(255,255,255,.04); border: 1px solid rgba(187,148,87,.3);
+        border-radius: 10px; padding: 10px 12px; color: var(--paper);
+        font-family: var(--sans); font-size: 13px; resize: vertical; min-height: 60px;
+        outline: none;
+      }
+      .sl-note::placeholder { color: #5e6a82; }
+      .sl-note:focus { border-color: rgba(187,148,87,.6); background: rgba(255,255,255,.06); }
+      .lead-card.flagged .sl-note { display: block; }
+      .note-status { font-size: 11.5px; color: var(--muted); margin-top: 5px; min-height: 16px; }
+
       .empty { color: var(--muted); font-size: 14px; text-align: center; padding: 50px 0; }
       .loading { color: var(--muted); font-size: 14px; text-align: center; padding: 50px 0; }
     </style>
@@ -258,6 +271,8 @@
             <span class="rep-tag">${esc(lead.rep)}</span>
           </div>
           <button class="flag-btn ${lead.sl_flag ? "active" : ""}" data-action="flag">${flagLabel}</button>
+          <textarea class="sl-note" data-action="note" placeholder="Add details about prior contact (when, what was discussed, outcome…)">${esc(lead.sl_note || "")}</textarea>
+          <div class="note-status" data-status></div>
         </div>`;
       }
 
@@ -270,7 +285,6 @@
             if (!lead) return;
 
             const newFlag = !lead.sl_flag;
-            // Optimistic update
             lead.sl_flag = newFlag;
             renderLeads();
 
@@ -281,12 +295,54 @@
                 body: JSON.stringify({ lead_id, flagged: newFlag }),
               });
               if (!res.ok) throw new Error();
+              // Focus the note box when flagging
+              if (newFlag) {
+                const noteBox = $("leadsList").querySelector(`.lead-card[data-id="${lead_id}"] .sl-note`);
+                if (noteBox) noteBox.focus();
+              }
             } catch {
-              // Revert on failure
               lead.sl_flag = !newFlag;
               renderLeads();
               alert("Could not save — try again.");
             }
+          });
+        });
+
+        // Auto-save note on blur
+        $("leadsList").querySelectorAll('[data-action="note"]').forEach((textarea) => {
+          let saveTimer = null;
+          const card = textarea.closest(".lead-card");
+          const statusEl = card.querySelector("[data-status]");
+          const lead_id = card.dataset.id;
+
+          const saveNote = async (note) => {
+            const lead = leads.find((l) => l.id === lead_id);
+            if (!lead) return;
+            statusEl.textContent = "Saving…";
+            try {
+              const res = await fetch("/api/sales-lead/flag", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ lead_id, flagged: lead.sl_flag, note }),
+              });
+              if (!res.ok) throw new Error();
+              lead.sl_note = note;
+              statusEl.textContent = "Saved";
+              setTimeout(() => { statusEl.textContent = ""; }, 2000);
+            } catch {
+              statusEl.textContent = "Could not save — try again.";
+            }
+          };
+
+          textarea.addEventListener("input", () => {
+            statusEl.textContent = "";
+            clearTimeout(saveTimer);
+            saveTimer = setTimeout(() => saveNote(textarea.value), 800);
+          });
+
+          textarea.addEventListener("blur", () => {
+            clearTimeout(saveTimer);
+            saveNote(textarea.value);
           });
         });
       }
