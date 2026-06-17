@@ -19,13 +19,15 @@
         --sans: "Inter",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
       }
       * { box-sizing: border-box; }
-      html, body { margin: 0; min-height: 100%; }
+      html, body { margin: 0; height: 100%; overflow: hidden; }
       body {
         font-family: var(--sans); color: var(--paper);
         background: radial-gradient(1200px 600px at 90% -10%, rgba(187,148,87,.14), transparent 60%), var(--ink);
         -webkit-font-smoothing: antialiased;
       }
-      .wrap { max-width: 880px; margin: 0 auto; padding: 22px 22px 70px; }
+      .wrap { max-width: 880px; margin: 0 auto; height: 100%; display: flex; flex-direction: column; }
+      .top-bar { flex-shrink: 0; padding: 22px 22px 0; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+      .cards-wrap { flex: 1; overflow-y: auto; padding: 16px 22px 60px; }
       header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
       .brand { display: flex; align-items: center; gap: 12px; }
       .mark { width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center;
@@ -49,7 +51,7 @@
       .banner.show { display: block; }
       @keyframes pop { 0% { background: rgba(187,148,87,.35); } 100% { background: rgba(187,148,87,.14); } }
 
-      .filters { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+      .filters { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
       .filter { border: 1px solid var(--line); background: rgba(255,255,255,.04); color: var(--muted); border-radius: 99px;
         padding: 7px 14px; font-size: 12.5px; font-weight: 600; cursor: pointer; }
       .filter.active { border-color: var(--gold); color: var(--gold); background: rgba(187,148,87,.12); }
@@ -122,32 +124,36 @@
   </head>
   <body>
     <div class="wrap">
-      <header>
-        <div class="brand"><div class="mark">H</div><div><b>Handler Cockpit</b><span>Kencana LeadScout · message → reply → meeting</span></div></div>
-        <div class="sync"><span class="dot"></span><span id="syncLabel">synced just now</span><button id="refresh">Refresh</button><a class="back" href="/champion">Champion ↗</a></div>
-      </header>
+      <div class="top-bar">
+        <header>
+          <div class="brand"><div class="mark">H</div><div><b>Handler Cockpit</b><span>Kencana LeadScout · message → reply → meeting</span></div></div>
+          <div class="sync"><span class="dot"></span><span id="syncLabel">synced just now</span><button id="refresh">Refresh</button><a class="back" href="/champion">Champion ↗</a></div>
+        </header>
 
-      <div class="banner" id="banner"></div>
+        <div class="banner" id="banner"></div>
 
-      <div class="strip">
-        <div class="stat fresh"><div class="l">Fresh</div><div class="v" id="cFresh">0</div></div>
-        <div class="stat"><div class="l">Awaiting reply</div><div class="v" id="cMessaged">0</div></div>
-        <div class="stat"><div class="l">Meeting</div><div class="v" id="cMeeting">0</div></div>
-        <div class="stat"><div class="l">Won</div><div class="v" id="cWon">0</div></div>
-        <div class="stat clock1"><div class="l">Avg to message</div><div class="v" id="cAvgMsg">—</div></div>
+        <div class="strip">
+          <div class="stat fresh"><div class="l">Fresh</div><div class="v" id="cFresh">0</div></div>
+          <div class="stat"><div class="l">Awaiting reply</div><div class="v" id="cMessaged">0</div></div>
+          <div class="stat"><div class="l">Meeting</div><div class="v" id="cMeeting">0</div></div>
+          <div class="stat"><div class="l">Won</div><div class="v" id="cWon">0</div></div>
+          <div class="stat clock1"><div class="l">Avg to message</div><div class="v" id="cAvgMsg">—</div></div>
+        </div>
+
+        <div class="filters" id="filters">
+          <div class="filter active" data-stage="">All</div>
+          <div class="filter" data-stage="captured">Fresh</div>
+          <div class="filter" data-stage="messaged">Awaiting reply</div>
+          <div class="filter" data-stage="replied">Replied</div>
+          <div class="filter" data-stage="meeting_set">Meeting set</div>
+          <div class="filter" data-stage="won">Won</div>
+          <div class="filter" data-stage="dead">Dead</div>
+        </div>
       </div>
 
-      <div class="filters" id="filters">
-        <div class="filter active" data-stage="">All</div>
-        <div class="filter" data-stage="captured">Fresh</div>
-        <div class="filter" data-stage="messaged">Awaiting reply</div>
-        <div class="filter" data-stage="replied">Replied</div>
-        <div class="filter" data-stage="meeting_set">Meeting set</div>
-        <div class="filter" data-stage="won">Won</div>
-        <div class="filter" data-stage="dead">Dead</div>
+      <div class="cards-wrap">
+        <div class="cards" id="cards"><div class="empty">Loading pipeline…</div></div>
       </div>
-
-      <div class="cards" id="cards"><div class="empty">Loading pipeline…</div></div>
     </div>
 
     <script>
