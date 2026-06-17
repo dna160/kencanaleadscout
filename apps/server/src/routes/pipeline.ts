@@ -27,7 +27,7 @@ function legalTransition(from: string, to: Stage): boolean {
 /** Previous stage in the forward pipeline (used by revert). */
 function prevStage(stage: string): Stage | null {
   const idx = STAGE_ORDER.indexOf(stage as Stage);
-  return idx > 0 ? STAGE_ORDER[idx - 1] : null;
+  return idx > 0 ? (STAGE_ORDER[idx - 1] ?? null) : null;
 }
 
 interface PipelineRow {
