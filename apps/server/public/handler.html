@@ -226,6 +226,8 @@
           ? `<div class="timer clock1" data-captured-at="${item.captured_at}">captured ${fmtDuration(Date.now() - new Date(item.captured_at).getTime())} ago — reach out</div>`
           : item.stage === "messaged" && item.messaged_at
           ? `<div class="timer clock2" data-messaged-at="${item.messaged_at}">waiting ${fmtDuration(Date.now() - new Date(item.messaged_at).getTime())} for a reply</div>`
+          : item.stage === "meeting_set" && item.meeting_at
+          ? `<div class="timer" style="color:#ecb44f">📅 Meeting: ${new Date(item.meeting_at).toLocaleString("en-GB", { weekday:"short", day:"numeric", month:"short", year:"numeric", hour:"2-digit", minute:"2-digit" })}</div>`
           : "";
 
         const canReply   = item.stage === "messaged";
