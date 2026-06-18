@@ -38,7 +38,7 @@
       .sync button { border: 1px solid var(--line); background: rgba(255,255,255,.05); color: var(--paper); border-radius: 9px; padding: 7px 12px; cursor: pointer; font-weight: 600; font-size: 12.5px; }
       a.back { color: var(--muted); text-decoration: none; font-size: 13px; }
 
-      .strip { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 16px; }
+      .strip { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 16px; }
       .stat.clock1 .v { color: var(--gold); }
       .stat { border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; background: rgba(255,255,255,.04); }
       .stat .l { color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; }
@@ -135,6 +135,7 @@
         <div class="strip">
           <div class="stat fresh"><div class="l">Fresh</div><div class="v" id="cFresh">0</div></div>
           <div class="stat"><div class="l">Awaiting reply</div><div class="v" id="cMessaged">0</div></div>
+          <div class="stat"><div class="l">Replied</div><div class="v" id="cReplied">0</div></div>
           <div class="stat"><div class="l">Meeting</div><div class="v" id="cMeeting">0</div></div>
           <div class="stat"><div class="l">Won</div><div class="v" id="cWon">0</div></div>
           <div class="stat clock1"><div class="l">Avg to message</div><div class="v" id="cAvgMsg">—</div></div>
@@ -317,6 +318,7 @@
       function render() {
         $("cFresh").textContent    = items.filter((i) => i.stage === "captured").length;
         $("cMessaged").textContent = items.filter((i) => i.stage === "messaged").length;
+        $("cReplied").textContent  = items.filter((i) => i.stage === "replied").length;
         $("cMeeting").textContent  = items.filter((i) => i.stage === "meeting_set").length;
         $("cWon").textContent      = items.filter((i) => i.stage === "won").length;
 
