@@ -227,6 +227,8 @@
           ? `<div class="timer clock1" data-captured-at="${item.captured_at}">captured ${fmtDuration(Date.now() - new Date(item.captured_at).getTime())} ago — reach out</div>`
           : item.stage === "messaged" && item.messaged_at
           ? `<div class="timer clock2" data-messaged-at="${item.messaged_at}">waiting ${fmtDuration(Date.now() - new Date(item.messaged_at).getTime())} for a reply</div>`
+          : item.stage === "replied" && item.replied_at
+          ? `<div class="timer clock3" data-replied-at="${item.replied_at}">replied ${fmtDuration(Date.now() - new Date(item.replied_at).getTime())} ago — set a meeting</div>`
           : item.stage === "meeting_set" && item.meeting_at
           ? `<div class="timer" style="color:#ecb44f">📅 Meeting: ${new Date(item.meeting_at).toLocaleString("en-GB", { weekday:"short", day:"numeric", month:"short", year:"numeric", hour:"2-digit", minute:"2-digit" })}</div>`
           : "";
@@ -468,6 +470,11 @@
         document.querySelectorAll(".timer.clock2[data-messaged-at]").forEach((el) => {
           const ms = Date.now() - new Date(el.dataset.messagedAt).getTime();
           el.textContent = `waiting ${fmtDuration(ms)} for a reply`;
+        });
+        // Clock 3 — live, per-contact, ticking since replied_at (how long ago they replied).
+        document.querySelectorAll(".timer.clock3[data-replied-at]").forEach((el) => {
+          const ms = Date.now() - new Date(el.dataset.repliedAt).getTime();
+          el.textContent = `replied ${fmtDuration(ms)} ago — set a meeting`;
         });
         const s = Math.floor((Date.now() - lastSync) / 1000);
         $("syncLabel").textContent = s < 2 ? "synced just now" : `synced ${s}s ago`;
