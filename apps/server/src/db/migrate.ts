@@ -66,6 +66,7 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
   // Sales Lead: flag leads previously contacted by the sales lead.
   await db`alter table leads add column if not exists sl_flag boolean default false`;
   await db`alter table leads add column if not exists sl_note text`;
+  await db`alter table leads add column if not exists review_flag text`;
 
   await db`create index if not exists leads_rep_day_idx on leads (rep, day)`;
   await db`create index if not exists outcomes_status_idx on outcomes (status)`;
