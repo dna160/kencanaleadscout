@@ -10,6 +10,7 @@
     "seed": "tsx src/db/seedLeads.ts",
     "migrate": "tsx src/db/migrate.ts",
     "renew": "tsx src/db/renewDays3to10.ts",
+    "dedupe": "tsx src/db/dedupeLeads.ts",
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
