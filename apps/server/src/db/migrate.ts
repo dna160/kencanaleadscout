@@ -64,8 +64,14 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
 
   // Helpful indexes for the cockpit + champion queries.
   // Sales Lead: flag leads previously contacted by the sales lead.
-  await db`alter table leads add column if not exists sl_flag boolean default false`;
-  await db`alter table leads add column if not exists sl_note text`;
+  await db`alter table leads add column if not exists sl_flag       boolean default false`;
+  await db`alter table leads add column if not exists sl_note       text`;
+  // Transaction review: invoice ID, alias name used, and review outcome.
+  await db`alter table leads add column if not exists invoice_id    text`;
+  await db`alter table leads add column if not exists transacted_as text`;
+  await db`alter table leads add column if not exists review_status text`;
+  // Dedup / relevance flag set by scripts (e.g. irrelevant_manufacturer).
+  await db`alter table leads add column if not exists flag          text`;
 
   await db`create index if not exists leads_rep_day_idx on leads (rep, day)`;
   await db`create index if not exists outcomes_status_idx on outcomes (status)`;

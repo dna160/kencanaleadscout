@@ -124,6 +124,70 @@
 
       .empty { color: var(--muted); font-size: 14px; text-align: center; padding: 50px 0; }
       .loading { color: var(--muted); font-size: 14px; text-align: center; padding: 50px 0; }
+
+      /* ── Transaction Review view ── */
+      .review-btn {
+        margin-top: 18px; width: 100%; border-radius: 12px; padding: 13px 16px;
+        font-weight: 700; font-size: 14px; cursor: pointer; font-family: var(--sans);
+        border: 1px solid rgba(107,63,160,.5); background: rgba(107,63,160,.14); color: #c4a7f0;
+        text-align: left; display: flex; align-items: center; gap: 10px;
+      }
+      .review-btn .rb-count { margin-left: auto; font-size: 12px; color: var(--muted); font-weight: 600; }
+      .review-hdr { display: flex; align-items: center; gap: 10px; }
+      .review-tally { margin-left: auto; font-size: 12.5px; font-weight: 600; color: #c4a7f0; }
+
+      .rv-sec-hdr {
+        font-size: 11px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase;
+        padding: 8px 0 10px; border-bottom: 1px solid var(--line); margin-bottom: 12px;
+      }
+      .rv-sec-hdr.pending { color: var(--gold); }
+      .rv-sec-hdr.resolved { color: #9fe0b9; }
+
+      .rv-card {
+        border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; margin-bottom: 10px;
+        background: linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.02));
+      }
+      .rv-card.resolved-card {
+        border-color: rgba(44,110,73,.4);
+        background: linear-gradient(180deg, rgba(44,110,73,.08), rgba(44,110,73,.02));
+      }
+      .rv-card.irrelevant-card {
+        border-color: rgba(155,34,38,.35);
+        background: linear-gradient(180deg, rgba(155,34,38,.08), rgba(155,34,38,.02));
+      }
+      .rv-card .co { font-family: var(--display); font-size: 16px; font-weight: 700; }
+      .rv-card .meta { color: var(--muted); font-size: 12.5px; margin-top: 3px; }
+      .rv-card .sl-note-preview { font-size: 12.5px; color: #d0d8e8; margin-top: 6px; font-style: italic; }
+
+      .rv-fields { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+      .rv-field label { display: block; font-size: 11px; font-weight: 700; letter-spacing: .5px;
+        text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
+      .rv-field input {
+        width: 100%; background: rgba(255,255,255,.05); border: 1px solid var(--line);
+        border-radius: 9px; padding: 9px 12px; color: var(--paper);
+        font-family: var(--sans); font-size: 13.5px; outline: none;
+      }
+      .rv-field input:focus { border-color: rgba(107,63,160,.6); background: rgba(255,255,255,.07); }
+      .rv-field input::placeholder { color: #5e6a82; }
+
+      .rv-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+      .rv-save { flex: 1; border-radius: 10px; padding: 10px 14px; font-weight: 700; font-size: 13px;
+        cursor: pointer; font-family: var(--sans); border: 1px solid rgba(107,63,160,.5);
+        background: rgba(107,63,160,.2); color: #c4a7f0; }
+      .rv-save:disabled { opacity: .4; cursor: not-allowed; }
+      .rv-irr { border-radius: 10px; padding: 10px 14px; font-weight: 700; font-size: 13px;
+        cursor: pointer; font-family: var(--sans); border: 1px solid rgba(155,34,38,.4);
+        background: rgba(155,34,38,.12); color: #ff9b9b; }
+      .rv-status { font-size: 11.5px; color: var(--muted); margin-top: 6px; min-height: 16px; }
+
+      .resolved-summary { display: flex; flex-direction: column; gap: 3px; margin-top: 8px; }
+      .resolved-summary span { font-size: 13px; }
+      .resolved-summary .rs-label { color: var(--muted); font-size: 11px; text-transform: uppercase;
+        font-weight: 700; letter-spacing: .5px; }
+      .badge-irr { display: inline-block; background: rgba(155,34,38,.2); color: #ff9b9b;
+        border-radius: 99px; padding: 2px 9px; font-size: 11px; font-weight: 700; }
+      .badge-rev { display: inline-block; background: rgba(44,110,73,.2); color: #9fe0b9;
+        border-radius: 99px; padding: 2px 9px; font-size: 11px; font-weight: 700; }
     </style>
   </head>
   <body>
@@ -143,6 +207,24 @@
             <p>Review the lead list and flag any company you've previously contacted. Flagged leads are removed from the hunter pool.</p>
           </div>
           <div class="days-grid" id="daysGrid"></div>
+          <button class="review-btn" id="openReviewBtn">
+            📋 Transaction Review
+            <span class="rb-count" id="rbCount">Loading…</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- ── Transaction Review view ── -->
+      <div id="reviewView" class="view">
+        <div class="top-bar">
+          <div class="review-hdr">
+            <button class="back-btn" id="reviewBackBtn">← Days</button>
+            <span class="day-label">Transaction Review</span>
+            <span class="review-tally" id="reviewTally"></span>
+          </div>
+        </div>
+        <div class="scroll" id="reviewList">
+          <div class="loading">Loading…</div>
         </div>
       </div>
 
@@ -347,14 +429,181 @@
         });
       }
 
-      /* ── Back button ── */
+      /* ── Back button (list view) ── */
       $("backBtn").addEventListener("click", () => {
         showView("dayView");
-        buildDayPicker(); // refresh counts
+        buildDayPicker();
       });
+
+      /* ══════════════════════════════════════════════
+         TRANSACTION REVIEW
+      ══════════════════════════════════════════════ */
+      let reviewLeads = [];
+
+      async function openReview() {
+        showView("reviewView");
+        $("reviewList").innerHTML = '<div class="loading">Loading…</div>';
+        $("reviewTally").textContent = "";
+        try {
+          const res = await fetch("/api/sales-lead/review");
+          if (!res.ok) throw new Error();
+          const data = await res.json();
+          reviewLeads = data.leads;
+          renderReview();
+        } catch {
+          $("reviewList").innerHTML = '<div class="empty">Could not load flagged leads.</div>';
+        }
+      }
+
+      function renderReview() {
+        const pending  = reviewLeads.filter((l) => !l.review_status);
+        const resolved = reviewLeads.filter((l) => l.review_status);
+        $("reviewTally").textContent = `${resolved.length} / ${reviewLeads.length} resolved`;
+        $("rbCount").textContent = reviewLeads.length
+          ? `${pending.length} pending · ${resolved.length} resolved`
+          : "no flagged leads";
+
+        let html = "";
+
+        if (!reviewLeads.length) {
+          html = '<div class="empty">No previously-contacted companies flagged yet.<br/>Flag companies in the day view first.</div>';
+          $("reviewList").innerHTML = html;
+          return;
+        }
+
+        if (pending.length) {
+          html += `<div class="rv-sec-hdr pending">⏳ Pending Review (${pending.length})</div>`;
+          html += pending.map(reviewCardHtml).join("");
+        }
+
+        if (resolved.length) {
+          html += `<div class="rv-sec-hdr resolved" style="margin-top:${pending.length ? 24 : 0}px">✓ Transaction Provided (${resolved.length})</div>`;
+          html += resolved.map(reviewCardHtml).join("");
+        }
+
+        $("reviewList").innerHTML = html;
+        wireReviewCards();
+      }
+
+      function reviewCardHtml(lead) {
+        const isIrr  = lead.review_status === "irrelevant";
+        const isRev  = lead.review_status === "reviewed";
+        const cardCls = isIrr ? "irrelevant-card" : isRev ? "resolved-card" : "";
+        const meta = [lead.rep, lead.town, `Day ${lead.day}`].filter(Boolean).map(esc).join(" · ");
+        const notePreview = lead.sl_note ? `<div class="sl-note-preview">"${esc(lead.sl_note)}"</div>` : "";
+
+        if (isIrr || isRev) {
+          // Resolved — show summary, allow re-edit via clicking
+          const summary = isIrr
+            ? `<span class="badge-irr">Irrelevant</span>`
+            : `<div class="resolved-summary">
+                <span class="rs-label">Invoice ID</span>
+                <span>${esc(lead.invoice_id || "—")}</span>
+                ${lead.transacted_as ? `<span class="rs-label" style="margin-top:4px">Transacted as</span><span>${esc(lead.transacted_as)}</span>` : ""}
+                <span class="badge-rev" style="margin-top:6px">Reviewed</span>
+               </div>`;
+          return `<div class="rv-card ${cardCls}" data-id="${esc(lead.id)}">
+            <div class="co">${esc(lead.company)}</div>
+            <div class="meta">${meta}</div>
+            ${notePreview}
+            ${summary}
+            <div class="rv-fields" style="margin-top:10px">
+              <div class="rv-field">
+                <label>Invoice ID</label>
+                <input type="text" class="rv-invoice" placeholder="e.g. INV-2023-0041" value="${esc(lead.invoice_id || "")}" />
+              </div>
+              <div class="rv-field">
+                <label>Transacted under company name</label>
+                <input type="text" class="rv-alias" placeholder="If different from above" value="${esc(lead.transacted_as || "")}" />
+              </div>
+            </div>
+            <div class="rv-actions">
+              <button class="rv-save" data-action="rv-save">Save</button>
+              <button class="rv-irr" data-action="rv-irr">${isIrr ? "✓ Irrelevant" : "Irrelevant"}</button>
+            </div>
+            <div class="rv-status" data-rv-status></div>
+          </div>`;
+        }
+
+        // Pending — full edit form
+        return `<div class="rv-card" data-id="${esc(lead.id)}">
+          <div class="co">${esc(lead.company)}</div>
+          <div class="meta">${meta}</div>
+          ${notePreview}
+          <div class="rv-fields">
+            <div class="rv-field">
+              <label>Invoice ID</label>
+              <input type="text" class="rv-invoice" placeholder="e.g. INV-2023-0041" value="${esc(lead.invoice_id || "")}" />
+            </div>
+            <div class="rv-field">
+              <label>Transacted under company name</label>
+              <input type="text" class="rv-alias" placeholder="If they used a different entity name" value="${esc(lead.transacted_as || "")}" />
+            </div>
+          </div>
+          <div class="rv-actions">
+            <button class="rv-save" data-action="rv-save">Save</button>
+            <button class="rv-irr" data-action="rv-irr">Irrelevant</button>
+          </div>
+          <div class="rv-status" data-rv-status></div>
+        </div>`;
+      }
+
+      function wireReviewCards() {
+        $("reviewList").querySelectorAll(".rv-card").forEach((card) => {
+          const lead_id   = card.dataset.id;
+          const invoiceEl = card.querySelector(".rv-invoice");
+          const aliasEl   = card.querySelector(".rv-alias");
+          const statusEl  = card.querySelector("[data-rv-status]");
+
+          card.querySelector('[data-action="rv-save"]').addEventListener("click", async () => {
+            const invoice_id    = invoiceEl.value.trim() || null;
+            const transacted_as = aliasEl.value.trim() || null;
+            const review_status = invoice_id ? "reviewed" : null;
+            await saveReview(lead_id, invoice_id, transacted_as, review_status, statusEl);
+          });
+
+          card.querySelector('[data-action="rv-irr"]').addEventListener("click", async () => {
+            const lead = reviewLeads.find((l) => l.id === lead_id);
+            const newStatus = lead?.review_status === "irrelevant" ? null : "irrelevant";
+            await saveReview(lead_id, null, null, newStatus, statusEl);
+          });
+        });
+      }
+
+      async function saveReview(lead_id, invoice_id, transacted_as, review_status, statusEl) {
+        statusEl.textContent = "Saving…";
+        try {
+          const res = await fetch("/api/sales-lead/review", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ lead_id, invoice_id, transacted_as, review_status }),
+          });
+          if (!res.ok) throw new Error();
+          const data = await res.json();
+          const lead = reviewLeads.find((l) => l.id === lead_id);
+          if (lead) {
+            lead.invoice_id    = data.invoice_id;
+            lead.transacted_as = data.transacted_as;
+            lead.review_status = data.review_status;
+          }
+          statusEl.textContent = "Saved ✓";
+          setTimeout(() => renderReview(), 600);
+        } catch {
+          statusEl.textContent = "Could not save — try again.";
+        }
+      }
+
+      $("openReviewBtn").addEventListener("click", openReview);
+      $("reviewBackBtn").addEventListener("click", () => { showView("dayView"); buildDayPicker(); });
 
       /* ── Boot ── */
       buildDayPicker();
+      // Pre-load review count for the button
+      fetch("/api/sales-lead/review").then((r) => r.json()).then((d) => {
+        $("rbCount").textContent = d.total
+          ? `${d.pending} pending · ${d.resolved} resolved`
+          : "no flagged leads yet";
+      }).catch(() => { $("rbCount").textContent = ""; });
     </script>
   </body>
 </html>
