@@ -190,7 +190,10 @@
             </div>
           `).join("");
         } catch (err) {
-          el.innerHTML = `<div class="empty" style="color:#e05252">Gagal memuat: ${esc(String(err))}. Pastikan DATABASE_URL dikonfigurasi.</div>`;
+          const msg = String(err).includes("503")
+            ? "Database belum terhubung — pastikan DATABASE_URL dikonfigurasi di Railway."
+            : "Server error — coba reload halaman. Jika berlanjut, cek log Railway.";
+          el.innerHTML = `<div class="empty" style="color:#e05252">${msg}</div>`;
         }
       }
 

@@ -102,6 +102,8 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
       created_at   timestamptz not null default now()
     )
   `;
+  // Additive: if table existed before `active` was introduced, add it now.
+  await db`alter table salespeople add column if not exists active boolean not null default true`;
 
   // Customer master: enables New/Old auto-detection + dedup.
   await db`
