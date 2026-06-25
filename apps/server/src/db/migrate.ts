@@ -87,16 +87,25 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
 
   // ── Module D — Visitation Log ──────────────────────────────────────────────
 
-  // Managed enum lists (categories + areas). Handler-extensible without migrations.
-  await db`
-    create table if not exists visit_lists (
-      id     bigserial primary key,
-      type   text not null,
-      value  text not null,
-      active boolean not null default true,
-      unique (type, lower(value))
-    )
-  `;
+  // visit_lists: wrapped separately because the unique index uses an expression
+  // (lower(value)), which cannot be expressed as an inline table constraint in
+  // PostgreSQL — it must be a separate CREATE UNIQUE INDEX statement.
+  try {
+    await db`
+      create table if not exists visit_lists (
+        id     bigserial primary key,
+        type   text not null,
+        value  text not null,
+        active boolean not null default true
+      )
+    `;
+    await db`
+      create unique index if not exists visit_lists_type_value_idx
+        on visit_lists (type, lower(value))
+    `;
+  } catch (vlErr) {
+    console.error("[migrate] visit_lists step failed (non-fatal):", vlErr);
+  }
 
   // Field-rep registry. Deactivate on departure; never hard-delete (historical FK).
   await db`
