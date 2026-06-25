@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
-    <title>Visitation Log · Kencana LeadScout</title>
+    <title>Catat Kunjungan · Kencana LeadScout</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -13,7 +13,6 @@
     <style>
       :root {
         --ink: #14213d; --ink-2: #1b2949; --red: #9b2226; --gold: #bb9457; --green: #2c6e49;
-        --blue: #2E6FD6; --blue-bg: #E8F1FB; --green-bg: #EAF5EA;
         --paper: #f5f2ec; --muted: #8a96ad; --line: rgba(255,255,255,.09);
         --display: "Space Grotesk","Inter",system-ui,sans-serif;
         --sans: "Inter",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
@@ -24,425 +23,149 @@
         font-family: var(--sans); color: var(--paper); background: var(--ink);
         -webkit-font-smoothing: antialiased; overscroll-behavior-y: contain;
       }
-      .app { max-width: 640px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; }
-      .view { display: none; flex: 1; flex-direction: column; }
-      .view.active { display: flex; }
+      .app { max-width: 560px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; }
 
-      /* ── Gate ─────────────────────────────────────────────────────── */
-      #gate {
-        justify-content: center; padding: 30px 22px; gap: 12px;
-        background: radial-gradient(900px 500px at 80% -10%, rgba(187,148,87,.16), transparent 60%), var(--ink);
-      }
-      .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
-      .mark {
-        width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center;
-        background: linear-gradient(135deg, var(--red), #7a1a1d); font-family: var(--display);
-        font-weight: 700; color: #fff; font-size: 19px;
-      }
-      .brand b { font-family: var(--display); font-size: 17px; }
-      .brand span { color: var(--muted); font-size: 12.5px; display: block; }
-      #gate h2 { font-family: var(--display); font-size: 22px; margin: 0 0 4px; }
-      #gate p { color: var(--muted); margin: 0 0 12px; font-size: 14px; }
-      .role {
-        display: flex; align-items: center; gap: 14px; padding: 18px 20px; border-radius: 16px;
-        cursor: pointer; border: 1px solid var(--line);
-        background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
-        font-family: var(--display); font-size: 18px; font-weight: 600; transition: .15s;
-      }
-      .role:active { transform: scale(.985); }
-      .role .ava { width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; font-size: 17px; color: #fff; flex-shrink: 0; }
-      .role small { display: block; font-family: var(--sans); font-weight: 400; color: var(--muted); font-size: 12.5px; margin-top: 2px; }
-      .role.a .ava { background: var(--red); }
-      .role.b .ava { background: #3b6ea5; }
-      .role.c .ava { background: var(--gold); }
-      .role.d .ava { background: var(--green); }
-      .role.e .ava { background: #6b3fa0; }
-
-      /* Rep picker (shown after Hunter A/B selects) */
-      #rep-picker { padding: 0 22px 30px; }
-      #rep-picker h3 { font-family: var(--display); font-size: 18px; margin: 0 0 12px; }
-      .rep-list { display: flex; flex-direction: column; gap: 8px; }
-      .rep-item {
-        display: flex; align-items: center; gap: 14px; padding: 14px 18px; border-radius: 13px;
-        cursor: pointer; border: 1px solid var(--line);
-        background: rgba(255,255,255,.03); transition: .12s;
-      }
-      .rep-item:active { transform: scale(.99); }
-      .rep-item .ri-code { font-family: var(--display); font-weight: 700; font-size: 14px; color: var(--gold); width: 36px; }
-      .rep-item .ri-name { font-weight: 600; font-size: 16px; }
-
-      /* ── Top bar ──────────────────────────────────────────────────── */
+      /* ── Top bar ─────────────────────────────────────────────────── */
       .top {
         position: sticky; top: 0; z-index: 5; background: rgba(20,33,61,.92);
-        backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); padding: 10px 16px;
+        backdrop-filter: blur(10px); border-bottom: 1px solid var(--line);
+        padding: 12px 18px; display: flex; align-items: center; gap: 12px;
       }
-      .top-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-      .who { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13px; }
-      .who .pill {
-        background: rgba(255,255,255,.08); padding: 4px 10px; border-radius: 99px; cursor: pointer; font-size: 12px;
+      .mark {
+        width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; flex-shrink: 0;
+        background: linear-gradient(135deg, var(--red), #7a1a1d);
+        font-family: var(--display); font-weight: 700; color: #fff; font-size: 16px;
       }
-      .tab-bar { display: flex; gap: 6px; margin-top: 10px; }
-      .tab {
-        padding: 6px 14px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer;
-        border: 1px solid var(--line); background: transparent; color: var(--muted); transition: .12s;
-      }
-      .tab.active { background: rgba(255,255,255,.1); color: var(--paper); border-color: rgba(255,255,255,.2); }
-      .tab-new { border-color: rgba(46,111,214,.5) !important; color: #6ea8f5 !important; }
-      .tab-new.active { background: rgba(46,111,214,.2) !important; color: #6ea8f5 !important; }
+      .top-title { font-family: var(--display); font-weight: 600; font-size: 15px; }
+      .top-sub   { color: var(--muted); font-size: 12px; }
 
-      /* ── Capture form ─────────────────────────────────────────────── */
-      .form-body { padding: 20px 18px 100px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; }
-      .form-group { display: flex; flex-direction: column; gap: 6px; }
-      .form-group label { font-size: 12px; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; color: var(--muted); }
-      .form-group .opt { font-weight: 400; text-transform: none; letter-spacing: 0; font-size: 11px; }
-      .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+      /* ── Form ────────────────────────────────────────────────────── */
+      form { padding: 22px 18px 100px; display: flex; flex-direction: column; gap: 18px; }
+      .field { display: flex; flex-direction: column; gap: 7px; }
+      .field label {
+        font-size: 11.5px; font-weight: 600; letter-spacing: .7px; text-transform: uppercase;
+        color: var(--muted);
+      }
+      .field label .opt { font-weight: 400; text-transform: none; letter-spacing: 0; font-size: 11px; }
+      .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
       input, select, textarea {
         background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12);
-        border-radius: 11px; padding: 12px 14px; color: var(--paper); font-family: var(--sans);
-        font-size: 15px; width: 100%; appearance: none; -webkit-appearance: none; outline: none;
-        transition: border-color .15s;
+        border-radius: 12px; padding: 13px 14px; color: var(--paper); font-family: var(--sans);
+        font-size: 15px; width: 100%; appearance: none; -webkit-appearance: none;
+        outline: none; transition: border-color .15s;
       }
       input:focus, select:focus, textarea:focus { border-color: var(--gold); }
       input.bad, select.bad { border-color: #e05252 !important; }
-      textarea { resize: vertical; min-height: 90px; }
+      textarea { resize: vertical; min-height: 100px; }
       select option { background: #1e2d50; color: var(--paper); }
       input::placeholder, textarea::placeholder { color: var(--muted); }
-      .other-note { margin-top: 8px; }
+      .divider { height: 1px; background: var(--line); margin: 2px 0; }
+
       .btn-save {
         background: linear-gradient(135deg, var(--red), #7a1a1d);
-        border: none; border-radius: 14px; padding: 17px; color: #fff;
+        border: none; border-radius: 14px; padding: 18px; color: #fff;
         font-family: var(--display); font-weight: 600; font-size: 18px; cursor: pointer;
-        box-shadow: 0 10px 28px rgba(155,34,38,.38); transition: opacity .15s;
-        margin-top: 4px;
+        box-shadow: 0 10px 28px rgba(155,34,38,.38); transition: opacity .15s; width: 100%;
       }
       .btn-save:disabled { opacity: .5; cursor: not-allowed; }
+
+      .err { color: #e05252; font-size: 13px; display: none; }
+
       .toast {
         position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
-        background: #1e3a1e; color: #7ee87e; border: 1px solid #3e9b4f; border-radius: 12px;
-        padding: 12px 20px; font-weight: 600; font-size: 14px; z-index: 99;
-        opacity: 0; transition: opacity .3s; pointer-events: none; white-space: nowrap;
+        background: #1e3a1e; color: #7ee87e; border: 1px solid #3e9b4f;
+        border-radius: 12px; padding: 12px 22px; font-weight: 600; font-size: 14px;
+        z-index: 99; opacity: 0; transition: opacity .3s; pointer-events: none; white-space: nowrap;
       }
       .toast.show { opacity: 1; }
-      .err-msg { color: #e05252; font-size: 13px; }
-
-      /* ── Rack-up list ─────────────────────────────────────────────── */
-      .filters {
-        padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 8px;
-        border-bottom: 1px solid var(--line);
-      }
-      .filters select, .filters input { padding: 8px 12px; font-size: 13px; border-radius: 9px; }
-      .filters input[type="date"] { font-size: 12px; color: var(--muted); }
-      .filters input.with-val { color: var(--paper); }
-      .filter-row { display: flex; gap: 8px; width: 100%; }
-      .btn-export {
-        background: rgba(187,148,87,.15); border: 1px solid rgba(187,148,87,.4);
-        border-radius: 9px; padding: 8px 14px; color: var(--gold); font-size: 13px;
-        font-weight: 600; cursor: pointer; white-space: nowrap;
-      }
-      .rack { flex: 1; overflow-y: auto; padding-bottom: 60px; }
-      .day-header {
-        padding: 10px 16px 6px; font-size: 12px; font-weight: 600; letter-spacing: .8px;
-        text-transform: uppercase; color: var(--muted); position: sticky; top: 0;
-        background: var(--ink); z-index: 1; display: flex; align-items: center; justify-content: space-between;
-      }
-      .day-chip {
-        background: rgba(255,255,255,.06); border-radius: 99px; padding: 2px 9px;
-        font-size: 11px; font-weight: 700; color: var(--muted);
-      }
-      .visit-row {
-        display: grid;
-        grid-template-columns: 52px 44px 1fr auto;
-        gap: 0 10px;
-        padding: 10px 16px;
-        border-bottom: 1px solid rgba(255,255,255,.05);
-        cursor: pointer; transition: background .12s; align-items: start;
-      }
-      .visit-row.is-new {
-        background: rgba(232,241,251,.07);
-        border-left: 3px solid var(--blue);
-      }
-      .visit-row.is-old {
-        background: rgba(234,245,234,.07);
-        border-left: 3px solid #3E9B4F;
-      }
-      .visit-row:active { background: rgba(255,255,255,.06); }
-      .vr-time { font-family: var(--display); font-size: 13px; color: var(--muted); padding-top: 2px; white-space: nowrap; }
-      .vr-badge {
-        font-size: 10px; font-weight: 700; letter-spacing: .8px; padding: 3px 7px; border-radius: 5px;
-        align-self: start; margin-top: 1px; white-space: nowrap;
-      }
-      .vr-badge.new-b { background: rgba(46,111,214,.25); color: #6ea8f5; }
-      .vr-badge.old-b { background: rgba(62,155,79,.25); color: #7ee87e; }
-      .vr-main { min-width: 0; }
-      .vr-store { font-family: var(--display); font-weight: 600; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      .vr-meta { color: var(--muted); font-size: 12.5px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      .vr-notes { color: #9aabbd; font-size: 12px; margin-top: 3px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-      .vr-right { text-align: right; min-width: 80px; }
-      .vr-cat {
-        font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 5px;
-        background: rgba(255,255,255,.07); color: var(--muted); white-space: nowrap;
-      }
-      .vr-area { color: var(--muted); font-size: 11.5px; margin-top: 4px; }
-
-      /* Detail modal */
-      .modal-overlay {
-        position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 50;
-        display: none; align-items: flex-end; justify-content: center;
-        backdrop-filter: blur(4px);
-      }
-      .modal-overlay.open { display: flex; }
-      .modal {
-        background: var(--ink-2); border-radius: 22px 22px 0 0; padding: 24px 22px 40px;
-        width: 100%; max-width: 640px; max-height: 85vh; overflow-y: auto;
-        border-top: 1px solid rgba(255,255,255,.12);
-      }
-      .modal-handle { width: 36px; height: 4px; background: rgba(255,255,255,.2); border-radius: 99px; margin: 0 auto 18px; }
-      .modal h3 { font-family: var(--display); font-size: 20px; margin: 0 0 14px; }
-      .modal dl { display: grid; grid-template-columns: 110px 1fr; gap: 8px 12px; margin: 0; font-size: 14px; }
-      .modal dt { color: var(--muted); font-weight: 500; align-self: start; }
-      .modal dd { margin: 0; line-height: 1.5; }
-      .modal .notes-block {
-        background: rgba(255,255,255,.04); border-radius: 10px; padding: 12px 14px;
-        font-size: 14px; line-height: 1.6; color: #d7dde8; margin-top: 10px; white-space: pre-wrap;
-      }
-      .modal-close { display: block; width: 100%; margin-top: 18px; padding: 14px; border-radius: 12px; border: 1px solid var(--line); background: transparent; color: var(--muted); font-size: 15px; cursor: pointer; }
-
-      /* Empty state */
-      .empty { text-align: center; padding: 60px 20px; color: var(--muted); }
-      .empty .ico { font-size: 40px; margin-bottom: 14px; }
-      .empty p { margin: 0; font-size: 15px; }
-
-      /* Load more */
-      .load-more { padding: 16px; text-align: center; }
-      .btn-more {
-        background: rgba(255,255,255,.06); border: 1px solid var(--line); border-radius: 10px;
-        padding: 10px 24px; color: var(--muted); font-size: 14px; cursor: pointer;
-      }
-      .btn-more:disabled { opacity: .4; }
-
-      /* Manage dropdown (Handler) */
-      #manage-view { padding: 20px 18px 60px; overflow-y: auto; }
-      #manage-view h3 { font-family: var(--display); font-size: 18px; margin: 0 0 16px; }
-      .manage-section { margin-bottom: 28px; }
-      .manage-section h4 { font-size: 12px; font-weight: 600; letter-spacing: .8px; text-transform: uppercase; color: var(--muted); margin: 0 0 10px; }
-      .tag-cloud { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
-      .tag { padding: 6px 12px; border-radius: 8px; font-size: 13px; font-weight: 500; background: rgba(255,255,255,.07); border: 1px solid var(--line); color: var(--paper); }
-      .add-row { display: flex; gap: 8px; }
-      .add-row input { flex: 1; }
-      .btn-add { padding: 12px 18px; background: rgba(187,148,87,.2); border: 1px solid rgba(187,148,87,.4); border-radius: 11px; color: var(--gold); font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap; }
-
-      /* Insights link */
-      .insights-link {
-        display: flex; align-items: center; justify-content: space-between;
-        padding: 14px 18px; background: rgba(187,148,87,.1); border: 1px solid rgba(187,148,87,.3);
-        border-radius: 12px; text-decoration: none; color: var(--gold); margin: 12px 16px 0;
-        font-weight: 600; font-size: 14px;
-      }
     </style>
   </head>
   <body>
     <div class="app">
-
-      <!-- ── Gate ── -->
-      <div id="gate" class="view active">
-        <div class="brand">
-          <div class="mark">K</div>
-          <div><b>Kencana LeadScout</b><span>Modul D · Visitation Log</span></div>
-        </div>
-        <h2>Siapa kamu?</h2>
-        <p>Pilih peran untuk memulai.</p>
-        <div id="role-list">
-          <div class="role a" data-role="Hunter A">
-            <div class="ava">A</div>
-            <div><span>Hunter A</span><small>Field rep — catat kunjungan</small></div>
-          </div>
-          <div class="role b" data-role="Hunter B">
-            <div class="ava">B</div>
-            <div><span>Hunter B</span><small>Field rep — catat kunjungan</small></div>
-          </div>
-          <div class="role c" data-role="Handler">
-            <div class="ava">H</div>
-            <div><span>Handler</span><small>Kelola rack-up + daftar dropdown</small></div>
-          </div>
-          <div class="role d" data-role="Champion">
-            <div class="ava">C</div>
-            <div><span>Champion</span><small>Dashboard insights + read-only</small></div>
-          </div>
-          <div class="role e" data-role="Sales Lead">
-            <div class="ava">S</div>
-            <div><span>Sales Lead</span><small>Kembali ke modul C</small></div>
-          </div>
-        </div>
-        <div id="rep-picker" style="display:none;">
-          <h3>Kamu siapa?</h3>
-          <div id="rep-list" class="rep-list"></div>
+      <div class="top">
+        <div class="mark">K</div>
+        <div>
+          <div class="top-title">Catat Kunjungan</div>
+          <div class="top-sub">Visitation Log · Modul D</div>
         </div>
       </div>
 
-      <!-- ── Main (form + list + manage) ── -->
-      <div id="main" class="view">
-        <div class="top">
-          <div class="top-row">
-            <div class="who">
-              <div class="pill" id="role-pill" onclick="resetRole()">← Ganti peran</div>
-              <span id="who-label"></span>
-            </div>
-            <div id="insights-btn" style="display:none;">
-              <a href="/visits-insights" style="color:var(--gold);font-size:13px;font-weight:600;text-decoration:none;">Insights →</a>
-            </div>
+      <form id="vform" onsubmit="submit(event)" novalidate>
+
+        <div class="field">
+          <label>Sales *</label>
+          <select id="f-sales" required>
+            <option value="">Pilih sales...</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Nama PIC <span class="opt">opsional</span></label>
+          <input id="f-pic" type="text" placeholder="mis. Bpk. Yayan" autocomplete="off" />
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="field">
+          <label>Nama Toko *</label>
+          <input id="f-store" type="text" list="store-dl" required placeholder="Nama toko / usaha" autocomplete="off" />
+          <datalist id="store-dl"></datalist>
+        </div>
+
+        <div class="two">
+          <div class="field">
+            <label>Tipe Customer *</label>
+            <select id="f-type" required>
+              <option value="">Pilih tipe</option>
+              <option value="new">Baru (New)</option>
+              <option value="old">Lama (Old)</option>
+            </select>
           </div>
-          <div class="tab-bar" id="tab-bar">
-            <button class="tab tab-new active" onclick="switchTab('form')" id="tab-form">+ Catat</button>
-            <button class="tab" onclick="switchTab('list')" id="tab-list">Rack-up</button>
-            <button class="tab" onclick="switchTab('manage')" id="tab-manage" style="display:none;">Kelola Daftar</button>
+          <div class="field">
+            <label>Kategori *</label>
+            <select id="f-cat" required>
+              <option value="">Pilih kategori</option>
+            </select>
           </div>
         </div>
 
-        <!-- Capture form -->
-        <div id="form-pane" style="display:flex;flex-direction:column;flex:1;overflow-y:auto;">
-          <form id="visit-form" class="form-body" onsubmit="submitVisit(event)">
-            <div class="form-group">
-              <label>Sales *</label>
-              <select id="f-salesperson" required></select>
-            </div>
-            <div class="form-group">
-              <label>Nama PIC <span class="opt">opsional</span></label>
-              <input id="f-pic" type="text" placeholder="mis. Bpk. Yayan" autocomplete="off" />
-            </div>
-            <div class="form-group">
-              <label>Nama Toko *</label>
-              <input id="f-store" type="text" list="store-suggestions" required placeholder="Nama toko / usaha" autocomplete="off" />
-              <datalist id="store-suggestions"></datalist>
-            </div>
-            <div class="form-group two-col">
-              <div class="form-group" style="gap:6px;">
-                <label>Tipe Customer *</label>
-                <select id="f-type" required>
-                  <option value="">Pilih tipe</option>
-                  <option value="new">Baru (New)</option>
-                  <option value="old">Lama (Old)</option>
-                </select>
-              </div>
-              <div class="form-group" style="gap:6px;">
-                <label>Kategori *</label>
-                <select id="f-category" required></select>
-              </div>
-            </div>
-            <div class="form-group" id="other-note-group" style="display:none;">
-              <label>Keterangan "Other" *</label>
-              <input id="f-other-note" type="text" placeholder="Jelaskan tipe usaha..." />
-            </div>
-            <div class="form-group">
-              <label>Alamat <span class="opt">opsional</span></label>
-              <input id="f-address" type="text" placeholder="Jl. ..." autocomplete="off" />
-            </div>
-            <div class="form-group two-col">
-              <div class="form-group" style="gap:6px;">
-                <label>Area *</label>
-                <select id="f-area" required></select>
-              </div>
-              <div class="form-group" style="gap:6px;">
-                <label>Kode Pos <span class="opt">opsional</span></label>
-                <input id="f-postal" type="tel" inputmode="numeric" placeholder="5 digit" maxlength="5" />
-              </div>
-            </div>
-            <div class="form-group">
-              <label>Catatan Kunjungan <span class="opt">opsional</span></label>
-              <textarea id="f-notes" rows="4" placeholder="Topik yang dibahas, kebutuhan, rencana follow-up..."></textarea>
-            </div>
-            <div class="err-msg" id="form-err" style="display:none;"></div>
-            <button type="submit" class="btn-save" id="btn-submit">Simpan Kunjungan</button>
-          </form>
+        <div class="field" id="other-group" style="display:none;">
+          <label>Keterangan "Other" *</label>
+          <input id="f-other" type="text" placeholder="Jelaskan tipe usaha..." />
         </div>
 
-        <!-- Rack-up list -->
-        <div id="list-pane" style="display:none;flex-direction:column;flex:1;overflow:hidden;">
-          <div id="insights-link-banner" style="display:none;">
-            <a class="insights-link" href="/visits-insights">
-              <span>Lihat Insights Dashboard</span><span>→</span>
-            </a>
+        <div class="divider"></div>
+
+        <div class="field">
+          <label>Alamat <span class="opt">opsional</span></label>
+          <input id="f-addr" type="text" placeholder="Jl. ..." autocomplete="off" />
+        </div>
+
+        <div class="two">
+          <div class="field">
+            <label>Area *</label>
+            <select id="f-area" required>
+              <option value="">Pilih area</option>
+            </select>
           </div>
-          <div class="filters">
-            <div class="filter-row">
-              <select id="fl-rep" style="flex:1;" onchange="applyFilters()">
-                <option value="">Semua Sales</option>
-              </select>
-              <select id="fl-type" onchange="applyFilters()">
-                <option value="">Semua Tipe</option>
-                <option value="new">New</option>
-                <option value="old">Old</option>
-              </select>
-            </div>
-            <div class="filter-row">
-              <select id="fl-category" style="flex:1;" onchange="applyFilters()">
-                <option value="">Semua Kategori</option>
-              </select>
-              <select id="fl-area" style="flex:1;" onchange="applyFilters()">
-                <option value="">Semua Area</option>
-              </select>
-            </div>
-            <div class="filter-row">
-              <input id="fl-from" type="date" onchange="applyFilters()" title="Dari tanggal" />
-              <input id="fl-to"   type="date" onchange="applyFilters()" title="Sampai tanggal" />
-              <input id="fl-q" type="text" placeholder="Cari catatan..." style="flex:1;" oninput="scheduleSearch()" />
-            </div>
-            <div class="filter-row">
-              <button class="btn-export" onclick="doExport()">↓ Ekspor XLSX</button>
-            </div>
-          </div>
-          <div id="rack" class="rack"></div>
-          <div class="load-more" id="load-more" style="display:none;">
-            <button class="btn-more" id="btn-more" onclick="loadMore()">Muat lebih banyak</button>
+          <div class="field">
+            <label>Kode Pos <span class="opt">opsional</span></label>
+            <input id="f-postal" type="tel" inputmode="numeric" placeholder="5 digit" maxlength="5" />
           </div>
         </div>
 
-        <!-- Manage dropdowns (Handler) -->
-        <div id="manage-pane" style="display:none;overflow-y:auto;">
-          <div id="manage-view">
-            <h3>Kelola Daftar Dropdown</h3>
-            <div class="manage-section">
-              <h4>Kategori</h4>
-              <div id="cat-tags" class="tag-cloud"></div>
-              <div class="add-row">
-                <input id="new-cat" type="text" placeholder="Kategori baru..." />
-                <button class="btn-add" onclick="addListItem('categories')">Tambah</button>
-              </div>
-            </div>
-            <div class="manage-section">
-              <h4>Area</h4>
-              <div id="area-tags" class="tag-cloud"></div>
-              <div class="add-row">
-                <input id="new-area" type="text" placeholder="Area baru..." />
-                <button class="btn-add" onclick="addListItem('areas')">Tambah</button>
-              </div>
-            </div>
-            <div class="manage-section">
-              <h4>Daftar Sales</h4>
-              <div id="sp-list-manage" class="rep-list"></div>
-              <div class="add-row" style="margin-top:10px;">
-                <input id="new-sp-name" type="text" placeholder="Nama lengkap" style="flex:2;" />
-                <input id="new-sp-code" type="text" placeholder="Kode" style="flex:1;" maxlength="5" />
-                <button class="btn-add" onclick="addSalesperson()">Tambah</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+        <div class="divider"></div>
 
-    </div>
-
-    <!-- Detail modal -->
-    <div class="modal-overlay" id="detail-modal" onclick="closeModal(event)">
-      <div class="modal">
-        <div class="modal-handle"></div>
-        <h3 id="modal-store"></h3>
-        <dl id="modal-dl"></dl>
-        <div id="modal-notes" style="display:none;">
-          <div style="font-size:12px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;color:var(--muted);margin-top:14px 0 6px;">Catatan</div>
-          <div class="notes-block" id="modal-notes-text"></div>
+        <div class="field">
+          <label>Catatan Kunjungan <span class="opt">opsional</span></label>
+          <textarea id="f-notes" rows="4" placeholder="Topik yang dibahas, kebutuhan, rencana follow-up..."></textarea>
         </div>
-        <button class="modal-close" onclick="closeModal()">Tutup</button>
-      </div>
+
+        <div class="err" id="err"></div>
+
+        <button type="submit" class="btn-save" id="btn">Simpan Kunjungan</button>
+
+      </form>
     </div>
 
     <div class="toast" id="toast"></div>
@@ -450,265 +173,98 @@
     <script>
     (() => {
       "use strict";
-      const $ = (id) => document.getElementById(id);
+      const $ = id => document.getElementById(id);
 
-      const ROLE_KEY  = "kls_visits_role";
-      const REP_KEY   = "kls_visits_rep_id";
-      const REP_NAME_KEY = "kls_visits_rep_name";
-
-      const state = {
-        role: null,
-        salesperson_id: null,
-        salesperson_name: null,
-        salespeople: [],
-        categories: [],
-        areas: [],
-        visits: [],
-        offset: 0,
-        hasMore: false,
-        searchTimer: null,
-      };
-
-      // ── Boot ─────────────────────────────────────────────────────────────
+      // ── Load dropdowns ───────────────────────────────────────────────────
       async function boot() {
         const [spRes, catRes, areaRes] = await Promise.all([
           fetch("/api/salespeople?active=true").then(r => r.json()).catch(() => ({ salespeople: [] })),
           fetch("/api/lists/categories").then(r => r.json()).catch(() => ({ values: [] })),
           fetch("/api/lists/areas").then(r => r.json()).catch(() => ({ values: [] })),
         ]);
-        state.salespeople = spRes.salespeople ?? [];
-        state.categories  = catRes.values ?? [];
-        state.areas       = areaRes.values ?? [];
 
-        populateFormDropdowns();
-        populateFilterDropdowns();
-        populateManage();
-
-        const savedRole   = localStorage.getItem(ROLE_KEY);
-        const savedRepId  = localStorage.getItem(REP_KEY);
-        const savedRepName = localStorage.getItem(REP_NAME_KEY);
-
-        if (savedRole) {
-          state.role = savedRole;
-          if (savedRepId) {
-            state.salesperson_id = Number(savedRepId);
-            state.salesperson_name = savedRepName ?? "";
-          }
-          if (savedRole === "Sales Lead") {
-            location.href = "/sales-lead"; return;
-          }
-          enterMain(savedRole);
-        }
-      }
-
-      // ── Role gate ────────────────────────────────────────────────────────
-      document.querySelectorAll(".role").forEach(el =>
-        el.addEventListener("click", () => pickRole(el.dataset.role))
-      );
-
-      function pickRole(role) {
-        if (role === "Sales Lead") { location.href = "/sales-lead"; return; }
-        state.role = role;
-        if (role === "Hunter A" || role === "Hunter B") {
-          // Show rep picker to identify which salesperson this rep is
-          showRepPicker();
-        } else {
-          localStorage.setItem(ROLE_KEY, role);
-          state.salesperson_id = null;
-          state.salesperson_name = null;
-          enterMain(role);
-        }
-      }
-
-      function showRepPicker() {
-        $("role-list").style.display = "none";
-        $("rep-picker").style.display = "block";
-        const container = $("rep-list");
-        container.innerHTML = "";
-        state.salespeople.forEach(sp => {
-          const div = document.createElement("div");
-          div.className = "rep-item";
-          div.innerHTML = `<div class="ri-code">${sp.code ?? "?"}</div><div class="ri-name">${sp.full_name}</div>`;
-          div.addEventListener("click", () => {
-            localStorage.setItem(ROLE_KEY, state.role);
-            localStorage.setItem(REP_KEY, sp.id);
-            localStorage.setItem(REP_NAME_KEY, sp.full_name);
-            state.salesperson_id   = sp.id;
-            state.salesperson_name = sp.full_name;
-            enterMain(state.role);
-          });
-          container.appendChild(div);
-        });
-      }
-
-      function resetRole() {
-        localStorage.removeItem(ROLE_KEY);
-        localStorage.removeItem(REP_KEY);
-        localStorage.removeItem(REP_NAME_KEY);
-        state.role = null; state.salesperson_id = null; state.salesperson_name = null;
-        $("role-list").style.display = "";
-        $("rep-picker").style.display = "none";
-        show("gate");
-      }
-      window.resetRole = resetRole;
-
-      function enterMain(role) {
-        const isRep = role === "Hunter A" || role === "Hunter B";
-        const isHandler = role === "Handler";
-        const isChampion = role === "Champion";
-
-        $("who-label").textContent = isRep
-          ? `${state.salesperson_name ?? role}`
-          : role;
-
-        // Configure salesperson dropdown: locked for reps
-        const spSel = $("f-salesperson");
-        if (isRep && state.salesperson_id) {
-          spSel.value = state.salesperson_id;
-          spSel.disabled = true;
-        } else {
-          spSel.disabled = false;
-        }
-
-        // Tab visibility
-        $("tab-manage").style.display = isHandler ? "inline-block" : "none";
-        $("insights-btn").style.display = isChampion ? "block" : "none";
-        $("insights-link-banner").style.display = isChampion ? "block" : "none";
-
-        show("main");
-        if (isChampion) {
-          switchTab("list");
-        } else {
-          switchTab("form");
-        }
-      }
-
-      // ── Tab switching ────────────────────────────────────────────────────
-      window.switchTab = function(tab) {
-        $("form-pane").style.display   = tab === "form"   ? "flex" : "none";
-        $("list-pane").style.display   = tab === "list"   ? "flex" : "none";
-        $("manage-pane").style.display = tab === "manage" ? "block" : "none";
-
-        document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
-        $(`tab-${tab}`)?.classList.add("active");
-
-        if (tab === "list") {
-          state.visits = []; state.offset = 0;
-          loadVisits();
-        } else if (tab === "manage") {
-          populateManage();
-        }
-      };
-
-      // ── Populate dropdowns ───────────────────────────────────────────────
-      function populateFormDropdowns() {
-        // Salesperson
-        const spSel = $("f-salesperson");
-        spSel.innerHTML = '<option value="">Pilih sales...</option>';
-        state.salespeople.forEach(sp => {
+        const spSel = $("f-sales");
+        (spRes.salespeople ?? []).forEach(sp => {
           const o = document.createElement("option");
           o.value = sp.id;
-          o.textContent = `${sp.full_name} (${sp.code ?? "?"})`;
+          o.textContent = `${sp.full_name}${sp.code ? " (" + sp.code + ")" : ""}`;
           spSel.appendChild(o);
         });
-        if (state.salesperson_id) spSel.value = state.salesperson_id;
 
-        // Category
-        const catSel = $("f-category");
-        catSel.innerHTML = '<option value="">Pilih kategori</option>';
-        state.categories.forEach(c => {
+        const catSel = $("f-cat");
+        (catRes.values ?? []).forEach(c => {
           const o = document.createElement("option");
           o.value = c; o.textContent = c;
           catSel.appendChild(o);
         });
 
-        // Area
         const areaSel = $("f-area");
-        areaSel.innerHTML = '<option value="">Pilih area</option>';
-        state.areas.forEach(a => {
-          const o = document.createElement("option");
-          o.value = a; o.textContent = a;
-          areaSel.appendChild(o);
-        });
-
-        // "Other" qualifier
-        catSel.addEventListener("change", () => {
-          $("other-note-group").style.display = catSel.value === "Other" ? "block" : "none";
-          if (catSel.value !== "Other") $("f-other-note").value = "";
-        });
-      }
-
-      function populateFilterDropdowns() {
-        const repSel = $("fl-rep");
-        repSel.innerHTML = '<option value="">Semua Sales</option>';
-        state.salespeople.forEach(sp => {
-          const o = document.createElement("option");
-          o.value = sp.id; o.textContent = sp.full_name;
-          repSel.appendChild(o);
-        });
-
-        const catSel = $("fl-category");
-        catSel.innerHTML = '<option value="">Semua Kategori</option>';
-        state.categories.forEach(c => {
-          const o = document.createElement("option");
-          o.value = c; o.textContent = c;
-          catSel.appendChild(o);
-        });
-
-        const areaSel = $("fl-area");
-        areaSel.innerHTML = '<option value="">Semua Area</option>';
-        state.areas.forEach(a => {
+        (areaRes.values ?? []).forEach(a => {
           const o = document.createElement("option");
           o.value = a; o.textContent = a;
           areaSel.appendChild(o);
         });
       }
 
-      // ── Store name autocomplete ──────────────────────────────────────────
-      $("f-store").addEventListener("input", debounce(async () => {
-        const q = $("f-store").value.trim();
-        if (q.length < 2) return;
-        const res = await fetch(`/api/customers/suggest?q=${encodeURIComponent(q)}`).then(r => r.json()).catch(() => ({ suggestions: [] }));
-        const dl = $("store-suggestions");
-        dl.innerHTML = "";
-        (res.suggestions ?? []).forEach(s => {
-          const o = document.createElement("option");
-          o.value = s.store_name;
-          dl.appendChild(o);
-        });
-        // Auto-set area + type hint if store matched
-        const match = (res.suggestions ?? []).find(s => s.store_name.toLowerCase() === q.toLowerCase());
-        if (match) {
-          if (match.area) {
-            const areaSel = $("f-area");
-            for (const o of areaSel.options) {
-              if (o.value.toLowerCase() === match.area.toLowerCase()) { areaSel.value = o.value; break; }
+      // Show/hide "Other" qualifier field
+      $("f-cat").addEventListener("change", () => {
+        const show = $("f-cat").value === "Other";
+        $("other-group").style.display = show ? "block" : "none";
+        if (!show) $("f-other").value = "";
+      });
+
+      // Store-name autocomplete + auto-suggest Old when matched
+      let acTimer;
+      $("f-store").addEventListener("input", () => {
+        clearTimeout(acTimer);
+        acTimer = setTimeout(async () => {
+          const q = $("f-store").value.trim();
+          if (q.length < 2) return;
+          const res = await fetch(`/api/customers/suggest?q=${encodeURIComponent(q)}`)
+            .then(r => r.json()).catch(() => ({ suggestions: [] }));
+          const dl = $("store-dl");
+          dl.innerHTML = "";
+          (res.suggestions ?? []).forEach(s => {
+            const o = document.createElement("option");
+            o.value = s.store_name;
+            dl.appendChild(o);
+          });
+          // If exact match exists, default type to 'old' and prefill area
+          const match = (res.suggestions ?? []).find(
+            s => s.store_name.toLowerCase() === q.toLowerCase()
+          );
+          if (match) {
+            if (!$("f-type").value) $("f-type").value = "old";
+            if (match.area && !$("f-area").value) {
+              const areaSel = $("f-area");
+              for (const opt of areaSel.options) {
+                if (opt.value.toLowerCase() === match.area.toLowerCase()) {
+                  areaSel.value = opt.value; break;
+                }
+              }
             }
           }
-          // Suggest 'old' since store exists
-          if (!$("f-type").value) $("f-type").value = "old";
-        }
-      }, 300));
+        }, 280);
+      });
 
-      // ── Submit visit ─────────────────────────────────────────────────────
-      window.submitVisit = async function(e) {
+      // ── Submit ───────────────────────────────────────────────────────────
+      window.submit = async function(e) {
         e.preventDefault();
-        const btn = $("btn-submit");
-        const errEl = $("form-err");
+        const errEl = $("err");
         errEl.style.display = "none";
 
-        const salesperson_id = Number($("f-salesperson").value);
+        const salesperson_id = Number($("f-sales").value);
         const store_name     = $("f-store").value.trim();
         const customer_type  = $("f-type").value;
-        const category       = $("f-category").value;
+        const category       = $("f-cat").value;
         const area           = $("f-area").value;
-        const postal_code    = $("f-postal").value.trim() || null;
         const pic_name       = $("f-pic").value.trim() || null;
-        const address        = $("f-address").value.trim() || null;
+        const address        = $("f-addr").value.trim() || null;
+        const postal_code    = $("f-postal").value.trim() || null;
         let   notes          = $("f-notes").value.trim() || null;
-        const otherNote      = $("f-other-note").value.trim();
+        const otherNote      = $("f-other").value.trim();
 
-        // Validation
+        // Validate required fields
         const missing = [];
         if (!salesperson_id) missing.push("Sales");
         if (!store_name)     missing.push("Nama Toko");
@@ -717,7 +273,7 @@
         if (!area)           missing.push("Area");
         if (category === "Other" && !otherNote) missing.push("Keterangan Other");
         if (missing.length) {
-          errEl.textContent = `Lengkapi field: ${missing.join(", ")}`;
+          errEl.textContent = "Lengkapi: " + missing.join(", ");
           errEl.style.display = "block"; return;
         }
         if (postal_code && !/^\d{5}$/.test(postal_code)) {
@@ -725,21 +281,20 @@
           errEl.style.display = "block"; return;
         }
 
-        // Prepend Other qualifier to notes
+        // Prepend Other qualifier into notes
         if (category === "Other" && otherNote) {
           notes = notes ? `[Other: ${otherNote}] ${notes}` : `[Other: ${otherNote}]`;
         }
 
+        const btn = $("btn");
         btn.disabled = true;
         btn.textContent = "Menyimpan...";
-
-        const body = { salesperson_id, store_name, customer_type, category, area,
-          pic_name, address, postal_code, notes };
 
         const res = await fetch("/api/visits", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
+          body: JSON.stringify({ salesperson_id, store_name, customer_type, category,
+            area, pic_name, address, postal_code, notes }),
         }).then(r => r.json()).catch(() => ({ error: "Koneksi gagal." }));
 
         btn.disabled = false;
@@ -750,274 +305,19 @@
           errEl.style.display = "block"; return;
         }
 
-        showToast("Kunjungan tersimpan ✓");
-        $("visit-form").reset();
-        $("other-note-group").style.display = "none";
-        if (state.salesperson_id) $("f-salesperson").value = state.salesperson_id;
-        errEl.style.display = "none";
-      };
+        // Success — reset form, keep salesperson selected
+        const savedSales = $("f-sales").value;
+        document.getElementById("vform").reset();
+        $("other-group").style.display = "none";
+        $("f-sales").value = savedSales;
 
-      // ── Rack-up list ─────────────────────────────────────────────────────
-      window.applyFilters = function() {
-        state.visits = []; state.offset = 0;
-        loadVisits();
-      };
-
-      window.scheduleSearch = function() {
-        if (state.searchTimer) clearTimeout(state.searchTimer);
-        state.searchTimer = setTimeout(() => applyFilters(), 350);
-      };
-
-      async function loadVisits() {
-        const params = new URLSearchParams();
-        const repVal  = $("fl-rep").value;
-        const typeVal = $("fl-type").value;
-        const catVal  = $("fl-category").value;
-        const areaVal = $("fl-area").value;
-        const fromVal = $("fl-from").value;
-        const toVal   = $("fl-to").value;
-        const qVal    = $("fl-q").value.trim();
-
-        if (repVal)  params.set("rep_id",   repVal);
-        if (typeVal) params.set("type",     typeVal);
-        if (catVal)  params.set("category", catVal);
-        if (areaVal) params.set("area",     areaVal);
-        if (fromVal) params.set("from",     fromVal);
-        if (toVal)   params.set("to",       toVal + "T23:59:59");
-        if (qVal)    params.set("q",        qVal);
-        params.set("limit",  "100");
-        params.set("offset", state.offset);
-
-        const res = await fetch(`/api/visits?${params}`).then(r => r.json()).catch(() => ({ visits: [] }));
-        const incoming = res.visits ?? [];
-
-        state.visits = state.offset === 0 ? incoming : [...state.visits, ...incoming];
-        state.offset += incoming.length;
-        state.hasMore = incoming.length === 100;
-
-        renderRack();
-      }
-
-      function renderRack() {
-        const rack = $("rack");
-        if (state.visits.length === 0) {
-          rack.innerHTML = `<div class="empty"><div class="ico">📋</div><p>Belum ada kunjungan.<br>Gunakan tab "Catat" untuk menambahkan.</p></div>`;
-          $("load-more").style.display = "none";
-          return;
-        }
-
-        // Group by day (WIB)
-        const groups = new Map();
-        state.visits.forEach(v => {
-          const d = fmtDate(v.visited_at);
-          if (!groups.has(d)) groups.set(d, []);
-          groups.get(d).push(v);
-        });
-
-        let html = "";
-        groups.forEach((rows, day) => {
-          const newCount = rows.filter(r => r.customer_type === "new").length;
-          html += `<div class="day-header"><span>${day}</span><span class="day-chip">${rows.length} kunjungan${newCount > 0 ? `, ${newCount} baru` : ""}</span></div>`;
-          rows.forEach(v => {
-            const isNew = v.customer_type === "new";
-            const cls   = isNew ? "is-new" : "is-old";
-            const badge = isNew
-              ? `<div class="vr-badge new-b">NEW</div>`
-              : `<div class="vr-badge old-b">OLD</div>`;
-            const time = fmtTime(v.visited_at);
-            const meta = [v.salesperson_name, v.pic_name].filter(Boolean).join(" · ");
-            const notesSnip = v.notes
-              ? `<div class="vr-notes">${esc(v.notes)}</div>` : "";
-            html += `
-              <div class="visit-row ${cls}" data-id="${v.id}" onclick="openDetail(${v.id})">
-                <div class="vr-time">${time}</div>
-                ${badge}
-                <div class="vr-main">
-                  <div class="vr-store">${esc(v.store_name)}</div>
-                  <div class="vr-meta">${esc(meta)}</div>
-                  ${notesSnip}
-                </div>
-                <div class="vr-right">
-                  <div class="vr-cat">${esc(v.category)}</div>
-                  <div class="vr-area">${esc(v.area)}</div>
-                </div>
-              </div>`;
-          });
-        });
-
-        rack.innerHTML = html;
-        $("load-more").style.display = state.hasMore ? "block" : "none";
-        $("btn-more").disabled = false;
-      }
-
-      window.loadMore = function() {
-        $("btn-more").disabled = true;
-        loadVisits();
-      };
-
-      // ── Detail modal ─────────────────────────────────────────────────────
-      window.openDetail = function(id) {
-        const v = state.visits.find(x => x.id === id);
-        if (!v) return;
-        const isNew = v.customer_type === "new";
-        $("modal-store").textContent = v.store_name;
-        $("modal-store").style.color = isNew ? "#6ea8f5" : "#7ee87e";
-
-        const dl = $("modal-dl");
-        dl.innerHTML = [
-          ["Waktu", `${fmtDate(v.visited_at)} ${fmtTime(v.visited_at)} WIB`],
-          ["Sales",   `${v.salesperson_name} (${v.salesperson_code})`],
-          ["Tipe",    isNew ? "🔵 Baru (New)" : "🟢 Lama (Old)"],
-          ["Kategori", v.category],
-          ["Area",     v.area],
-          v.pic_name ? ["PIC", v.pic_name] : null,
-          v.address   ? ["Alamat", v.address] : null,
-          v.postal_code ? ["Kode Pos", v.postal_code] : null,
-        ].filter(Boolean).map(([k, val]) =>
-          `<dt>${k}</dt><dd>${esc(val)}</dd>`
-        ).join("");
-
-        if (v.notes) {
-          $("modal-notes").style.display = "block";
-          $("modal-notes-text").textContent = v.notes;
-        } else {
-          $("modal-notes").style.display = "none";
-        }
-        $("detail-modal").classList.add("open");
-      };
-
-      window.closeModal = function(e) {
-        if (!e || e.target === $("detail-modal")) {
-          $("detail-modal").classList.remove("open");
-        }
-      };
-
-      // ── Export ───────────────────────────────────────────────────────────
-      window.doExport = function() {
-        const params = new URLSearchParams();
-        const repVal  = $("fl-rep").value;
-        const typeVal = $("fl-type").value;
-        const catVal  = $("fl-category").value;
-        const areaVal = $("fl-area").value;
-        const fromVal = $("fl-from").value;
-        const toVal   = $("fl-to").value;
-
-        if (repVal)  params.set("rep_id",   repVal);
-        if (typeVal) params.set("type",     typeVal);
-        if (catVal)  params.set("category", catVal);
-        if (areaVal) params.set("area",     areaVal);
-        if (fromVal) params.set("from",     fromVal);
-        if (toVal)   params.set("to",       toVal + "T23:59:59");
-
-        window.location.href = `/api/visits/export?${params}`;
-      };
-
-      // ── Manage tab ───────────────────────────────────────────────────────
-      function populateManage() {
-        // Categories
-        const catTags = $("cat-tags");
-        catTags.innerHTML = state.categories.map(c => `<span class="tag">${esc(c)}</span>`).join("");
-
-        // Areas
-        const areaTags = $("area-tags");
-        areaTags.innerHTML = state.areas.map(a => `<span class="tag">${esc(a)}</span>`).join("");
-
-        // Salespeople list
-        const spList = $("sp-list-manage");
-        spList.innerHTML = state.salespeople.map(sp => `
-          <div class="rep-item" style="cursor:default;">
-            <div class="ri-code">${sp.code ?? "?"}</div>
-            <div class="ri-name">${esc(sp.full_name)}</div>
-            <span style="margin-left:auto;font-size:12px;color:${sp.active ? "var(--green)" : "var(--muted)"};">
-              ${sp.active ? "aktif" : "nonaktif"}
-            </span>
-          </div>
-        `).join("");
-      }
-
-      window.addListItem = async function(listType) {
-        const inputId = listType === "categories" ? "new-cat" : "new-area";
-        const value = $(inputId).value.trim();
-        if (!value) return;
-        const res = await fetch(`/api/lists/${listType}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ value }),
-        }).then(r => r.json()).catch(() => ({ error: "Gagal" }));
-        if (res.error) { alert(res.error); return; }
-        $(inputId).value = "";
-        // Refresh lists
-        await refreshLists();
-        populateFormDropdowns();
-        populateFilterDropdowns();
-        populateManage();
-        showToast(`"${value}" ditambahkan`);
-      };
-
-      window.addSalesperson = async function() {
-        const name = $("new-sp-name").value.trim();
-        const code = $("new-sp-code").value.trim();
-        if (!name) return;
-        const res = await fetch("/api/salespeople", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ full_name: name, code: code || undefined }),
-        }).then(r => r.json()).catch(() => ({ error: "Gagal" }));
-        if (res.error) { alert(res.error); return; }
-        $("new-sp-name").value = ""; $("new-sp-code").value = "";
-        const spRes = await fetch("/api/salespeople?active=true").then(r => r.json()).catch(() => ({ salespeople: [] }));
-        state.salespeople = spRes.salespeople ?? [];
-        populateFormDropdowns();
-        populateFilterDropdowns();
-        populateManage();
-        showToast(`${name} ditambahkan`);
-      };
-
-      async function refreshLists() {
-        const [catRes, areaRes] = await Promise.all([
-          fetch("/api/lists/categories").then(r => r.json()).catch(() => ({ values: [] })),
-          fetch("/api/lists/areas").then(r => r.json()).catch(() => ({ values: [] })),
-        ]);
-        state.categories = catRes.values ?? [];
-        state.areas      = areaRes.values ?? [];
-      }
-
-      // ── Helpers ──────────────────────────────────────────────────────────
-      function show(id) {
-        document.querySelectorAll(".view").forEach(v => v.classList.remove("active"));
-        const el = $(id);
-        if (el) el.classList.add("active");
-      }
-
-      function fmtDate(ts) {
-        if (!ts) return "";
-        const d = new Date(ts);
-        return d.toLocaleDateString("id-ID", { weekday:"short", day:"numeric", month:"short", year:"numeric", timeZone:"Asia/Jakarta" });
-      }
-
-      function fmtTime(ts) {
-        if (!ts) return "";
-        const d = new Date(ts);
-        return d.toLocaleTimeString("id-ID", { hour:"2-digit", minute:"2-digit", timeZone:"Asia/Jakarta" });
-      }
-
-      function esc(s) {
-        if (s == null) return "";
-        return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
-      }
-
-      function debounce(fn, ms) {
-        let t;
-        return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
-      }
-
-      function showToast(msg) {
         const t = $("toast");
-        t.textContent = msg; t.classList.add("show");
+        t.textContent = "Kunjungan tersimpan ✓";
+        t.classList.add("show");
         setTimeout(() => t.classList.remove("show"), 2800);
-      }
+      };
 
-      boot().catch(err => console.error("boot failed:", err));
+      boot().catch(console.error);
     })();
     </script>
   </body>
