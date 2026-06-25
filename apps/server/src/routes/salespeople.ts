@@ -55,9 +55,16 @@ export async function salespeopleRoutes(app: FastifyInstance): Promise<void> {
         returning *
       `;
       return { ok: true, salesperson: saved };
-    } catch (err) {
+    } catch (err: unknown) {
       app.log.error({ err }, "salespeople insert failed");
-      return reply.code(400).send({ error: "Could not register salesperson (code may be taken)." });
+      const pgCode = (err as Record<string, unknown>)?.code;
+      if (pgCode === "23505") {
+        return reply.code(409).send({ error: "Kode ini sudah digunakan salesperson lain. Gunakan kode berbeda atau kosongkan kolom kode." });
+      }
+      if (pgCode === "42P01") {
+        return reply.code(503).send({ error: "Tabel salespeople belum tersedia — server sedang inisialisasi, coba lagi dalam beberapa detik." });
+      }
+      return reply.code(500).send({ error: "Gagal mendaftarkan salesperson. Lihat log server untuk detail." });
     }
   });
 

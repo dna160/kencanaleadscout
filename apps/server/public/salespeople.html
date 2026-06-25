@@ -190,9 +190,10 @@
             </div>
           `).join("");
         } catch (err) {
-          const msg = String(err).includes("503")
-            ? "Database belum terhubung — pastikan DATABASE_URL dikonfigurasi di Railway."
-            : "Server error — coba reload halaman. Jika berlanjut, cek log Railway.";
+          let msg = "Gagal memuat daftar sales.";
+          const s = String(err);
+          if (s.includes("503")) msg = "Database belum terhubung — pastikan DATABASE_URL dikonfigurasi di Railway.";
+          else if (s.includes("500")) msg = "Server error membaca daftar sales. Railway sedang deploy ulang — tunggu sebentar lalu reload.";
           el.innerHTML = `<div class="empty" style="color:#e05252">${msg}</div>`;
         }
       }
