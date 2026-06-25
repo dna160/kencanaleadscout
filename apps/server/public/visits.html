@@ -185,6 +185,16 @@
           spSel.appendChild(o);
         });
 
+        if (spSel.options.length <= 1) {
+          const o = document.createElement("option");
+          o.value = ""; o.disabled = true;
+          o.textContent = "⚠ Daftar sales tidak tersedia";
+          spSel.appendChild(o);
+          const errEl = $("err");
+          errEl.textContent = "Gagal memuat daftar sales. Pastikan DATABASE_URL dikonfigurasi dan reload halaman.";
+          errEl.style.display = "block";
+        }
+
         // Category & Area — free text with datalist suggestions
         const catDl = $("cat-dl");
         (catRes.values ?? []).forEach(c => {

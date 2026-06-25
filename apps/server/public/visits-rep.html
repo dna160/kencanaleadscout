@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Profil Sales · Kencana LeadScout</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --ink: #14213d; --ink-2: #1b2949; --red: #9b2226; --gold: #bb9457; --green: #2c6e49;
+        --paper: #f5f2ec; --muted: #8a96ad; --line: rgba(255,255,255,.09);
+        --blue: #2E6FD6; --old: #3E9B4F;
+        --display: "Space Grotesk","Inter",system-ui,sans-serif;
+        --sans: "Inter",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; }
+      body { font-family: var(--sans); color: var(--paper); background: var(--ink); -webkit-font-smoothing: antialiased; }
+      .wrap { max-width: 1000px; margin: 0 auto; padding-bottom: 80px; }
+
+      /* ── Sticky header ────────────────────────────────────────── */
+      .top {
+        position: sticky; top: 0; z-index: 5;
+        background: rgba(20,33,61,.93); backdrop-filter: blur(10px);
+        border-bottom: 1px solid var(--line);
+        padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      }
+      .brand { display: flex; align-items: center; gap: 12px; }
+      .mark { width: 36px; height: 36px; border-radius: 9px; display: grid; place-items: center;
+        background: linear-gradient(135deg, var(--red), #7a1a1d);
+        font-family: var(--display); font-weight: 700; color: #fff; font-size: 16px; }
+      .brand b  { font-family: var(--display); font-size: 16px; }
+      .brand sm { color: var(--muted); font-size: 12px; display: block; }
+      .nav { display: flex; align-items: center; gap: 14px; }
+      .nav a { color: var(--muted); text-decoration: none; font-size: 13px; }
+      .nav a:hover { color: var(--paper); }
+
+      /* ── Content area ─────────────────────────────────────────── */
+      .content { padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+
+      /* ── Date range picker ────────────────────────────────────── */
+      .range-row { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap;
+        padding: 14px 16px; background: rgba(255,255,255,.03); border: 1px solid var(--line); border-radius: 12px; }
+      .rg { display: flex; flex-direction: column; gap: 5px; }
+      .rg label { font-size: 11px; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; color: var(--muted); }
+      .rg input[type="date"] {
+        background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.13); border-radius: 9px;
+        padding: 9px 12px; color: var(--paper); font-family: var(--sans); font-size: 14px;
+        outline: none; color-scheme: dark; cursor: pointer; min-width: 145px;
+      }
+      .rg input[type="date"]:focus { border-color: var(--gold); }
+      .rsep { color: var(--muted); font-size: 14px; align-self: flex-end; padding-bottom: 10px; }
+      .rbtn { border: 1px solid var(--line); background: rgba(255,255,255,.06); color: var(--paper);
+        border-radius: 9px; padding: 9px 13px; cursor: pointer; font-size: 13px; font-weight: 600;
+        align-self: flex-end; white-space: nowrap; }
+      .rbtn:hover { background: rgba(255,255,255,.11); }
+      .rbtn.primary { background: rgba(187,148,87,.18); border-color: rgba(187,148,87,.45); color: var(--gold); }
+      .rbtn.primary:hover { background: rgba(187,148,87,.28); }
+
+      /* ── Stats cards ──────────────────────────────────────────── */
+      .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+      @media (max-width: 680px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+      .stat { border: 1px solid var(--line); border-radius: 14px; padding: 16px;
+        background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02)); }
+      .stat .l { color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .8px; text-transform: uppercase; }
+      .stat .v { font-family: var(--display); font-size: 32px; font-weight: 700; line-height: 1.1; margin-top: 6px; font-variant-numeric: tabular-nums; }
+      .stat .s { color: var(--muted); font-size: 12px; margin-top: 3px; }
+      .stat.blue { border-color: rgba(46,111,214,.35); } .stat.blue .v { color: #7eb8f7; }
+      .stat.green { border-color: rgba(62,155,79,.35); } .stat.green .v { color: #9fe0b9; }
+
+      /* ── Panel ────────────────────────────────────────────────── */
+      .panel { border: 1px solid var(--line); border-radius: 18px; padding: 20px;
+        background: linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.015)); }
+      .panel h3 { font-family: var(--display); font-size: 16px; margin: 0 0 3px; }
+      .panel .cap { color: var(--muted); font-size: 12.5px; margin: 0; }
+      .ph { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+
+      /* ── AI synthesis ─────────────────────────────────────────── */
+      .ai-btn { border: 1px solid rgba(187,148,87,.45); background: rgba(187,148,87,.12); color: var(--gold);
+        border-radius: 9px; padding: 9px 16px; cursor: pointer; font-weight: 700; font-size: 13px; white-space: nowrap; }
+      .ai-btn:disabled { opacity: .45; cursor: not-allowed; }
+      #aiResult { margin-top: 14px; padding: 16px; background: rgba(255,255,255,.04);
+        border: 1px solid var(--line); border-radius: 12px; font-size: 14px; line-height: 1.75;
+        color: #d4dce8; white-space: pre-wrap; }
+      #aiResult.scaffold { color: var(--gold); font-size: 13px; }
+      #aiResult.err { color: #e05252; font-size: 13px; }
+      .ai-meta { color: var(--muted); font-size: 12px; margin-top: 10px; }
+
+      /* ── Badges ───────────────────────────────────────────────── */
+      .badge-new { display: inline-block; border-radius: 99px; padding: 2px 8px; font-size: 11px; font-weight: 700;
+        background: rgba(46,111,214,.18); color: #7eb8f7; }
+      .badge-old { display: inline-block; border-radius: 99px; padding: 2px 8px; font-size: 11px; font-weight: 700;
+        background: rgba(62,155,79,.18); color: #9fe0b9; }
+
+      /* ── Visit log ────────────────────────────────────────────── */
+      .log-hd { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 12px; gap: 12px; }
+      .log-count { color: var(--muted); font-size: 12.5px; }
+      .tableWrap { overflow-x: auto; }
+      table.vt { width: 100%; border-collapse: collapse; font-size: 13px; }
+      table.vt th { text-align: left; color: var(--muted); font-size: 11px; letter-spacing: .6px; text-transform: uppercase;
+        font-weight: 600; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+      table.vt td { padding: 9px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; vertical-align: top; }
+      table.vt tr:last-child td { border-bottom: none; }
+      table.vt .co { font-weight: 600; max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+      table.vt .pic { color: var(--muted); font-weight: 400; font-size: 11.5px; display: block; }
+      table.vt .note { max-width: 260px; overflow: hidden; text-overflow: ellipsis; color: #aeb8cc; }
+      table.vt tr.row-new td:first-child { border-left: 3px solid var(--blue); }
+      table.vt tr.row-old td:first-child { border-left: 3px solid var(--old); }
+
+      /* ── Day divider rows ─────────────────────────────────────── */
+      table.vt tr.day-row td { border-bottom: none; padding: 22px 0 8px; }
+      table.vt tr.day-row:first-child td { padding-top: 6px; }
+      .day-div { display: flex; align-items: center; gap: 10px; }
+      .day-div .dl { flex: 1; height: 1px; background: rgba(255,255,255,.12); }
+      .day-div .dlabel { font-family: var(--display); font-weight: 600; font-size: 13px; white-space: nowrap; color: var(--paper); }
+      .day-div .dcnt { color: var(--muted); font-size: 11.5px; white-space: nowrap; }
+
+      .empty { color: var(--muted); font-size: 13.5px; text-align: center; padding: 34px 0; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <!-- Sticky top bar -->
+      <div class="top">
+        <div class="brand">
+          <div class="mark">K</div>
+          <div>
+            <b id="repTitle">Memuat…</b>
+            <sm>Profil Sales · Visitation Log</sm>
+          </div>
+        </div>
+        <div class="nav">
+          <a href="/visits-rack">← Rack-up</a>
+          <a href="/visits">Catat</a>
+          <a href="/visits-insights">Insights</a>
+        </div>
+      </div>
+
+      <div class="content">
+        <!-- Date range picker -->
+        <div class="range-row">
+          <div class="rg">
+            <label>Dari</label>
+            <input type="date" id="fromDate" />
+          </div>
+          <span class="rsep">—</span>
+          <div class="rg">
+            <label>Sampai</label>
+            <input type="date" id="toDate" />
+          </div>
+          <button class="rbtn" id="preset7">7 Hari</button>
+          <button class="rbtn" id="preset30">30 Hari</button>
+          <button class="rbtn primary" id="showBtn">Tampilkan</button>
+        </div>
+
+        <!-- Stats row -->
+        <div class="stats">
+          <div class="stat">
+            <div class="l">Total</div>
+            <div class="v" id="sTotal">—</div>
+            <div class="s">kunjungan</div>
+          </div>
+          <div class="stat blue">
+            <div class="l">Baru (New)</div>
+            <div class="v" id="sNew">—</div>
+            <div class="s" id="sNewPct"></div>
+          </div>
+          <div class="stat green">
+            <div class="l">Lama (Old)</div>
+            <div class="v" id="sOld">—</div>
+            <div class="s">kunjungan ulang</div>
+          </div>
+          <div class="stat">
+            <div class="l">Hari Aktif</div>
+            <div class="v" id="sDays">—</div>
+            <div class="s" id="sAvg"></div>
+          </div>
+        </div>
+
+        <!-- AI synthesis panel -->
+        <div class="panel">
+          <div class="ph">
+            <div>
+              <h3>Sintesis AI</h3>
+              <p class="cap">Analisis catatan kunjungan untuk periode yang dipilih. Klik untuk menghasilkan — tidak otomatis.</p>
+            </div>
+            <button class="ai-btn" id="synthesizeBtn">Hasilkan Sintesis</button>
+          </div>
+          <div id="aiResult" style="display:none"></div>
+        </div>
+
+        <!-- Visit log with day dividers -->
+        <div class="panel">
+          <div class="log-hd">
+            <div>
+              <h3>Log Kunjungan</h3>
+              <p class="cap" id="logCaption">Memuat data…</p>
+            </div>
+            <span class="log-count" id="logCount"></span>
+          </div>
+          <div class="tableWrap">
+            <table class="vt">
+              <thead>
+                <tr>
+                  <th>Waktu</th><th>Toko / PIC</th><th>Tipe</th>
+                  <th>Kategori</th><th>Area</th><th>Catatan</th>
+                </tr>
+              </thead>
+              <tbody id="visitLog">
+                <tr><td colspan="6"><div class="empty">Memuat…</div></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+    (() => {
+      "use strict";
+      const $ = id => document.getElementById(id);
+      const WIB_MS = 7 * 3600 * 1000;
+
+      const repId = new URLSearchParams(window.location.search).get("id");
+      if (!repId) {
+        document.body.innerHTML =
+          '<div style="text-align:center;padding:80px;color:#8a96ad;font-family:system-ui">ID sales tidak ditemukan. ' +
+          '<a href="/visits-rack" style="color:#bb9457">← Kembali ke Rack-up</a></div>';
+      }
+
+      const esc = s => String(s == null ? "" : s)
+        .replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
+
+      function wibDateStr(offsetDays = 0) {
+        return new Date(Date.now() + WIB_MS + offsetDays * 24 * 3600 * 1000).toISOString().slice(0, 10);
+      }
+      function wibTime(iso) {
+        return new Date(iso).toLocaleTimeString("id-ID", {
+          hour: "2-digit", minute: "2-digit", timeZone: "Asia/Jakarta"
+        });
+      }
+      function wibDayLabel(wibDate) {
+        // wibDate is "YYYY-MM-DD" representing a WIB day — use noon UTC to avoid boundary issues
+        return new Date(wibDate + "T12:00:00Z").toLocaleDateString("id-ID", {
+          weekday: "long", day: "numeric", month: "long", year: "numeric",
+          timeZone: "Asia/Jakarta"
+        });
+      }
+
+      let curFrom = wibDateStr(-29);
+      let curTo   = wibDateStr(0);
+
+      // Init pickers
+      $("fromDate").value = curFrom;
+      $("toDate").value   = curTo;
+
+      // ── Rep info ─────────────────────────────────────────────────────────
+      async function loadRepInfo() {
+        try {
+          const data = await fetch(`/api/salespeople/${repId}`).then(r => r.json());
+          const rep  = data.salesperson;
+          if (rep) {
+            const title = `${rep.full_name}${rep.code ? " (" + rep.code + ")" : ""}`;
+            $("repTitle").textContent = title;
+            document.title = title + " · Kencana LeadScout";
+          }
+        } catch { /* keep placeholder */ }
+      }
+
+      // ── Stats ─────────────────────────────────────────────────────────────
+      async function loadStats() {
+        const from = `${curFrom}T00:00:00+07:00`;
+        const to   = `${curTo}T23:59:59+07:00`;
+        try {
+          const data = await fetch(
+            `/api/insights/rep/${repId}?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
+          ).then(r => r.json());
+          const s = data.scorecard ?? {};
+          const total    = Number(s.total_visits) || 0;
+          const newCount = total ? Math.round(total * (Number(s.hunter_index) / 100)) : 0;
+          $("sTotal").textContent = total || "—";
+          $("sNew").textContent   = total ? newCount : "—";
+          $("sNewPct").textContent = total ? Math.round(Number(s.hunter_index)) + "% baru" : "";
+          $("sOld").textContent   = total ? total - newCount : "—";
+          $("sDays").textContent  = s.active_days || "—";
+          $("sAvg").textContent   = s.visits_per_active_day
+            ? Number(s.visits_per_active_day).toFixed(1) + "/hari" : "";
+        } catch { /* leave placeholders */ }
+      }
+
+      // ── Visit log ─────────────────────────────────────────────────────────
+      async function loadLog() {
+        const from = `${curFrom}T00:00:00+07:00`;
+        const to   = `${curTo}T23:59:59+07:00`;
+        $("visitLog").innerHTML = '<tr><td colspan="6"><div class="empty">Memuat…</div></td></tr>';
+        $("logCaption").textContent = "Memuat data…";
+        $("logCount").textContent = "";
+        try {
+          const data = await fetch(
+            `/api/visits?rep_id=${repId}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&limit=500`
+          ).then(r => r.json());
+          renderLog(data.visits ?? []);
+        } catch {
+          $("visitLog").innerHTML = '<tr><td colspan="6"><div class="empty" style="color:#e05252">Gagal memuat data.</div></td></tr>';
+        }
+      }
+
+      function renderLog(visits) {
+        $("logCount").textContent = visits.length ? visits.length + " kunjungan" : "";
+        $("logCaption").textContent = curFrom === curTo ? curFrom : `${curFrom} — ${curTo}`;
+
+        if (!visits.length) {
+          $("visitLog").innerHTML = '<tr><td colspan="6"><div class="empty">Tidak ada kunjungan untuk periode ini.</div></td></tr>';
+          return;
+        }
+
+        // Group by WIB day (visits already sorted desc; we show newest first)
+        const groups = [];
+        let currKey  = null;
+        visits.forEach(v => {
+          // Shift to WIB to derive local date key
+          const key = new Date(new Date(v.visited_at).getTime() + WIB_MS).toISOString().slice(0, 10);
+          if (key !== currKey) { currKey = key; groups.push({ key, visits: [] }); }
+          groups[groups.length - 1].visits.push(v);
+        });
+
+        const rows = [];
+        groups.forEach(g => {
+          rows.push(`<tr class="day-row">
+            <td colspan="6">
+              <div class="day-div">
+                <div class="dl"></div>
+                <span class="dlabel">${esc(wibDayLabel(g.key))}</span>
+                <span class="dcnt">· ${g.visits.length} kunjungan</span>
+                <div class="dl"></div>
+              </div>
+            </td>
+          </tr>`);
+          g.visits.forEach(v => {
+            const rowC  = v.customer_type === "new" ? "row-new" : "row-old";
+            const badge = v.customer_type === "new"
+              ? '<span class="badge-new">BARU</span>'
+              : '<span class="badge-old">LAMA</span>';
+            const pic   = v.pic_name ? `<span class="pic">${esc(v.pic_name)}</span>` : "";
+            const note  = v.notes
+              ? (v.notes.length > 60 ? esc(v.notes.slice(0, 60)) + "…" : esc(v.notes))
+              : "—";
+            rows.push(`<tr class="${rowC}">
+              <td>${esc(wibTime(v.visited_at))}</td>
+              <td class="co">${esc(v.store_name)}${pic}</td>
+              <td>${badge}</td>
+              <td>${esc(v.category)}</td>
+              <td>${esc(v.area)}</td>
+              <td class="note">${note}</td>
+            </tr>`);
+          });
+        });
+        $("visitLog").innerHTML = rows.join("");
+      }
+
+      // ── AI synthesis ──────────────────────────────────────────────────────
+      $("synthesizeBtn").addEventListener("click", async () => {
+        const btn = $("synthesizeBtn");
+        const res = $("aiResult");
+        btn.disabled = true; btn.textContent = "Menganalisis…";
+        res.style.display = "none";
+
+        const from = `${curFrom}T00:00:00+07:00`;
+        const to   = `${curTo}T23:59:59+07:00`;
+
+        try {
+          const data = await fetch(`/api/visits/rep/${repId}/synthesize`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ from, to }),
+          }).then(r => r.json());
+
+          res.style.display = "block";
+          if (data.scaffold) {
+            res.className = "scaffold"; res.textContent = data.message;
+          } else if (data.ok && data.synthesis) {
+            res.className = "";
+            res.innerHTML =
+              `<div>${esc(data.synthesis).replace(/\n\n/g, "<br><br>").replace(/\n/g, "<br>")}</div>` +
+              `<div class="ai-meta">Berdasarkan ${data.note_count} catatan kunjungan · Model: ${esc(data.model)}</div>`;
+          } else if (data.ok) {
+            res.className = "scaffold"; res.textContent = data.message ?? "Tidak ada catatan untuk dianalisis.";
+          } else {
+            res.className = "err"; res.textContent = data.error ?? "Terjadi kesalahan.";
+          }
+        } catch {
+          res.style.display = "block"; res.className = "err";
+          res.textContent = "Tidak dapat terhubung ke server.";
+        }
+
+        btn.disabled = false; btn.textContent = "Hasilkan Sintesis";
+      });
+
+      // ── Controls ──────────────────────────────────────────────────────────
+      function loadAll() { loadStats(); loadLog(); }
+
+      $("showBtn").addEventListener("click", () => {
+        const f = $("fromDate").value || wibDateStr(-29);
+        let   t = $("toDate").value   || wibDateStr(0);
+        if (t < f) { t = f; $("toDate").value = f; }
+        curFrom = f; curTo = t; loadAll();
+      });
+
+      $("preset7").addEventListener("click",  () => {
+        curFrom = wibDateStr(-6); curTo = wibDateStr(0);
+        $("fromDate").value = curFrom; $("toDate").value = curTo; loadAll();
+      });
+      $("preset30").addEventListener("click", () => {
+        curFrom = wibDateStr(-29); curTo = wibDateStr(0);
+        $("fromDate").value = curFrom; $("toDate").value = curTo; loadAll();
+      });
+
+      // Boot
+      if (repId) { loadRepInfo(); loadAll(); }
+    })();
+    </script>
+  </body>
+</html>

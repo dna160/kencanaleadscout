@@ -23,6 +23,19 @@ export async function salespeopleRoutes(app: FastifyInstance): Promise<void> {
     return { count: rows.length, salespeople: rows };
   });
 
+  app.get<{ Params: { id: string } }>("/api/salespeople/:id", async (request, reply) => {
+    const db = getSql();
+    if (!db) return reply.code(503).send({ error: "Database not configured." });
+
+    const id = Number(request.params.id);
+    if (!Number.isInteger(id) || id < 1)
+      return reply.code(400).send({ error: "Invalid id." });
+
+    const [rep] = await db`select * from salespeople where id = ${id}`;
+    if (!rep) return reply.code(404).send({ error: "Salesperson not found." });
+    return { salesperson: rep };
+  });
+
   app.post<{ Body: Record<string, unknown> }>("/api/salespeople", async (request, reply) => {
     const db = getSql();
     if (!db) return reply.code(503).send({ error: "Database not configured." });

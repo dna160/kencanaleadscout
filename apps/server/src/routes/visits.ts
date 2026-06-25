@@ -296,6 +296,103 @@ export async function visitsRoutes(app: FastifyInstance): Promise<void> {
     };
   });
 
+  // ── AI synthesis scaffold ────────────────────────────────────────────────
+  app.post<{ Params: { id: string } }>("/api/visits/rep/:id/synthesize", async (request, reply) => {
+    const db = getSql();
+    if (!db) return reply.code(503).send({ error: "Database not configured." });
+
+    const rep_id = Number(request.params.id);
+    if (!Number.isInteger(rep_id) || rep_id < 1)
+      return reply.code(400).send({ error: "Invalid rep id." });
+
+    const WIB_MS = 7 * 3600 * 1000;
+    const now = new Date(Date.now() + WIB_MS);
+    const todayEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1) - WIB_MS);
+    const weekAgo  = new Date(todayEnd.getTime() - 7 * 24 * 3600 * 1000);
+
+    const rows = await db<{ store_name: string; customer_type: string; area: string; category: string; notes: string | null; visited_at: Date }[]>`
+      SELECT store_name, customer_type, area, category, notes, visited_at
+      FROM visits
+      WHERE salesperson_id = ${rep_id}
+        AND visited_at >= ${weekAgo}
+        AND visited_at <  ${todayEnd}
+      ORDER BY visited_at DESC
+      LIMIT 100
+    `;
+
+    const [rep] = await db<{ full_name: string }[]>`SELECT full_name FROM salespeople WHERE id = ${rep_id}`;
+    const repName = rep?.full_name ?? `Rep #${rep_id}`;
+
+    const apiKey = process.env.AI_API_KEY;
+    const model  = process.env.AI_MODEL ?? "claude-haiku-4-5-20251001";
+
+    if (!apiKey) {
+      return {
+        ok: false,
+        scaffold: true,
+        note_count: rows.length,
+        rep_name: repName,
+        message: "AI synthesis belum dikonfigurasi. Set AI_API_KEY (dan opsional AI_MODEL) di environment untuk mengaktifkan fitur ini.",
+      };
+    }
+
+    if (rows.length === 0) {
+      return { ok: true, synthesis: `Tidak ada kunjungan dalam 7 hari terakhir untuk ${repName}.` };
+    }
+
+    const visitLines = rows.map((r) => {
+      const wibDate = new Date(new Date(r.visited_at).getTime() + WIB_MS).toISOString().slice(0, 10);
+      const tipe = r.customer_type === "new" ? "BARU" : "LAMA";
+      const note = r.notes ? ` — ${r.notes}` : "";
+      return `${wibDate} | ${tipe} | ${r.store_name} (${r.category}, ${r.area})${note}`;
+    }).join("\n");
+
+    const prompt = `Kamu adalah analis penjualan lapangan. Buat ringkasan singkat aktivitas kunjungan sales berikut untuk 7 hari terakhir.
+
+Sales: ${repName}
+Total kunjungan: ${rows.length}
+
+Log kunjungan:
+${visitLines}
+
+Buat ringkasan dalam Bahasa Indonesia (maks 300 kata) yang mencakup:
+1. Pola kunjungan (area, kategori, tipe pelanggan yang dominan)
+2. Kebutuhan atau masalah yang muncul dari catatan kunjungan
+3. Tantangan atau hambatan yang teridentifikasi
+4. Rekomendasi tindak lanjut yang spesifik
+
+Fokus pada insight yang actionable. Jangan ulangi daftar kunjungan.`;
+
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: 1024,
+          messages: [{ role: "user", content: prompt }],
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.text();
+        app.log.error({ err }, "AI synthesis API error");
+        return reply.code(502).send({ error: "AI synthesis failed. Check server logs." });
+      }
+
+      const data = await res.json() as { content: Array<{ type: string; text: string }> };
+      const synthesis = data.content.find((c) => c.type === "text")?.text ?? "";
+      return { ok: true, synthesis, note_count: rows.length, rep_name: repName };
+    } catch (err) {
+      app.log.error({ err }, "AI synthesis fetch error");
+      return reply.code(502).send({ error: "AI synthesis request failed." });
+    }
+  });
+
   // ── Handler: override visited_at (audit-logged) ───────────────────────────
   app.patch<{
     Params: { id: string };
