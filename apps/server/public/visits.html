@@ -123,15 +123,9 @@
           </div>
           <div class="field">
             <label>Kategori *</label>
-            <select id="f-cat" required>
-              <option value="">Pilih kategori</option>
-            </select>
+            <input id="f-cat" type="text" list="cat-dl" required placeholder="mis. Workshop" autocomplete="off" />
+            <datalist id="cat-dl"></datalist>
           </div>
-        </div>
-
-        <div class="field" id="other-group" style="display:none;">
-          <label>Keterangan "Other" *</label>
-          <input id="f-other" type="text" placeholder="Jelaskan tipe usaha..." />
         </div>
 
         <div class="divider"></div>
@@ -144,9 +138,8 @@
         <div class="two">
           <div class="field">
             <label>Area *</label>
-            <select id="f-area" required>
-              <option value="">Pilih area</option>
-            </select>
+            <input id="f-area" type="text" list="area-dl" required placeholder="mis. Bekasi Timur" autocomplete="off" />
+            <datalist id="area-dl"></datalist>
           </div>
           <div class="field">
             <label>Kode Pos <span class="opt">opsional</span></label>
@@ -175,7 +168,7 @@
       "use strict";
       const $ = id => document.getElementById(id);
 
-      // ── Load dropdowns ───────────────────────────────────────────────────
+      // ── Load dropdowns & datalists ───────────────────────────────────────
       async function boot() {
         const [spRes, catRes, areaRes] = await Promise.all([
           fetch("/api/salespeople?active=true").then(r => r.json()).catch(() => ({ salespeople: [] })),
@@ -183,6 +176,7 @@
           fetch("/api/lists/areas").then(r => r.json()).catch(() => ({ values: [] })),
         ]);
 
+        // Salesperson — stays a <select> (locked registry)
         const spSel = $("f-sales");
         (spRes.salespeople ?? []).forEach(sp => {
           const o = document.createElement("option");
@@ -191,29 +185,19 @@
           spSel.appendChild(o);
         });
 
-        const catSel = $("f-cat");
+        // Category & Area — free text with datalist suggestions
+        const catDl = $("cat-dl");
         (catRes.values ?? []).forEach(c => {
-          const o = document.createElement("option");
-          o.value = c; o.textContent = c;
-          catSel.appendChild(o);
+          const o = document.createElement("option"); o.value = c; catDl.appendChild(o);
         });
 
-        const areaSel = $("f-area");
+        const areaDl = $("area-dl");
         (areaRes.values ?? []).forEach(a => {
-          const o = document.createElement("option");
-          o.value = a; o.textContent = a;
-          areaSel.appendChild(o);
+          const o = document.createElement("option"); o.value = a; areaDl.appendChild(o);
         });
       }
 
-      // Show/hide "Other" qualifier field
-      $("f-cat").addEventListener("change", () => {
-        const show = $("f-cat").value === "Other";
-        $("other-group").style.display = show ? "block" : "none";
-        if (!show) $("f-other").value = "";
-      });
-
-      // Store-name autocomplete + auto-suggest Old when matched
+      // Store-name autocomplete + auto-suggest Old + prefill area when matched
       let acTimer;
       $("f-store").addEventListener("input", () => {
         clearTimeout(acTimer);
@@ -225,24 +209,14 @@
           const dl = $("store-dl");
           dl.innerHTML = "";
           (res.suggestions ?? []).forEach(s => {
-            const o = document.createElement("option");
-            o.value = s.store_name;
-            dl.appendChild(o);
+            const o = document.createElement("option"); o.value = s.store_name; dl.appendChild(o);
           });
-          // If exact match exists, default type to 'old' and prefill area
           const match = (res.suggestions ?? []).find(
             s => s.store_name.toLowerCase() === q.toLowerCase()
           );
           if (match) {
             if (!$("f-type").value) $("f-type").value = "old";
-            if (match.area && !$("f-area").value) {
-              const areaSel = $("f-area");
-              for (const opt of areaSel.options) {
-                if (opt.value.toLowerCase() === match.area.toLowerCase()) {
-                  areaSel.value = opt.value; break;
-                }
-              }
-            }
+            if (match.area && !$("f-area").value) $("f-area").value = match.area;
           }
         }, 280);
       });
@@ -261,8 +235,7 @@
         const pic_name       = $("f-pic").value.trim() || null;
         const address        = $("f-addr").value.trim() || null;
         const postal_code    = $("f-postal").value.trim() || null;
-        let   notes          = $("f-notes").value.trim() || null;
-        const otherNote      = $("f-other").value.trim();
+        const notes          = $("f-notes").value.trim() || null;
 
         // Validate required fields
         const missing = [];
@@ -271,7 +244,6 @@
         if (!customer_type)  missing.push("Tipe Customer");
         if (!category)       missing.push("Kategori");
         if (!area)           missing.push("Area");
-        if (category === "Other" && !otherNote) missing.push("Keterangan Other");
         if (missing.length) {
           errEl.textContent = "Lengkapi: " + missing.join(", ");
           errEl.style.display = "block"; return;
@@ -279,11 +251,6 @@
         if (postal_code && !/^\d{5}$/.test(postal_code)) {
           errEl.textContent = "Kode pos harus 5 digit angka.";
           errEl.style.display = "block"; return;
-        }
-
-        // Prepend Other qualifier into notes
-        if (category === "Other" && otherNote) {
-          notes = notes ? `[Other: ${otherNote}] ${notes}` : `[Other: ${otherNote}]`;
         }
 
         const btn = $("btn");
@@ -308,7 +275,6 @@
         // Success — reset form, keep salesperson selected
         const savedSales = $("f-sales").value;
         document.getElementById("vform").reset();
-        $("other-group").style.display = "none";
         $("f-sales").value = savedSales;
 
         const t = $("toast");
