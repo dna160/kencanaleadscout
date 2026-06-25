@@ -103,7 +103,7 @@
         </div>
       </div>
 
-      <form id="vform" onsubmit="saveVisit(event)" novalidate>
+      <form id="vform" novalidate>
 
         <div class="act-toggle">
           <button type="button" class="act-seg active" id="act-kunjungan" onclick="setAct('kunjungan')">Kunjungan</button>
@@ -261,7 +261,7 @@
       });
 
       // ── Submit ───────────────────────────────────────────────────────────
-      window.saveVisit = async function(e) {
+      document.getElementById("vform").addEventListener("submit", async function(e) {
         e.preventDefault();
         const errEl = $("err");
         errEl.style.display = "none";
@@ -304,7 +304,7 @@
         }).then(r => r.json()).catch(() => ({ error: "Koneksi gagal." }));
 
         btn.disabled = false;
-        btn.textContent = "Simpan Kunjungan";
+        btn.textContent = activityType === "telepon" ? "Simpan Telepon" : "Simpan Kunjungan";
 
         if (res.error) {
           errEl.textContent = res.error;
