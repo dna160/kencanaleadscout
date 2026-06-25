@@ -77,6 +77,7 @@ async function main(): Promise<void> {
   app.get("/handler", (_req, reply) => reply.sendFile("handler.html"));
   app.get("/sales-lead", (_req, reply) => reply.sendFile("sales-lead.html"));
   app.get("/visits", (_req, reply) => reply.sendFile("visits.html"));
+  app.get("/visits-rack", (_req, reply) => reply.sendFile("visits-rack.html"));
   app.get("/visits-insights", (_req, reply) => reply.sendFile("visits-insights.html"));
 
   // [A] Scraper APIs.

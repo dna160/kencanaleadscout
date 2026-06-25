@@ -206,6 +206,96 @@ export async function visitsRoutes(app: FastifyInstance): Promise<void> {
       .send(buf);
   });
 
+  // ── Live rack-up stats (Module E) ────────────────────────────────────────
+  app.get("/api/visits/stats", async (_request, reply) => {
+    const db = getSql();
+    if (!db) return reply.code(503).send({ error: "Database not configured." });
+
+    // Start of today in WIB (UTC+7), expressed as UTC timestamptz
+    const WIB_MS = 7 * 3600 * 1000;
+    const shifted = new Date(Date.now() + WIB_MS);
+    const todayStart = new Date(
+      Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate()) - WIB_MS
+    );
+    const weekStart = new Date(todayStart.getTime() - 6 * 24 * 3600 * 1000);
+
+    const [totalsRows, repRows, dayRows, recentRows, todayRows] = await Promise.all([
+      db<Record<string, string>[]>`
+        SELECT
+          COUNT(*) FILTER (WHERE visited_at >= ${todayStart})                                        AS today,
+          COUNT(*) FILTER (WHERE visited_at >= ${todayStart} AND customer_type = 'new')              AS today_new,
+          COUNT(*) FILTER (WHERE visited_at >= ${todayStart} AND customer_type = 'old')              AS today_old,
+          COUNT(DISTINCT salesperson_id) FILTER (WHERE visited_at >= ${todayStart})                  AS active_reps_today,
+          COUNT(*) FILTER (WHERE visited_at >= ${weekStart})                                         AS week_total,
+          COUNT(*) FILTER (WHERE visited_at >= ${weekStart} AND customer_type = 'new')               AS week_new
+        FROM visits
+      `,
+      db`
+        SELECT
+          s.id           AS salesperson_id,
+          s.full_name,
+          s.code,
+          COUNT(*)                                         AS total,
+          COUNT(*) FILTER (WHERE v.customer_type = 'new') AS new_count,
+          COUNT(*) FILTER (WHERE v.customer_type = 'old') AS old_count
+        FROM visits v
+        JOIN salespeople s ON s.id = v.salesperson_id
+        WHERE v.visited_at >= ${todayStart}
+        GROUP BY s.id, s.full_name, s.code
+        ORDER BY total DESC
+      `,
+      db`
+        SELECT
+          (date_trunc('day', visited_at AT TIME ZONE 'Asia/Jakarta'))::date AS day,
+          COUNT(*)                                         AS total,
+          COUNT(*) FILTER (WHERE customer_type = 'new')   AS new_count
+        FROM visits
+        WHERE visited_at >= ${weekStart}
+        GROUP BY 1
+        ORDER BY 1
+      `,
+      db`
+        SELECT
+          v.id, v.store_name, v.customer_type, v.area, v.category, v.pic_name, v.visited_at,
+          s.full_name AS salesperson_name,
+          s.code      AS salesperson_code
+        FROM visits v
+        JOIN salespeople s ON s.id = v.salesperson_id
+        ORDER BY v.visited_at DESC
+        LIMIT 15
+      `,
+      db`
+        SELECT
+          v.id, v.store_name, v.customer_type, v.area, v.category,
+          v.pic_name, v.notes, v.visited_at,
+          s.full_name AS salesperson_name,
+          s.code      AS salesperson_code
+        FROM visits v
+        JOIN salespeople s ON s.id = v.salesperson_id
+        WHERE v.visited_at >= ${todayStart}
+        ORDER BY v.visited_at DESC
+        LIMIT 500
+      `,
+    ]);
+
+    const t = totalsRows[0] ?? {};
+    return {
+      totals: {
+        today:             Number(t.today)             || 0,
+        today_new:         Number(t.today_new)         || 0,
+        today_old:         Number(t.today_old)         || 0,
+        active_reps_today: Number(t.active_reps_today) || 0,
+        week_total:        Number(t.week_total)        || 0,
+        week_new:          Number(t.week_new)          || 0,
+      },
+      by_rep_today: repRows,
+      by_day_7:     dayRows,
+      recent:       recentRows,
+      today_visits: todayRows,
+      today_start:  todayStart.toISOString(),
+    };
+  });
+
   // ── Handler: override visited_at (audit-logged) ───────────────────────────
   app.patch<{
     Params: { id: string };
