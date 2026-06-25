@@ -198,9 +198,10 @@
 
       // ── Load dropdowns & datalists ───────────────────────────────────────
       async function boot() {
-        const safeJson = r => r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status));
+        const safeJson = r => r.ok ? r.json() : r.json().then(d => Promise.reject(new Error(d.error || "HTTP " + r.status)));
+        let spError = null;
         const [spRes, catRes, areaRes] = await Promise.all([
-          fetch("/api/salespeople?active=true").then(safeJson).catch(() => ({ salespeople: [] })),
+          fetch("/api/salespeople?active=true").then(safeJson).catch(e => { spError = e.message; return { salespeople: [] }; }),
           fetch("/api/lists/categories").then(safeJson).catch(() => ({ values: [] })),
           fetch("/api/lists/areas").then(safeJson).catch(() => ({ values: [] })),
         ]);
@@ -220,7 +221,8 @@
           o.textContent = "⚠ Tidak ada sales terdaftar";
           spSel.appendChild(o);
           const errEl = $("err");
-          errEl.innerHTML = 'Daftar sales kosong. <a href="/salespeople" style="color:var(--gold)">Daftarkan sales</a> terlebih dahulu, atau pastikan DATABASE_URL sudah dikonfigurasi.';
+          const detail = spError ? ` (${spError})` : "";
+          errEl.innerHTML = `Tidak ada sales aktif${detail}. <a href="/salespeople" style="color:var(--gold)">Daftarkan sales</a> di halaman Kelola Sales.`;
           errEl.style.display = "block";
         }
 

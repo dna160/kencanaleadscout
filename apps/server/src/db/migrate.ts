@@ -177,19 +177,22 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
     )
   `;
 
-  // Seed categories (idempotent via unique constraint).
-  for (const v of ["Toko", "Workshop", "Aplikator", "Kontraktor", "Distributor", "Advertising/Signage", "Project", "Other"]) {
-    await db`insert into visit_lists (type, value) values ('category', ${v}) on conflict do nothing`;
-  }
-
-  // Seed areas from known Wilayah values (normalized).
-  for (const v of [
-    "Bekasi Barat", "Bekasi Timur", "Bekasi Utara", "Bekasi Selatan", "Bekasi Kota",
-    "Cikarang", "Karawang", "Depok", "Tangerang Selatan",
-    "Jakarta Timur", "Jakarta Selatan", "Jakarta Pusat", "Jakarta Barat", "Jakarta Utara",
-    "Bogor",
-  ]) {
-    await db`insert into visit_lists (type, value) values ('area', ${v}) on conflict do nothing`;
+  // Seed categories + areas — wrapped so a missing visit_lists table never
+  // prevents the salespeople seeding below from running.
+  try {
+    for (const v of ["Toko", "Workshop", "Aplikator", "Kontraktor", "Distributor", "Advertising/Signage", "Project", "Other"]) {
+      await db`insert into visit_lists (type, value) values ('category', ${v}) on conflict do nothing`;
+    }
+    for (const v of [
+      "Bekasi Barat", "Bekasi Timur", "Bekasi Utara", "Bekasi Selatan", "Bekasi Kota",
+      "Cikarang", "Karawang", "Depok", "Tangerang Selatan",
+      "Jakarta Timur", "Jakarta Selatan", "Jakarta Pusat", "Jakarta Barat", "Jakarta Utara",
+      "Bogor",
+    ]) {
+      await db`insert into visit_lists (type, value) values ('area', ${v}) on conflict do nothing`;
+    }
+  } catch (listSeedErr) {
+    console.error("[migrate] visit_lists seeding failed (non-fatal):", listSeedErr);
   }
 
   // Seed initial roster (inferred from workbook tabs). Handler can extend.
