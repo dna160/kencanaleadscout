@@ -76,6 +76,117 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
   await db`create index if not exists leads_rep_day_idx on leads (rep, day)`;
   await db`create index if not exists outcomes_status_idx on outcomes (status)`;
   await db`create index if not exists outcomes_stage_idx on outcomes (stage)`;
+
+  // ── Module D — Visitation Log ──────────────────────────────────────────────
+
+  // Managed enum lists (categories + areas). Handler-extensible without migrations.
+  await db`
+    create table if not exists visit_lists (
+      id     bigserial primary key,
+      type   text not null,
+      value  text not null,
+      active boolean not null default true,
+      unique (type, lower(value))
+    )
+  `;
+
+  // Field-rep registry. Deactivate on departure; never hard-delete (historical FK).
+  await db`
+    create table if not exists salespeople (
+      id           bigserial primary key,
+      full_name    text not null,
+      code         text unique,
+      phone_e164   text,
+      default_area text,
+      active       boolean not null default true,
+      created_at   timestamptz not null default now()
+    )
+  `;
+
+  // Customer master: enables New/Old auto-detection + dedup.
+  await db`
+    create table if not exists customers (
+      id            bigserial primary key,
+      store_name    text not null,
+      category      text not null,
+      area          text,
+      address       text,
+      postal_code   text,
+      first_seen_at timestamptz,
+      created_by    bigint references salespeople(id)
+    )
+  `;
+  await db`
+    create unique index if not exists customers_norm
+      on customers (lower(trim(store_name)), coalesce(area, ''))
+  `;
+
+  // The visit log. visited_at is server-stamped on submit; immutable to reps.
+  await db`
+    create table if not exists visits (
+      id             bigserial primary key,
+      salesperson_id bigint not null references salespeople(id),
+      customer_id    bigint references customers(id),
+      pic_name       text,
+      store_name     text not null,
+      customer_type  text not null check (customer_type in ('new','old')),
+      category       text not null,
+      address        text,
+      area           text not null,
+      postal_code    text check (postal_code is null or postal_code ~ '^\\d{5}$'),
+      notes          text,
+      visited_at     timestamptz not null default now(),
+      created_at     timestamptz not null default now(),
+      source         text not null default 'app'
+    )
+  `;
+  await db`create index if not exists visits_rep_time on visits (salesperson_id, visited_at desc)`;
+  await db`create index if not exists visits_area     on visits (area)`;
+  await db`create index if not exists visits_type     on visits (customer_type)`;
+
+  // Audit log for Handler overrides of visited_at.
+  await db`
+    create table if not exists visit_audits (
+      id         bigserial primary key,
+      visit_id   bigint not null references visits(id),
+      field      text not null,
+      old_value  text,
+      new_value  text,
+      changed_by text,
+      changed_at timestamptz not null default now()
+    )
+  `;
+
+  // Seed categories (idempotent via unique constraint).
+  for (const v of ["Toko", "Workshop", "Aplikator", "Kontraktor", "Distributor", "Advertising/Signage", "Project", "Other"]) {
+    await db`insert into visit_lists (type, value) values ('category', ${v}) on conflict do nothing`;
+  }
+
+  // Seed areas from known Wilayah values (normalized).
+  for (const v of [
+    "Bekasi Barat", "Bekasi Timur", "Bekasi Utara", "Bekasi Selatan", "Bekasi Kota",
+    "Cikarang", "Karawang", "Depok", "Tangerang Selatan",
+    "Jakarta Timur", "Jakarta Selatan", "Jakarta Pusat", "Jakarta Barat", "Jakarta Utara",
+    "Bogor",
+  ]) {
+    await db`insert into visit_lists (type, value) values ('area', ${v}) on conflict do nothing`;
+  }
+
+  // Seed initial roster (inferred from workbook tabs). Handler can extend.
+  for (const r of [
+    { full_name: "Hanif",    code: "HNF" },
+    { full_name: "Edhy",     code: "EDH" },
+    { full_name: "Suwondo",  code: "SWD" },
+    { full_name: "Rahmanto", code: "RHM" },
+    { full_name: "Burhan",   code: "BRH" },
+    { full_name: "Anthony",  code: "ANT" },
+  ]) {
+    await db`
+      insert into salespeople (full_name, code)
+      values (${r.full_name}, ${r.code})
+      on conflict (code) do nothing
+    `;
+  }
 }
 
 // Allow `tsx src/db/migrate.ts` as a one-off.

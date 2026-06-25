@@ -1,0 +1,258 @@
+/**
+ * [D] Visit log routes — Module D (Visitation Log microPRD §10).
+ *
+ * POST   /api/visits              — create (server stamps visited_at)
+ * GET    /api/visits              — rack-up list with filters, paginated
+ * GET    /api/visits/export       — XLSX download, blue/green fills
+ * PATCH  /api/visits/:id          — Handler: override visited_at (audit-logged)
+ * GET    /api/customers/suggest   — store-name autocomplete
+ */
+import type { FastifyInstance } from "fastify";
+import * as XLSX from "xlsx";
+import { getSql } from "../db/client.js";
+
+const CUSTOMER_TYPES = new Set(["new", "old"]);
+
+function parseDate(s: string | undefined): Date | null {
+  if (!s) return null;
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+export async function visitsRoutes(app: FastifyInstance): Promise<void> {
+  // ── Create ────────────────────────────────────────────────────────────────
+  app.post<{ Body: Record<string, unknown> }>("/api/visits", async (request, reply) => {
+    const db = getSql();
+    if (!db) return reply.code(503).send({ error: "Database not configured." });
+
+    const b = request.body ?? {};
+    const salesperson_id_raw = b.salesperson_id != null ? Number(b.salesperson_id) : null;
+    const pic_name    = b.pic_name    ? String(b.pic_name).trim()    : null;
+    const store_name  = String(b.store_name  ?? "").trim();
+    const customer_type = String(b.customer_type ?? "").trim().toLowerCase();
+    const category    = String(b.category    ?? "").trim();
+    const address     = b.address     ? String(b.address).trim()     : null;
+    const area        = String(b.area        ?? "").trim();
+    const postal_code = b.postal_code ? String(b.postal_code).trim() : null;
+    const notes       = b.notes       ? String(b.notes).trim()       : null;
+
+    if (!salesperson_id_raw || !Number.isInteger(salesperson_id_raw) || salesperson_id_raw < 1)
+      return reply.code(400).send({ error: "salesperson_id is required." });
+    if (!store_name)
+      return reply.code(400).send({ error: "store_name is required." });
+    if (!CUSTOMER_TYPES.has(customer_type))
+      return reply.code(400).send({ error: "customer_type must be 'new' or 'old'." });
+    if (!category)
+      return reply.code(400).send({ error: "category is required." });
+    if (!area)
+      return reply.code(400).send({ error: "area is required." });
+    if (postal_code && !/^\d{5}$/.test(postal_code))
+      return reply.code(400).send({ error: "postal_code must be 5 digits if provided." });
+
+    const salesperson_id = salesperson_id_raw;
+
+    // Upsert customer master so New/Old auto-detection works on future visits.
+    let customer_id: number | null = null;
+    try {
+      const [cust] = await db<{ id: number }[]>`
+        insert into customers (store_name, category, area, address, postal_code, first_seen_at, created_by)
+        values (${store_name}, ${category}, ${area}, ${address}, ${postal_code}, now(), ${salesperson_id})
+        on conflict (lower(trim(store_name)), coalesce(area, ''))
+        do update set
+          category    = customers.category,
+          address     = coalesce(customers.address, excluded.address),
+          postal_code = coalesce(customers.postal_code, excluded.postal_code)
+        returning id
+      `;
+      customer_id = cust?.id ?? null;
+    } catch {
+      // non-fatal — visit is still saved without the customer link
+    }
+
+    const [visit] = await db`
+      insert into visits (
+        salesperson_id, customer_id, pic_name, store_name,
+        customer_type, category, address, area, postal_code, notes,
+        visited_at, source
+      ) values (
+        ${salesperson_id}, ${customer_id}, ${pic_name}, ${store_name},
+        ${customer_type}, ${category}, ${address}, ${area}, ${postal_code}, ${notes},
+        now(), 'app'
+      )
+      returning *
+    `;
+    return { ok: true, visit };
+  });
+
+  // ── Rack-up list ─────────────────────────────────────────────────────────
+  app.get<{ Querystring: Record<string, string> }>("/api/visits", async (request, reply) => {
+    const db = getSql();
+    if (!db) return reply.code(503).send({ error: "Database not configured." });
+
+    const q   = request.query;
+    const rep_id   = q.rep_id ? Number(q.rep_id) : null;
+    const ctype    = q.type && CUSTOMER_TYPES.has(q.type) ? q.type : null;
+    const category = q.category ? decodeURIComponent(q.category) : null;
+    const area     = q.area     ? decodeURIComponent(q.area)     : null;
+    const from_ts  = parseDate(q.from);
+    const to_ts    = parseDate(q.to);
+    const search   = q.q ? `%${q.q}%` : null;
+    const limit    = Math.min(Number(q.limit) || 100, 500);
+    const offset   = Number(q.offset) || 0;
+
+    const rows = await db`
+      select
+        v.id, v.salesperson_id, v.customer_id,
+        v.pic_name, v.store_name, v.customer_type, v.category,
+        v.address, v.area, v.postal_code, v.notes,
+        v.visited_at, v.source,
+        s.full_name as salesperson_name,
+        s.code      as salesperson_code
+      from visits v
+      join salespeople s on s.id = v.salesperson_id
+      where true
+        ${rep_id   ? db`and v.salesperson_id = ${rep_id}` : db``}
+        ${ctype    ? db`and v.customer_type = ${ctype}`   : db``}
+        ${category ? db`and lower(v.category) = lower(${category})` : db``}
+        ${area     ? db`and lower(v.area)     = lower(${area})`     : db``}
+        ${from_ts  ? db`and v.visited_at >= ${from_ts}`  : db``}
+        ${to_ts    ? db`and v.visited_at <= ${to_ts}`    : db``}
+        ${search   ? db`and v.notes ilike ${search}`     : db``}
+      order by v.visited_at desc
+      limit ${limit} offset ${offset}
+    `;
+
+    return { count: rows.length, visits: rows };
+  });
+
+  // ── XLSX export ───────────────────────────────────────────────────────────
+  app.get<{ Querystring: Record<string, string> }>("/api/visits/export", async (request, reply) => {
+    const db = getSql();
+    if (!db) return reply.code(503).send({ error: "Database not configured." });
+
+    const q  = request.query;
+    const rep_id   = q.rep_id ? Number(q.rep_id) : null;
+    const ctype    = q.type && CUSTOMER_TYPES.has(q.type) ? q.type : null;
+    const category = q.category || null;
+    const area     = q.area     || null;
+    const from_ts  = parseDate(q.from);
+    const to_ts    = parseDate(q.to);
+
+    const rows = await db<{
+      id: number; visited_at: string;
+      salesperson_name: string; salesperson_code: string;
+      store_name: string; pic_name: string | null;
+      customer_type: string; category: string;
+      area: string; address: string | null;
+      postal_code: string | null; notes: string | null;
+    }[]>`
+      select
+        v.id,
+        to_char(v.visited_at at time zone 'Asia/Jakarta', 'YYYY-MM-DD HH24:MI') as visited_at,
+        s.full_name as salesperson_name,
+        s.code      as salesperson_code,
+        v.store_name, v.pic_name, v.customer_type, v.category,
+        v.area, v.address, v.postal_code, v.notes
+      from visits v
+      join salespeople s on s.id = v.salesperson_id
+      where true
+        ${rep_id   ? db`and v.salesperson_id = ${rep_id}` : db``}
+        ${ctype    ? db`and v.customer_type = ${ctype}`   : db``}
+        ${category ? db`and lower(v.category) = lower(${category})` : db``}
+        ${area     ? db`and lower(v.area)     = lower(${area})`     : db``}
+        ${from_ts  ? db`and v.visited_at >= ${from_ts}`  : db``}
+        ${to_ts    ? db`and v.visited_at <= ${to_ts}`    : db``}
+      order by v.visited_at desc
+      limit 5000
+    `;
+
+    const data = rows.map((r) => ({
+      "ID":                    r.id,
+      "Waktu Kunjungan (WIB)": r.visited_at,
+      "Sales":                 `${r.salesperson_name} (${r.salesperson_code})`,
+      "Nama Toko":             r.store_name,
+      "PIC":                   r.pic_name ?? "",
+      "Tipe":                  r.customer_type === "new" ? "NEW" : "OLD",
+      "Kategori":              r.category,
+      "Area":                  r.area,
+      "Alamat":                r.address ?? "",
+      "Kode Pos":              r.postal_code ?? "",
+      "Catatan":               r.notes ?? "",
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(data);
+    const range = XLSX.utils.decode_range(ws["!ref"] ?? "A1");
+
+    // Blue fill for new rows, green fill for old rows (column F = "Tipe", index 5).
+    for (let R = range.s.r + 1; R <= range.e.r; R++) {
+      const tipeCell = ws[XLSX.utils.encode_cell({ r: R, c: 5 })];
+      const isNew = tipeCell?.v === "NEW";
+      const rgb = isNew ? "E8F1FB" : "EAF5EA";
+      for (let C = range.s.c; C <= range.e.c; C++) {
+        const addr = XLSX.utils.encode_cell({ r: R, c: C });
+        if (!ws[addr]) ws[addr] = { t: "z", v: "" };
+        (ws[addr] as Record<string, unknown>).s = { fill: { fgColor: { rgb } } };
+      }
+    }
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Kunjungan");
+    const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx", cellStyles: true }) as Buffer;
+
+    const filename = `kunjungan_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    return reply
+      .header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+      .header("Content-Disposition", `attachment; filename="${filename}"`)
+      .send(buf);
+  });
+
+  // ── Handler: override visited_at (audit-logged) ───────────────────────────
+  app.patch<{
+    Params: { id: string };
+    Body: { visited_at?: string; changed_by?: string };
+  }>("/api/visits/:id", async (request, reply) => {
+    const db = getSql();
+    if (!db) return reply.code(503).send({ error: "Database not configured." });
+
+    const id = Number(request.params.id);
+    if (!Number.isInteger(id) || id < 1)
+      return reply.code(400).send({ error: "Invalid visit id." });
+
+    const b  = request.body ?? {};
+    const new_ts   = b.visited_at ? new Date(b.visited_at) : null;
+    const changed_by = b.changed_by ? String(b.changed_by).trim() : "Handler";
+
+    if (!new_ts || Number.isNaN(new_ts.getTime()))
+      return reply.code(400).send({ error: "visited_at must be a valid ISO datetime." });
+
+    const [current] = await db<{ id: number; visited_at: Date }[]>`
+      select id, visited_at from visits where id = ${id}
+    `;
+    if (!current) return reply.code(404).send({ error: "Visit not found." });
+
+    const [saved] = await db`
+      update visits set visited_at = ${new_ts} where id = ${id} returning *
+    `;
+    await db`
+      insert into visit_audits (visit_id, field, old_value, new_value, changed_by)
+      values (${id}, 'visited_at', ${current.visited_at.toISOString()}, ${new_ts.toISOString()}, ${changed_by})
+    `;
+    return { ok: true, visit: saved };
+  });
+
+  // ── Store name autocomplete ───────────────────────────────────────────────
+  app.get<{ Querystring: { q?: string } }>("/api/customers/suggest", async (request, reply) => {
+    const db = getSql();
+    if (!db) return reply.code(503).send({ error: "Database not configured." });
+
+    const q = request.query.q ? `%${request.query.q}%` : "%";
+    const rows = await db<{ store_name: string; category: string; area: string | null }[]>`
+      select store_name, category, area
+      from customers
+      where lower(store_name) like lower(${q})
+      order by store_name
+      limit 20
+    `;
+    return { suggestions: rows };
+  });
+}

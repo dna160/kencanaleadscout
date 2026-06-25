@@ -26,6 +26,10 @@ import { statsRoutes } from "./routes/stats.js";
 import { capturesRoutes } from "./routes/captures.js";
 import { pipelineRoutes } from "./routes/pipeline.js";
 import { salesLeadRoutes } from "./routes/sales-lead.js";
+import { visitsRoutes } from "./routes/visits.js";
+import { salespeopleRoutes } from "./routes/salespeople.js";
+import { listsRoutes } from "./routes/lists.js";
+import { insightsRoutes } from "./routes/insights.js";
 
 const PUBLIC_DIR = fileURLToPath(new URL("../public", import.meta.url));
 
@@ -72,6 +76,8 @@ async function main(): Promise<void> {
   app.get("/champion", (_req, reply) => reply.sendFile("champion.html"));
   app.get("/handler", (_req, reply) => reply.sendFile("handler.html"));
   app.get("/sales-lead", (_req, reply) => reply.sendFile("sales-lead.html"));
+  app.get("/visits", (_req, reply) => reply.sendFile("visits.html"));
+  app.get("/visits-insights", (_req, reply) => reply.sendFile("visits-insights.html"));
 
   // [A] Scraper APIs.
   await app.register(enrichRoutes);
@@ -85,6 +91,12 @@ async function main(): Promise<void> {
   await app.register(capturesRoutes);
   await app.register(pipelineRoutes);
   await app.register(salesLeadRoutes);
+
+  // [D] Visitation Log APIs.
+  await app.register(visitsRoutes);
+  await app.register(salespeopleRoutes);
+  await app.register(listsRoutes);
+  await app.register(insightsRoutes);
 
   await bootDatabase(app);
 
