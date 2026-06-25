@@ -35,6 +35,8 @@ export async function visitsRoutes(app: FastifyInstance): Promise<void> {
     const area        = String(b.area        ?? "").trim();
     const postal_code = b.postal_code ? String(b.postal_code).trim() : null;
     const notes       = b.notes       ? String(b.notes).trim()       : null;
+    const activity_type_raw = b.activity_type ? String(b.activity_type).trim().toLowerCase() : "kunjungan";
+    const activity_type = ["kunjungan", "telepon"].includes(activity_type_raw) ? activity_type_raw : "kunjungan";
 
     if (!salesperson_id_raw || !Number.isInteger(salesperson_id_raw) || salesperson_id_raw < 1)
       return reply.code(400).send({ error: "salesperson_id is required." });
@@ -73,11 +75,11 @@ export async function visitsRoutes(app: FastifyInstance): Promise<void> {
       insert into visits (
         salesperson_id, customer_id, pic_name, store_name,
         customer_type, category, address, area, postal_code, notes,
-        visited_at, source
+        activity_type, visited_at, source
       ) values (
         ${salesperson_id}, ${customer_id}, ${pic_name}, ${store_name},
         ${customer_type}, ${category}, ${address}, ${area}, ${postal_code}, ${notes},
-        now(), 'app'
+        ${activity_type}, now(), 'app'
       )
       returning *
     `;

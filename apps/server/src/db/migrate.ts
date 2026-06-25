@@ -162,6 +162,7 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
   await db`create index if not exists visits_rep_time on visits (salesperson_id, visited_at desc)`;
   await db`create index if not exists visits_area     on visits (area)`;
   await db`create index if not exists visits_type     on visits (customer_type)`;
+  await db`alter table visits add column if not exists activity_type text not null default 'kunjungan'`;
 
   // Audit log for Handler overrides of visited_at.
   await db`
