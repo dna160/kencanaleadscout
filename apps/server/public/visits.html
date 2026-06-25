@@ -170,10 +170,11 @@
 
       // ── Load dropdowns & datalists ───────────────────────────────────────
       async function boot() {
+        const safeJson = r => r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status));
         const [spRes, catRes, areaRes] = await Promise.all([
-          fetch("/api/salespeople?active=true").then(r => r.json()).catch(() => ({ salespeople: [] })),
-          fetch("/api/lists/categories").then(r => r.json()).catch(() => ({ values: [] })),
-          fetch("/api/lists/areas").then(r => r.json()).catch(() => ({ values: [] })),
+          fetch("/api/salespeople?active=true").then(safeJson).catch(() => ({ salespeople: [] })),
+          fetch("/api/lists/categories").then(safeJson).catch(() => ({ values: [] })),
+          fetch("/api/lists/areas").then(safeJson).catch(() => ({ values: [] })),
         ]);
 
         // Salesperson — stays a <select> (locked registry)
@@ -188,10 +189,10 @@
         if (spSel.options.length <= 1) {
           const o = document.createElement("option");
           o.value = ""; o.disabled = true;
-          o.textContent = "⚠ Daftar sales tidak tersedia";
+          o.textContent = "⚠ Tidak ada sales terdaftar";
           spSel.appendChild(o);
           const errEl = $("err");
-          errEl.textContent = "Gagal memuat daftar sales. Pastikan DATABASE_URL dikonfigurasi dan reload halaman.";
+          errEl.innerHTML = 'Daftar sales kosong. <a href="/salespeople" style="color:var(--gold)">Daftarkan sales</a> terlebih dahulu, atau pastikan DATABASE_URL sudah dikonfigurasi.';
           errEl.style.display = "block";
         }
 
