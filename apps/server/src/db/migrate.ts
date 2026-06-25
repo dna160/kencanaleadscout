@@ -196,19 +196,23 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
   }
 
   // Seed initial roster (inferred from workbook tabs). Handler can extend.
-  for (const r of [
-    { full_name: "Hanif",    code: "HNF" },
-    { full_name: "Edhy",     code: "EDH" },
-    { full_name: "Suwondo",  code: "SWD" },
-    { full_name: "Rahmanto", code: "RHM" },
-    { full_name: "Burhan",   code: "BRH" },
-    { full_name: "Anthony",  code: "ANT" },
-  ]) {
-    await db`
-      insert into salespeople (full_name, code)
-      values (${r.full_name}, ${r.code})
-      on conflict (code) do nothing
-    `;
+  try {
+    for (const r of [
+      { full_name: "Hanif",    code: "HNF" },
+      { full_name: "Edhy",     code: "EDH" },
+      { full_name: "Suwondo",  code: "SWD" },
+      { full_name: "Rahmanto", code: "RHM" },
+      { full_name: "Burhan",   code: "BRH" },
+      { full_name: "Anthony",  code: "ANT" },
+    ]) {
+      await db`
+        insert into salespeople (full_name, code)
+        values (${r.full_name}, ${r.code})
+        on conflict (code) do nothing
+      `;
+    }
+  } catch (seedErr) {
+    console.error("[migrate] salespeople seeding failed (non-fatal):", seedErr);
   }
 }
 

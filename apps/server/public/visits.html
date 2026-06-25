@@ -115,6 +115,7 @@
           <select id="f-sales" required>
             <option value="">Pilih sales...</option>
           </select>
+          <div id="sp-status" style="display:none;margin-top:6px;font-size:12.5px"></div>
         </div>
 
         <div class="field">
@@ -220,10 +221,10 @@
           o.value = ""; o.disabled = true;
           o.textContent = "⚠ Tidak ada sales terdaftar";
           spSel.appendChild(o);
-          const errEl = $("err");
-          const detail = spError ? ` (${spError})` : "";
-          errEl.innerHTML = `Tidak ada sales aktif${detail}. <a href="/salespeople" style="color:var(--gold)">Daftarkan sales</a> di halaman Kelola Sales.`;
-          errEl.style.display = "block";
+          const detail = spError ? ` — ${spError}` : "";
+          const st = $("sp-status");
+          st.innerHTML = `⚠ Tidak ada sales aktif${detail}. <a href="/salespeople" style="color:var(--gold)">Daftarkan sales →</a>`;
+          st.style.cssText = "display:block;color:#e05252;margin-top:6px;font-size:12.5px";
         }
 
         // Category & Area — free text with datalist suggestions
