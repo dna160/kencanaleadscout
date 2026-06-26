@@ -107,7 +107,7 @@ export async function visitsRoutes(app: FastifyInstance): Promise<void> {
         v.id, v.salesperson_id, v.customer_id,
         v.pic_name, v.store_name, v.customer_type, v.category,
         v.address, v.area, v.postal_code, v.notes,
-        v.visited_at, v.source,
+        v.visited_at, v.source, v.activity_type,
         s.full_name as salesperson_name,
         s.code      as salesperson_code
       from visits v
@@ -258,7 +258,8 @@ export async function visitsRoutes(app: FastifyInstance): Promise<void> {
       `,
       db`
         SELECT
-          v.id, v.store_name, v.customer_type, v.area, v.category, v.pic_name, v.visited_at,
+          v.id, v.store_name, v.customer_type, v.area, v.category,
+          v.pic_name, v.visited_at, v.activity_type,
           s.full_name AS salesperson_name,
           s.code      AS salesperson_code
         FROM visits v
@@ -269,7 +270,7 @@ export async function visitsRoutes(app: FastifyInstance): Promise<void> {
       db`
         SELECT
           v.id, v.store_name, v.customer_type, v.area, v.category,
-          v.pic_name, v.notes, v.visited_at,
+          v.pic_name, v.notes, v.visited_at, v.activity_type,
           s.full_name AS salesperson_name,
           s.code      AS salesperson_code
         FROM visits v

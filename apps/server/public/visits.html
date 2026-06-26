@@ -322,10 +322,10 @@
         setAct(savedAct);
 
         const t = $("toast");
-        t.textContent = "Kunjungan tersimpan ✓";
+        t.textContent = (savedAct === "telepon" ? "Telepon tersimpan" : "Kunjungan tersimpan") + " ✓";
         t.classList.add("show");
         setTimeout(() => t.classList.remove("show"), 2800);
-      };
+      });
 
       boot().catch(console.error);
     })();
