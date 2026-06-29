@@ -199,6 +199,23 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
   await db`alter table customers add column if not exists owner_id       bigint references salespeople(id)`;
   await db`alter table customers add column if not exists last_contact_at timestamptz`;
 
+  // Backfill owner_id + last_contact_at from visits for accounts that pre-date Module D.
+  await db`
+    update customers c
+    set
+      owner_id        = coalesce(c.owner_id,        v.salesperson_id),
+      last_contact_at = coalesce(c.last_contact_at, v.visited_at)
+    from (
+      select distinct on (customer_id)
+        customer_id, salesperson_id, visited_at
+      from visits
+      where customer_id is not null
+      order by customer_id, visited_at desc
+    ) v
+    where c.id = v.customer_id
+      and (c.owner_id is null or c.last_contact_at is null)
+  `;
+
   // Every touchpoint (visit, call, order) linked to an account.
   await db`
     create table if not exists actions (
