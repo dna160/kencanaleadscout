@@ -453,7 +453,7 @@
 
     const [myday, accts] = await Promise.all([
       fetch(`/api/reps/${repId}/myday`).then(r => r.json()).catch(() => null),
-      fetch(`/api/accounts?owner=${repId}&sort=urgency&limit=200`).then(r => r.json()).catch(() => ({ accounts: [] })),
+      fetch(`/api/accounts?rep_id=${repId}&sort=urgency&limit=200`).then(r => r.json()).catch(() => ({ accounts: [] })),
     ]);
 
     if (myday) {
