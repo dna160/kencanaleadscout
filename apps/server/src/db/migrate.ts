@@ -177,6 +177,20 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
     )
   `;
 
+  // Photo attachments — up to 5 per visit, stored as bytea.
+  await db`
+    create table if not exists visit_photos (
+      id         bigserial primary key,
+      visit_id   bigint not null references visits(id) on delete cascade,
+      file_data  bytea not null,
+      mime_type  text not null default 'image/jpeg',
+      filename   text,
+      file_size  int not null,
+      created_at timestamptz not null default now()
+    )
+  `;
+  await db`create index if not exists visit_photos_visit_idx on visit_photos (visit_id)`;
+
   // Seed categories + areas — wrapped so a missing visit_lists table never
   // prevents the salespeople seeding below from running.
   try {

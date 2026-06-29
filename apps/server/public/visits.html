@@ -91,6 +91,37 @@
         z-index: 99; opacity: 0; transition: opacity .3s; pointer-events: none; white-space: nowrap;
       }
       .toast.show { opacity: 1; }
+
+      /* ── Photo section ───────────────────────────────────────────────── */
+      .photo-grid { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 2px; }
+      .photo-add {
+        width: 78px; height: 78px; border-radius: 12px; flex-shrink: 0;
+        border: 2px dashed rgba(255,255,255,.18); background: rgba(255,255,255,.04);
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        cursor: pointer; color: var(--muted); gap: 3px;
+        transition: border-color .15s, color .15s, background .15s;
+      }
+      .photo-add:hover { border-color: var(--gold); color: var(--gold); background: rgba(187,148,87,.07); }
+      .photo-add .plus { font-size: 26px; line-height: 1; }
+      .photo-add .lbl  { font-size: 10.5px; font-weight: 600; letter-spacing: .3px; }
+      .photo-wrap {
+        position: relative; width: 78px; height: 78px; flex-shrink: 0;
+      }
+      .photo-wrap img {
+        width: 78px; height: 78px; border-radius: 12px; object-fit: cover; display: block;
+        border: 1px solid rgba(255,255,255,.1);
+      }
+      .photo-wrap .del-btn {
+        position: absolute; top: -6px; right: -6px; width: 22px; height: 22px;
+        border-radius: 99px; background: #9b2226; color: #fff; border: 2px solid var(--ink);
+        cursor: pointer; display: flex; align-items: center; justify-content: center;
+        font-size: 13px; line-height: 1; padding: 0;
+      }
+      .photo-wrap .status-ov {
+        position: absolute; inset: 0; border-radius: 12px;
+        display: flex; align-items: center; justify-content: center;
+        background: rgba(0,0,0,.55); font-size: 24px; pointer-events: none;
+      }
     </style>
   </head>
   <body>
@@ -171,6 +202,19 @@
         <div class="field">
           <label>Catatan Kunjungan <span class="opt">opsional</span></label>
           <textarea id="f-notes" rows="4" placeholder="Topik yang dibahas, kebutuhan, rencana follow-up..."></textarea>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="field">
+          <label>Foto <span class="opt">opsional · maks 5 gambar · dikompres otomatis</span></label>
+          <div class="photo-grid" id="photo-grid">
+            <button type="button" class="photo-add" id="photo-add-btn">
+              <span class="plus">+</span>
+              <span class="lbl">Foto</span>
+            </button>
+          </div>
+          <input type="file" id="photo-input" accept="image/*" multiple style="display:none" />
         </div>
 
         <div class="err" id="err"></div>
@@ -263,6 +307,91 @@
         }, 280);
       });
 
+      // ── Photo handling ──────────────────────────────────────────────────
+      const MAX_PHOTOS = 5;
+      let pendingPhotos = []; // { blob, dataUrl, wrapEl }
+
+      function renderPhotoGrid() {
+        const grid = $("photo-grid");
+        // Remove old thumb wrappers (keep the add button)
+        grid.querySelectorAll(".photo-wrap").forEach(el => el.remove());
+        const addBtn = $("photo-add-btn");
+        pendingPhotos.forEach((p, i) => {
+          const wrap = document.createElement("div");
+          wrap.className = "photo-wrap";
+          const img = document.createElement("img");
+          img.src = p.dataUrl;
+          const del = document.createElement("button");
+          del.type = "button"; del.className = "del-btn"; del.textContent = "×";
+          del.onclick = () => { pendingPhotos.splice(i, 1); renderPhotoGrid(); };
+          wrap.appendChild(img); wrap.appendChild(del);
+          p.wrapEl = wrap;
+          grid.insertBefore(wrap, addBtn);
+        });
+        addBtn.style.display = pendingPhotos.length >= MAX_PHOTOS ? "none" : "";
+      }
+
+      async function compressPhoto(file) {
+        return new Promise(resolve => {
+          const reader = new FileReader();
+          reader.onload = ev => {
+            const img = new Image();
+            img.onload = () => {
+              let w = img.width, h = img.height;
+              const MAX = 1600;
+              if (w > MAX || h > MAX) {
+                if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
+                else       { w = Math.round(w * MAX / h); h = MAX; }
+              }
+              const canvas = document.createElement("canvas");
+              canvas.width = w; canvas.height = h;
+              canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+              canvas.toBlob(blob => resolve(blob ?? file), "image/jpeg", 0.82);
+            };
+            img.src = ev.target.result;
+          };
+          reader.readAsDataURL(file);
+        });
+      }
+
+      $("photo-add-btn").addEventListener("click", () => $("photo-input").click());
+
+      $("photo-input").addEventListener("change", async e => {
+        const files = [...e.target.files];
+        e.target.value = "";
+        for (const file of files) {
+          if (pendingPhotos.length >= MAX_PHOTOS) break;
+          if (!file.type.startsWith("image/")) continue;
+          const blob = await compressPhoto(file);
+          const dataUrl = await new Promise(res => {
+            const r = new FileReader();
+            r.onload = ev => res(ev.target.result);
+            r.readAsDataURL(blob);
+          });
+          pendingPhotos.push({ blob, dataUrl, wrapEl: null });
+        }
+        renderPhotoGrid();
+      });
+
+      async function uploadPendingPhotos(visitId) {
+        for (const p of pendingPhotos) {
+          const ov = document.createElement("div");
+          ov.className = "status-ov"; ov.textContent = "⏳";
+          if (p.wrapEl) { p.wrapEl.querySelector(".del-btn")?.remove(); p.wrapEl.appendChild(ov); }
+          const fd = new FormData();
+          fd.append("file", p.blob, "photo.jpg");
+          try {
+            const r = await fetch(`/api/visits/${visitId}/photos`, { method: "POST", body: fd });
+            const data = await r.json();
+            if (ov) ov.textContent = data.ok ? "✓" : "✗";
+          } catch {
+            if (ov) ov.textContent = "✗";
+          }
+        }
+        pendingPhotos = [];
+        setTimeout(renderPhotoGrid, 1400);
+      }
+
       // ── Submit ───────────────────────────────────────────────────────────
       document.getElementById("vform").addEventListener("submit", async function(e) {
         e.preventDefault();
@@ -314,12 +443,19 @@
           errEl.style.display = "block"; return;
         }
 
-        // Success — reset form, keep salesperson selected and activity type
+        // Success — upload any pending photos, then reset form
+        const visitId    = res.visit?.id;
         const savedSales = $("f-sales").value;
         const savedAct   = activityType;
+
+        if (pendingPhotos.length && visitId) {
+          await uploadPendingPhotos(visitId);
+        }
+
         document.getElementById("vform").reset();
         $("f-sales").value = savedSales;
         setAct(savedAct);
+        renderPhotoGrid();
 
         const t = $("toast");
         t.textContent = (savedAct === "telepon" ? "Telepon tersimpan" : "Kunjungan tersimpan") + " ✓";

@@ -430,6 +430,98 @@ Fokus pada insight yang actionable. Jangan ulangi daftar kunjungan.`;
     return { ok: true, visit: saved };
   });
 
+  // ── Photo upload ─────────────────────────────────────────────────────────
+  app.post<{ Params: { id: string } }>("/api/visits/:id/photos", async (request, reply) => {
+    const db = getSql();
+    if (!db) return reply.code(503).send({ error: "Database not configured." });
+
+    const id = Number(request.params.id);
+    if (!Number.isInteger(id) || id < 1)
+      return reply.code(400).send({ error: "Invalid visit id." });
+
+    const [visit] = await db<{ id: number }[]>`select id from visits where id = ${id}`;
+    if (!visit) return reply.code(404).send({ error: "Visit not found." });
+
+    const [countRow] = await db<{ n: string }[]>`
+      select count(*)::text as n from visit_photos where visit_id = ${id}
+    `;
+    if (Number(countRow?.n ?? 0) >= 5)
+      return reply.code(400).send({ error: "Maksimal 5 foto per kunjungan." });
+
+    let file: Awaited<ReturnType<typeof request.file>>;
+    try {
+      file = await request.file({ limits: { fileSize: 8 * 1024 * 1024 } });
+    } catch {
+      return reply.code(400).send({ error: "Gagal membaca file upload." });
+    }
+    if (!file) return reply.code(400).send({ error: "Tidak ada file yang dikirim." });
+    if (!file.mimetype.startsWith("image/"))
+      return reply.code(400).send({ error: "Hanya file gambar yang diizinkan." });
+
+    let buf: Buffer;
+    try {
+      buf = await file.toBuffer();
+    } catch {
+      return reply.code(413).send({ error: "File terlalu besar (maks 8 MB)." });
+    }
+
+    const [photo] = await db`
+      insert into visit_photos (visit_id, file_data, mime_type, filename, file_size)
+      values (${id}, ${buf}, ${file.mimetype}, ${file.filename ?? null}, ${buf.length})
+      returning id, visit_id, mime_type, filename, file_size, created_at
+    `;
+    return { ok: true, photo: { ...photo, url: `/api/photos/${photo.id}` } };
+  });
+
+  // ── Serve photo ───────────────────────────────────────────────────────────
+  app.get<{ Params: { id: string } }>("/api/photos/:id", async (request, reply) => {
+    const db = getSql();
+    if (!db) return reply.code(503).send({ error: "Database not configured." });
+
+    const id = Number(request.params.id);
+    if (!Number.isInteger(id) || id < 1) return reply.code(400).send({ error: "Invalid id." });
+
+    const [photo] = await db<{ file_data: Buffer; mime_type: string }[]>`
+      select file_data, mime_type from visit_photos where id = ${id}
+    `;
+    if (!photo) return reply.code(404).send({ error: "Photo not found." });
+
+    return reply
+      .header("Content-Type", photo.mime_type)
+      .header("Cache-Control", "public, max-age=31536000, immutable")
+      .send(photo.file_data);
+  });
+
+  // ── List photos for a visit ───────────────────────────────────────────────
+  app.get<{ Params: { id: string } }>("/api/visits/:id/photos", async (request, reply) => {
+    const db = getSql();
+    if (!db) return reply.code(503).send({ error: "Database not configured." });
+
+    const id = Number(request.params.id);
+    if (!Number.isInteger(id) || id < 1) return reply.code(400).send({ error: "Invalid id." });
+
+    const rows = await db`
+      select id, visit_id, mime_type, filename, file_size, created_at
+      from visit_photos where visit_id = ${id} order by created_at
+    `;
+    return { photos: rows.map((r) => ({ ...r, url: `/api/photos/${r.id}` })) };
+  });
+
+  // ── Delete a photo ────────────────────────────────────────────────────────
+  app.delete<{ Params: { photoId: string } }>("/api/photos/:photoId", async (request, reply) => {
+    const db = getSql();
+    if (!db) return reply.code(503).send({ error: "Database not configured." });
+
+    const photoId = Number(request.params.photoId);
+    if (!Number.isInteger(photoId) || photoId < 1) return reply.code(400).send({ error: "Invalid id." });
+
+    const [deleted] = await db`
+      delete from visit_photos where id = ${photoId} returning id
+    `;
+    if (!deleted) return reply.code(404).send({ error: "Photo not found." });
+    return { ok: true };
+  });
+
   // ── Store name autocomplete ───────────────────────────────────────────────
   app.get<{ Querystring: { q?: string } }>("/api/customers/suggest", async (request, reply) => {
     const db = getSql();
