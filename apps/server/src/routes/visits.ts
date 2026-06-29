@@ -312,6 +312,46 @@ export async function visitsRoutes(app: FastifyInstance): Promise<void> {
     };
   });
 
+  // ── Visits summary (for header count bars) ──────────────────────────────
+  app.get<{ Querystring: Record<string, string> }>("/api/visits/summary", async (request, reply) => {
+    const db = getSql();
+    if (!db) return reply.code(503).send({ error: "Database not configured." });
+
+    const q      = request.query;
+    const rep_id = q.rep  ? Number(q.rep)  : null;
+    const from_ts = parseDate(q.from) ?? new Date(0);
+    const to_ts   = parseDate(q.to)   ?? new Date();
+
+    const [[visits], [wonRow]] = await Promise.all([
+      db<{ total_visits: string; new_visits: string; old_visits: string }[]>`
+        select
+          count(*)::int                                       as total_visits,
+          count(*) filter (where customer_type = 'new')::int as new_visits,
+          count(*) filter (where customer_type = 'old')::int as old_visits
+        from visits v
+        where v.visited_at >= ${from_ts}
+          and v.visited_at <= ${to_ts}
+          ${rep_id ? db`and v.salesperson_id = ${rep_id}` : db``}
+      `,
+      db<{ won_accounts: string }[]>`
+        select count(*)::int as won_accounts
+        from stage_history sh
+        join customers c on c.id = sh.account_id
+        where sh.new_stage = 'won'
+          and sh.changed_at >= ${from_ts}
+          and sh.changed_at <= ${to_ts}
+          ${rep_id ? db`and c.owner_id = ${rep_id}` : db``}
+      `,
+    ]);
+
+    return {
+      total_visits:  Number(visits?.total_visits  ?? 0),
+      new_visits:    Number(visits?.new_visits    ?? 0),
+      old_visits:    Number(visits?.old_visits    ?? 0),
+      won_accounts:  Number(wonRow?.won_accounts  ?? 0),
+    };
+  });
+
   // ── AI synthesis scaffold ────────────────────────────────────────────────
   app.post<{ Params: { id: string } }>("/api/visits/rep/:id/synthesize", async (request, reply) => {
     const db = getSql();

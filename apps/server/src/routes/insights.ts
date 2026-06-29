@@ -107,6 +107,22 @@ export async function insightsRoutes(app: FastifyInstance): Promise<void> {
       order by hour
     `;
 
+    // Pipeline stage counts for owned accounts
+    const [projectStages, repeatingStages] = await Promise.all([
+      db<{ stage: string; cnt: number }[]>`
+        select stage, count(*)::int as cnt
+        from customers
+        where owner_id = ${rep_id} and account_type = 'project'
+        group by stage
+      `,
+      db<{ stage: string; cnt: number }[]>`
+        select stage, count(*)::int as cnt
+        from customers
+        where owner_id = ${rep_id} and account_type = 'repeating'
+        group by stage
+      `,
+    ]);
+
     const hunterIndex = totalVisits > 0 ? Math.round((newVisits / totalVisits) * 1000) / 10 : 0;
     const topCategoryPct = totalVisits > 0 && catMix[0]
       ? Math.round((Number(catMix[0].cnt) / totalVisits) * 1000) / 10 : 0;
@@ -143,6 +159,8 @@ export async function insightsRoutes(app: FastifyInstance): Promise<void> {
         pct:   totalVisits > 0 ? Math.round((Number(r.cnt) / totalVisits) * 1000) / 10 : 0,
       })),
       hourly_histogram: hourly.map((r) => ({ hour: Number(r.hour), count: Number(r.cnt) })),
+      project_stage_counts:   Object.fromEntries(projectStages.map((r) => [r.stage, r.cnt])),
+      repeating_stage_counts: Object.fromEntries(repeatingStages.map((r) => [r.stage, r.cnt])),
     };
   });
 
@@ -200,17 +218,31 @@ export async function insightsRoutes(app: FastifyInstance): Promise<void> {
     `;
 
     // Team totals
-    const [totals] = await db<{
-      total_visits: string; new_visits: string; unique_stores: string; active_reps: string;
-    }[]>`
-      select
-        count(v.id)::text                                              as total_visits,
-        count(*) filter (where v.customer_type = 'new')::text         as new_visits,
-        count(distinct v.customer_id)::text                            as unique_stores,
-        count(distinct v.salesperson_id)::text                         as active_reps
-      from visits v
-      where v.visited_at >= ${from} and v.visited_at <= ${to}
-    `;
+    const [[totals], teamStageRows] = await Promise.all([
+      db<{
+        total_visits: string; new_visits: string; unique_stores: string; active_reps: string;
+      }[]>`
+        select
+          count(v.id)::text                                              as total_visits,
+          count(*) filter (where v.customer_type = 'new')::text         as new_visits,
+          count(distinct v.customer_id)::text                            as unique_stores,
+          count(distinct v.salesperson_id)::text                         as active_reps
+        from visits v
+        where v.visited_at >= ${from} and v.visited_at <= ${to}
+      `,
+      db<{ account_type: string; stage: string; cnt: number }[]>`
+        select account_type, stage, count(*)::int as cnt
+        from customers
+        group by account_type, stage
+      `,
+    ]);
+
+    const projectStageCounts: Record<string, number>   = {};
+    const repeatingStageCounts: Record<string, number> = {};
+    for (const r of teamStageRows) {
+      if (r.account_type === "project")   projectStageCounts[r.stage]   = r.cnt;
+      else                                repeatingStageCounts[r.stage] = (repeatingStageCounts[r.stage] ?? 0) + r.cnt;
+    }
 
     return {
       period: { from, to },
@@ -236,6 +268,8 @@ export async function insightsRoutes(app: FastifyInstance): Promise<void> {
         full_name:  r.full_name,
         new_stores: Number(r.new_stores),
       })),
+      project_stage_counts:   projectStageCounts,
+      repeating_stage_counts: repeatingStageCounts,
     };
   });
 }

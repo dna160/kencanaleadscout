@@ -57,6 +57,41 @@
       text-transform: uppercase; letter-spacing: .7px; color: var(--muted); margin: 0 0 16px;
     }
 
+    /* ── Pipeline Position ────────────────────────────────────── */
+    .pipeline-panel { margin-bottom: 14px; }
+    .stepper {
+      display: flex; align-items: center; gap: 0; overflow-x: auto;
+      scrollbar-width: none; -webkit-overflow-scrolling: touch;
+    }
+    .stepper::-webkit-scrollbar { display: none; }
+    .step {
+      flex-shrink: 0; font-size: 12.5px; font-weight: 600; padding: 8px 16px;
+      border: 1px solid rgba(255,255,255,.12); border-radius: 99px;
+      color: var(--muted); background: rgba(255,255,255,.04); white-space: nowrap;
+    }
+    .step.active {
+      background: rgba(187,148,87,.18); border-color: rgba(187,148,87,.5); color: var(--gold);
+      box-shadow: 0 0 0 3px rgba(187,148,87,.12);
+    }
+    .step.past { background: rgba(255,255,255,.07); color: var(--paper); border-color: rgba(255,255,255,.18); }
+    .step.end-won { background: rgba(44,110,73,.18); border-color: rgba(44,110,73,.4); color: #9fe0b9; }
+    .step.end-won.active { background: rgba(44,110,73,.3); border-color: rgba(44,110,73,.6); box-shadow: 0 0 0 3px rgba(44,110,73,.15); }
+    .step.end-gugur { background: rgba(155,34,38,.12); border-color: rgba(155,34,38,.3); color: #f8a0a0; }
+    .step.end-gugur.active { background: rgba(155,34,38,.22); border-color: rgba(155,34,38,.5); box-shadow: 0 0 0 3px rgba(155,34,38,.12); }
+    .step-arrow { flex-shrink: 0; color: rgba(255,255,255,.25); padding: 0 4px; font-size: 16px; }
+    .step-sep { flex-shrink: 0; color: rgba(255,255,255,.2); padding: 0 8px; font-size: 14px; }
+
+    .health-bar-wrap { margin: 6px 0 10px; }
+    .health-track { height: 10px; background: rgba(255,255,255,.08); border-radius: 99px; overflow: hidden; }
+    .health-fill { height: 100%; border-radius: 99px; transition: width .5s ease; }
+    .health-aktif    { background: linear-gradient(90deg, var(--green), #5cb85c); }
+    .health-perlu    { background: linear-gradient(90deg, #b45309, var(--amber)); }
+    .health-at_risk  { background: linear-gradient(90deg, #7a1a1d, var(--red)); }
+    .health-hibernasi { background: rgba(255,255,255,.2); }
+    .health-info { font-size: 12.5px; color: var(--muted); margin-top: 8px; }
+    .health-info strong { color: var(--paper); }
+    .health-info .overdue-txt { color: #f8a0a0; font-weight: 600; }
+
     /* ── Account header ───────────────────────────────────────── */
     .acct-name { font-family: var(--display); font-size: 26px; font-weight: 700; margin: 0 0 8px; line-height: 1.2; }
     .acct-meta { display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--muted); font-size: 13px; margin-bottom: 14px; }
@@ -300,6 +335,71 @@ function dotClass(t) {
   return {kunjungan:'dot-kunjungan',telepon:'dot-telepon',received_order:'dot-received_order',note:'dot-note'}[t]??'dot-note';
 }
 
+// ── Pipeline Position ─────────────────────────────────────────────────────────
+
+function renderPipelinePosition(account) {
+  const { account_type, stage, last_contact_at } = account;
+
+  if (account_type === 'project') {
+    const stages = ['prospek','penawaran','negosiasi'];
+    const ends   = ['won','gugur'];
+    const idx    = stages.indexOf(stage);
+    // Build steps
+    const stepsHtml = stages.map((s, i) => {
+      const cls = s === stage ? 'active' : (i < idx ? 'past' : '');
+      return `<span class="step ${cls}">${stageLabel(s)}</span><span class="step-arrow">›</span>`;
+    }).join('') +
+    `<span class="step-sep">→</span>` +
+    `<span class="step end-won${stage==='won'?' active':''}">${stageLabel('won')}</span>` +
+    `<span style="color:rgba(255,255,255,.18);padding:0 6px;font-size:12px">|</span>` +
+    `<span class="step end-gugur${stage==='gugur'?' active':''}">${stageLabel('gugur')}</span>`;
+
+    return `
+      <div class="panel pipeline-panel">
+        <h3>Posisi Pipeline · Project</h3>
+        <div class="stepper">${stepsHtml}</div>
+      </div>`;
+  }
+
+  // Repeating
+  const days = last_contact_at
+    ? Math.floor((Date.now() - new Date(last_contact_at).getTime()) / (24*3600*1000))
+    : null;
+  const target = 14;
+  const overdue = days !== null ? Math.max(0, days - target) : null;
+
+  let fillPct, fillClass, infoHtml;
+  if (days === null) {
+    fillPct = 100; fillClass = 'health-at_risk';
+    infoHtml = '<strong class="overdue-txt">Belum pernah dikunjungi</strong>';
+  } else if (stage === 'aktif') {
+    fillPct = Math.min(100, Math.round((days / target) * 100));
+    fillClass = 'health-aktif';
+    infoHtml = `Terakhir kontak: <strong>${days} hari lalu</strong> · Target cadence: ${target} hari`;
+  } else if (stage === 'perlu_followup') {
+    fillPct = Math.min(100, Math.round((days / 28) * 100));
+    fillClass = 'health-perlu';
+    infoHtml = `Belum dikunjungi: <strong>${days} hari</strong> · Target: ${target} hari · <span class="overdue-txt">Terlambat: +${overdue} hari</span>`;
+  } else if (stage === 'at_risk') {
+    fillPct = 100; fillClass = 'health-at_risk';
+    infoHtml = `Belum dikunjungi: <strong>${days} hari</strong> · Target: ${target} hari · <span class="overdue-txt">Terlambat: +${overdue} hari</span>`;
+  } else {
+    fillPct = 0; fillClass = 'health-hibernasi';
+    infoHtml = days !== null ? `Terakhir kontak: <strong>${days} hari lalu</strong>` : 'Tidak aktif';
+  }
+
+  return `
+    <div class="panel pipeline-panel">
+      <h3>Kesehatan Akun · Repeating</h3>
+      <div class="health-bar-wrap">
+        <div class="health-track">
+          <div class="health-fill ${fillClass}" style="width:${fillPct}%"></div>
+        </div>
+      </div>
+      <div class="health-info">${infoHtml}</div>
+    </div>`;
+}
+
 // ── Render ────────────────────────────────────────────────────────────────────
 
 function renderPage({account, actions, stage_history, scheduled}) {
@@ -342,6 +442,8 @@ function renderPage({account, actions, stage_history, scheduled}) {
         <span class="stage-msg" id="stage-msg"></span>
       </div>
     </div>
+
+    ${renderPipelinePosition(account)}
 
     <!-- Action bar -->
     <div class="panel">
