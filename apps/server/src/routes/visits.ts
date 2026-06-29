@@ -470,6 +470,7 @@ Fokus pada insight yang actionable. Jangan ulangi daftar kunjungan.`;
       values (${id}, ${buf}, ${file.mimetype}, ${file.filename ?? null}, ${buf.length})
       returning id, visit_id, mime_type, filename, file_size, created_at
     `;
+    if (!photo) return reply.code(500).send({ error: "Insert photo failed." });
     return { ok: true, photo: { ...photo, url: `/api/photos/${photo.id}` } };
   });
 
