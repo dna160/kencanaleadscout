@@ -1,330 +1,349 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="id">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>My Day — Kencana LeadScout</title>
-<style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  :root {
-    --c-bg: #f5f7fa; --c-card: #fff; --c-border: #e2e8f0;
-    --c-text: #1a202c; --c-muted: #718096;
-    --c-red: #e53e3e; --c-red-bg: #fff5f5; --c-red-border: #fed7d7;
-    --c-blue: #3182ce; --c-blue-bg: #ebf8ff; --c-blue-border: #bee3f8;
-    --c-green: #38a169; --c-green-bg: #f0fff4; --c-green-border: #c6f6d5;
-    --c-orange: #dd6b20; --c-orange-bg: #fffaf0; --c-orange-border: #fbd38d;
-    --c-gold: #b7791f;
-    --radius: 8px;
-  }
-  body { font-family: system-ui, sans-serif; background: var(--c-bg); color: var(--c-text); min-height: 100vh; }
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>My Day · Kencana LeadScout</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --ink: #14213d; --ink-2: #1b2949; --red: #9b2226; --gold: #bb9457; --green: #2c6e49;
+      --paper: #f5f2ec; --muted: #8a96ad; --line: rgba(255,255,255,.09);
+      --blue: #2E6FD6; --old: #3E9B4F;
+      --display: "Space Grotesk","Inter",system-ui,sans-serif;
+      --sans: "Inter",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      font-family: var(--sans); color: var(--paper);
+      background: radial-gradient(1200px 600px at 90% -10%, rgba(187,148,87,.14), transparent 60%), var(--ink);
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 22px 22px 70px; }
 
-  /* Nav */
-  nav { background: #1a2744; color: #fff; padding: 0 16px; display: flex; align-items: center; gap: 12px; height: 48px; }
-  nav .brand { font-weight: 700; font-size: 15px; color: #fff; text-decoration: none; flex-shrink: 0; }
-  nav a { color: rgba(255,255,255,.7); text-decoration: none; font-size: 13px; white-space: nowrap; }
-  nav a.active, nav a:hover { color: #fff; }
-  nav .spacer { flex: 1; }
+    /* ── Header ─────────────────────────────────────────────── */
+    header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 22px; flex-wrap: wrap; }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .mark { width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center;
+      background: linear-gradient(135deg, var(--red), #7a1a1d); font-family: var(--display); font-weight: 700; color: #fff; font-size: 18px; }
+    .brand b { font-family: var(--display); font-size: 17px; }
+    .brand span { color: var(--muted); font-size: 12.5px; display: block; }
+    .nav-links { display: flex; align-items: center; gap: 10px; }
+    .nav-links select {
+      background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.13); border-radius: 9px;
+      padding: 7px 12px; color: var(--paper); font-family: var(--sans); font-size: 13.5px;
+      outline: none; cursor: pointer; color-scheme: dark;
+    }
+    .nav-links select:focus { border-color: var(--gold); }
+    .nav-links select option { background: #1e2d50; }
+    a.back { color: var(--muted); text-decoration: none; font-size: 13px; }
+    a.back:hover { color: var(--paper); }
+    .refresh-btn {
+      border: 1px solid var(--line); background: rgba(255,255,255,.05); color: var(--paper);
+      border-radius: 9px; padding: 7px 12px; cursor: pointer; font-weight: 600; font-size: 12.5px;
+    }
+    .refresh-btn:hover { background: rgba(255,255,255,.09); }
 
-  /* Rep picker */
-  .rep-bar { background: #fff; border-bottom: 1px solid var(--c-border); padding: 10px 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-  .rep-bar label { font-size: 13px; color: var(--c-muted); }
-  .rep-bar select { font-size: 14px; padding: 5px 10px; border: 1px solid var(--c-border); border-radius: 6px; background: #fff; }
-  .rep-bar .refresh-btn { margin-left: auto; font-size: 12px; padding: 5px 12px; border: 1px solid var(--c-border); border-radius: 6px; background: #fff; cursor: pointer; color: var(--c-muted); }
-  .rep-bar .refresh-btn:hover { background: var(--c-bg); }
+    /* ── KPI strip ───────────────────────────────────────────── */
+    .kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 22px; }
+    @media (max-width: 600px) { .kpis { grid-template-columns: repeat(3, 1fr); gap: 8px; } }
+    .kpi { border: 1px solid var(--line); border-radius: 18px; padding: 18px 20px;
+      background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02)); }
+    .kpi .l { color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .8px; text-transform: uppercase; }
+    .kpi .v { font-family: var(--display); font-size: 38px; font-weight: 700; line-height: 1.1; margin-top: 6px; font-variant-numeric: tabular-nums; }
+    .kpi.hero  { background: linear-gradient(135deg, rgba(187,148,87,.22), rgba(187,148,87,.06)); border-color: rgba(187,148,87,.4); }
+    .kpi.hero .v { color: var(--gold); }
+    .kpi.red-kpi { background: linear-gradient(135deg, rgba(155,34,38,.22), rgba(155,34,38,.06)); border-color: rgba(155,34,38,.4); }
+    .kpi.red-kpi .v { color: #f8a0a0; }
+    .kpi.orange-kpi { background: linear-gradient(135deg, rgba(221,107,32,.22), rgba(221,107,32,.06)); border-color: rgba(221,107,32,.4); }
+    .kpi.orange-kpi .v { color: #f6b87a; }
 
-  /* Stats strip */
-  .stats-strip { display: flex; gap: 12px; padding: 12px 16px; flex-wrap: wrap; }
-  .stat-card { background: var(--c-card); border: 1px solid var(--c-border); border-radius: var(--radius); padding: 12px 20px; min-width: 120px; flex: 1; }
-  .stat-card .val { font-size: 28px; font-weight: 700; line-height: 1; }
-  .stat-card .lbl { font-size: 11px; color: var(--c-muted); margin-top: 4px; text-transform: uppercase; letter-spacing: .5px; }
-  .stat-card.red  .val { color: var(--c-red); }
-  .stat-card.blue .val { color: var(--c-blue); }
-  .stat-card.orange .val { color: var(--c-orange); }
+    /* ── Kanban ──────────────────────────────────────────────── */
+    .kanban { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 22px; }
+    @media (max-width: 820px) { .kanban { grid-template-columns: 1fr; } }
 
-  /* Kanban */
-  .kanban { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding: 0 16px 24px; }
-  @media (max-width: 700px) { .kanban { grid-template-columns: 1fr; } }
+    .col { display: flex; flex-direction: column; }
+    .col-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 16px 10px; border-radius: 14px 14px 0 0;
+      border: 1px solid var(--line); border-bottom: none;
+    }
+    .col-head .col-title { font-family: var(--display); font-size: 13px; font-weight: 700; letter-spacing: .3px; }
+    .col-head .col-cnt { font-family: var(--display); font-size: 12px; font-weight: 700;
+      background: rgba(255,255,255,.1); border-radius: 99px; padding: 1px 9px; }
+    .col-overdue  .col-head { background: rgba(155,34,38,.14); border-color: rgba(155,34,38,.3); }
+    .col-overdue  .col-head .col-title { color: #f8a0a0; }
+    .col-overdue  .col-head .col-cnt   { background: rgba(155,34,38,.25); color: #f8a0a0; }
+    .col-today    .col-head { background: rgba(46,111,214,.14); border-color: rgba(46,111,214,.3); }
+    .col-today    .col-head .col-title { color: #7eb8f7; }
+    .col-today    .col-head .col-cnt   { background: rgba(46,111,214,.25); color: #7eb8f7; }
+    .col-upcoming .col-head { background: rgba(44,110,73,.14); border-color: rgba(44,110,73,.3); }
+    .col-upcoming .col-head .col-title { color: #9fe0b9; }
+    .col-upcoming .col-head .col-cnt   { background: rgba(44,110,73,.25); color: #9fe0b9; }
 
-  .col-header { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; padding: 10px 12px 8px; border-radius: 6px 6px 0 0; display: flex; align-items: center; gap: 8px; }
-  .col-header .cnt { background: rgba(0,0,0,.12); border-radius: 10px; padding: 1px 8px; font-size: 11px; }
-  .col-overdue   .col-header { background: var(--c-red-bg); color: var(--c-red); border: 1px solid var(--c-red-border); border-bottom: none; }
-  .col-today     .col-header { background: var(--c-blue-bg); color: var(--c-blue); border: 1px solid var(--c-blue-border); border-bottom: none; }
-  .col-upcoming  .col-header { background: var(--c-green-bg); color: var(--c-green); border: 1px solid var(--c-green-border); border-bottom: none; }
+    .col-body {
+      flex: 1; padding: 10px; display: flex; flex-direction: column; gap: 9px;
+      border: 1px solid var(--line); border-radius: 0 0 14px 14px; border-top: none;
+      background: rgba(255,255,255,.02); min-height: 100px;
+    }
+    .col-overdue  .col-body { border-color: rgba(155,34,38,.3); }
+    .col-today    .col-body { border-color: rgba(46,111,214,.3); }
+    .col-upcoming .col-body { border-color: rgba(44,110,73,.3); }
 
-  .col-body { border: 1px solid var(--c-border); border-radius: 0 0 6px 6px; background: var(--c-bg); min-height: 120px; display: flex; flex-direction: column; gap: 8px; padding: 10px; }
-  .col-overdue  .col-body { border-color: var(--c-red-border); }
-  .col-today    .col-body { border-color: var(--c-blue-border); }
-  .col-upcoming .col-body { border-color: var(--c-green-border); }
+    /* ── Task card ───────────────────────────────────────────── */
+    .task-card {
+      border: 1px solid var(--line); border-radius: 12px; padding: 11px 13px;
+      background: rgba(255,255,255,.04); cursor: pointer;
+      transition: background .15s, border-color .15s;
+    }
+    .task-card:hover { background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.18); }
+    .tc-store { font-weight: 600; font-size: 14px; }
+    .tc-meta  { color: var(--muted); font-size: 12px; margin-top: 3px; }
+    .tc-notes { font-size: 12px; color: #b8c4d8; margin-top: 5px;
+      background: rgba(255,255,255,.05); padding: 5px 8px; border-radius: 7px; }
+    .tc-when  { font-size: 11.5px; color: var(--muted); margin-top: 6px; }
+    .tc-when.ov { color: #f8a0a0; font-weight: 600; }
+    .tc-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 9px; }
+    .tc-footer a { color: var(--gold); text-decoration: none; font-size: 12px; }
+    .tc-footer a:hover { text-decoration: underline; }
+    .done-btn {
+      font-size: 11px; padding: 3px 11px;
+      border: 1px solid rgba(44,110,73,.5); color: #9fe0b9; background: rgba(44,110,73,.12);
+      border-radius: 99px; cursor: pointer; font-weight: 600;
+    }
+    .done-btn:hover { background: rgba(44,110,73,.22); }
 
-  /* Task card */
-  .task-card { background: var(--c-card); border: 1px solid var(--c-border); border-radius: 6px; padding: 10px 12px; cursor: pointer; transition: box-shadow .15s; }
-  .task-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,.1); }
-  .task-card .tc-store { font-size: 14px; font-weight: 600; }
-  .task-card .tc-meta  { font-size: 12px; color: var(--c-muted); margin-top: 3px; }
-  .task-card .tc-notes { font-size: 12px; color: #4a5568; margin-top: 5px; background: var(--c-bg); padding: 4px 7px; border-radius: 4px; }
-  .task-card .tc-when  { font-size: 11px; color: var(--c-muted); margin-top: 6px; }
-  .task-card .tc-when.overdue { color: var(--c-red); font-weight: 600; }
-  .task-card .tc-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; }
-  .task-card .done-btn { font-size: 11px; padding: 3px 10px; border: 1px solid var(--c-green); color: var(--c-green); background: none; border-radius: 12px; cursor: pointer; }
-  .task-card .done-btn:hover { background: var(--c-green-bg); }
+    /* ── Stage badges ────────────────────────────────────────── */
+    .stg { display: inline-block; font-size: 10.5px; font-weight: 700; padding: 2px 8px;
+      border-radius: 99px; text-transform: uppercase; letter-spacing: .4px; }
+    .stg-aktif      { background: rgba(44,110,73,.2); color: #9fe0b9; }
+    .stg-perlu      { background: rgba(187,148,87,.2); color: var(--gold); }
+    .stg-at_risk    { background: rgba(155,34,38,.2); color: #f8a0a0; }
+    .stg-hibernasi  { background: rgba(255,255,255,.08); color: var(--muted); }
+    .stg-prospek    { background: rgba(46,111,214,.18); color: #7eb8f7; }
+    .stg-penawaran  { background: rgba(128,90,213,.18); color: #c4b5fd; }
+    .stg-negosiasi  { background: rgba(221,107,32,.18); color: #f6b87a; }
+    .stg-won        { background: rgba(44,110,73,.25); color: #9fe0b9; }
+    .stg-gugur      { background: rgba(155,34,38,.18); color: #f8a0a0; }
 
-  /* Stage badge */
-  .badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px; text-transform: uppercase; letter-spacing: .4px; }
-  .badge-aktif       { background: #e6fffa; color: #2c7a7b; }
-  .badge-perlu       { background: #fffbeb; color: var(--c-gold); }
-  .badge-at_risk     { background: var(--c-red-bg); color: var(--c-red); }
-  .badge-hibernasi   { background: #e2e8f0; color: #4a5568; }
-  .badge-prospek     { background: #ebf4ff; color: #2b6cb0; }
-  .badge-penawaran   { background: #faf5ff; color: #6b46c1; }
-  .badge-negosiasi   { background: #fffaf0; color: var(--c-orange); }
-  .badge-won         { background: var(--c-green-bg); color: var(--c-green); }
-  .badge-gugur       { background: #fff5f5; color: #c53030; }
+    /* ── At-risk panel ───────────────────────────────────────── */
+    .section-title {
+      font-family: var(--display); font-size: 16px; font-weight: 700; margin: 0 0 14px;
+    }
+    .section-cap { color: var(--muted); font-size: 12.5px; margin: -10px 0 14px; }
+    .panel {
+      border: 1px solid var(--line); border-radius: 18px; padding: 20px;
+      background: linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.015));
+    }
+    .ar-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+    .ar-card {
+      border: 1px solid rgba(155,34,38,.3); border-radius: 12px; padding: 12px 14px;
+      background: rgba(155,34,38,.07); cursor: pointer;
+      transition: background .15s, border-color .15s;
+    }
+    .ar-card:hover { background: rgba(155,34,38,.13); border-color: rgba(155,34,38,.5); }
+    .ar-store { font-weight: 600; font-size: 14px; }
+    .ar-meta  { color: var(--muted); font-size: 12px; margin-top: 3px; }
+    .ar-days  { font-size: 12px; color: #f8a0a0; font-weight: 600; margin-top: 5px; }
 
-  /* At-risk section */
-  .at-risk-section { padding: 0 16px 24px; }
-  .section-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; color: var(--c-muted); margin-bottom: 8px; }
-  .at-risk-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
-  .ar-card { background: var(--c-card); border: 1px solid var(--c-red-border); border-radius: var(--radius); padding: 12px 14px; cursor: pointer; }
-  .ar-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,.08); }
-  .ar-card .ar-store { font-size: 14px; font-weight: 600; }
-  .ar-card .ar-meta  { font-size: 12px; color: var(--c-muted); margin-top: 3px; }
-  .ar-card .ar-days  { font-size: 12px; color: var(--c-red); font-weight: 600; margin-top: 5px; }
-
-  .empty-state { text-align: center; padding: 32px 16px; color: var(--c-muted); font-size: 13px; }
-  .spinner { text-align: center; padding: 40px; color: var(--c-muted); font-size: 14px; }
-</style>
+    .empty { color: var(--muted); font-size: 13.5px; text-align: center; padding: 26px 0; }
+    .spinner { color: var(--muted); font-size: 13px; text-align: center; padding: 28px 0; }
+  </style>
 </head>
 <body>
+<div class="wrap">
 
-<nav>
-  <a class="brand" href="/">Kencana</a>
-  <a href="/visits">Catat Kunjungan</a>
-  <a href="/visits-rack">Rack-up</a>
-  <a href="/myday" class="active">My Day</a>
-  <a href="/visits-insights">Insights</a>
-  <a href="/salespeople">Sales</a>
-  <div class="spacer"></div>
-</nav>
+  <header>
+    <div class="brand">
+      <div class="mark">K</div>
+      <div><b>My Day</b><span>Kencana LeadScout · jadwal harian</span></div>
+    </div>
+    <div class="nav-links">
+      <select id="rep-sel"><option value="">— Pilih sales —</option></select>
+      <button class="refresh-btn" onclick="load()">↻</button>
+      <a class="back" href="/visits">Catat ↗</a>
+      <a class="back" href="/visits-rack">Rack-up ↗</a>
+      <a class="back" href="/visits-insights">Insights ↗</a>
+    </div>
+  </header>
 
-<div class="rep-bar">
-  <label for="rep-sel">Sales rep:</label>
-  <select id="rep-sel"><option value="">— Pilih sales —</option></select>
-  <button class="refresh-btn" onclick="load()">↻ Refresh</button>
-</div>
-
-<div class="stats-strip" id="stats-strip">
-  <div class="stat-card blue"><div class="val" id="s-visits">—</div><div class="lbl">Kunjungan hari ini</div></div>
-  <div class="stat-card red"><div class="val" id="s-overdue">—</div><div class="lbl">Terlambat</div></div>
-  <div class="stat-card orange"><div class="val" id="s-atrisk">—</div><div class="lbl">At Risk / Perlu Follow-up</div></div>
-</div>
-
-<div class="kanban" id="kanban">
-  <div class="col-overdue">
-    <div class="col-header">Terlambat <span class="cnt" id="cnt-overdue">0</span></div>
-    <div class="col-body" id="col-overdue"><div class="spinner">Memuat…</div></div>
+  <!-- KPI strip -->
+  <div class="kpis">
+    <div class="kpi hero">
+      <div class="l">Kunjungan Hari Ini</div>
+      <div class="v" id="s-visits">—</div>
+    </div>
+    <div class="kpi red-kpi">
+      <div class="l">Terlambat</div>
+      <div class="v" id="s-overdue">—</div>
+    </div>
+    <div class="kpi orange-kpi">
+      <div class="l">At Risk / Perlu FU</div>
+      <div class="v" id="s-atrisk">—</div>
+    </div>
   </div>
-  <div class="col-today">
-    <div class="col-header">Hari Ini <span class="cnt" id="cnt-today">0</span></div>
-    <div class="col-body" id="col-today"><div class="spinner">Memuat…</div></div>
-  </div>
-  <div class="col-upcoming">
-    <div class="col-header">7 Hari ke Depan <span class="cnt" id="cnt-upcoming">0</span></div>
-    <div class="col-body" id="col-upcoming"><div class="spinner">Memuat…</div></div>
-  </div>
-</div>
 
-<div class="at-risk-section">
-  <div class="section-title">Akun Butuh Perhatian</div>
-  <div class="at-risk-grid" id="at-risk-grid"></div>
-</div>
+  <!-- Kanban -->
+  <div class="kanban">
+    <div class="col col-overdue">
+      <div class="col-head">
+        <span class="col-title">⚠ Terlambat</span>
+        <span class="col-cnt" id="cnt-overdue">0</span>
+      </div>
+      <div class="col-body" id="col-overdue"><div class="spinner">Pilih sales rep…</div></div>
+    </div>
+    <div class="col col-today">
+      <div class="col-head">
+        <span class="col-title">Hari Ini</span>
+        <span class="col-cnt" id="cnt-today">0</span>
+      </div>
+      <div class="col-body" id="col-today"><div class="spinner">Pilih sales rep…</div></div>
+    </div>
+    <div class="col col-upcoming">
+      <div class="col-head">
+        <span class="col-title">7 Hari ke Depan</span>
+        <span class="col-cnt" id="cnt-upcoming">0</span>
+      </div>
+      <div class="col-body" id="col-upcoming"><div class="spinner">Pilih sales rep…</div></div>
+    </div>
+  </div>
 
+  <!-- At-risk accounts -->
+  <div class="panel">
+    <h3 class="section-title">Akun Butuh Perhatian</h3>
+    <p class="section-cap">Stage at_risk atau perlu_followup</p>
+    <div class="ar-grid" id="at-risk-grid"><div class="empty">Pilih sales rep untuk melihat akun.</div></div>
+  </div>
+
+</div>
 <script>
 const $ = id => document.getElementById(id);
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-function stageBadge(stage) {
+function stageBadge(s) {
   const map = {
-    aktif: ['badge-aktif','Aktif'],
-    perlu_followup: ['badge-perlu','Perlu Follow-up'],
-    at_risk: ['badge-at_risk','At Risk'],
-    hibernasi: ['badge-hibernasi','Hibernasi'],
-    prospek: ['badge-prospek','Prospek'],
-    penawaran: ['badge-penawaran','Penawaran'],
-    negosiasi: ['badge-negosiasi','Negosiasi'],
-    won: ['badge-won','Won'],
-    gugur: ['badge-gugur','Gugur'],
+    aktif:'stg-aktif',perlu_followup:'stg-perlu',at_risk:'stg-at_risk',hibernasi:'stg-hibernasi',
+    prospek:'stg-prospek',penawaran:'stg-penawaran',negosiasi:'stg-negosiasi',won:'stg-won',gugur:'stg-gugur'
   };
-  const [cls, label] = map[stage] ?? ['', stage];
-  return `<span class="badge ${cls}">${label}</span>`;
+  const labels = {
+    aktif:'Aktif',perlu_followup:'Perlu FU',at_risk:'At Risk',hibernasi:'Hibernasi',
+    prospek:'Prospek',penawaran:'Penawaran',negosiasi:'Negosiasi',won:'Won',gugur:'Gugur'
+  };
+  return `<span class="stg ${map[s]??''}">${labels[s]??s}</span>`;
 }
 
-function fmtWhen(isoStr) {
-  if (!isoStr) return '';
-  const d = new Date(isoStr);
-  const now = new Date();
-  const wib = dt => {
-    const s = new Date(dt.getTime() + 7*3600*1000);
-    return `${s.getUTCDate().toString().padStart(2,'0')}/${(s.getUTCMonth()+1).toString().padStart(2,'0')} ${s.getUTCHours().toString().padStart(2,'0')}.${s.getUTCMinutes().toString().padStart(2,'0')}`;
-  };
-  return wib(d);
+function fmtWib(iso) {
+  if (!iso) return '—';
+  const d = new Date(new Date(iso).getTime() + 7*3600*1000);
+  const pad = n => n.toString().padStart(2,'0');
+  return `${pad(d.getUTCDate())}/${pad(d.getUTCMonth()+1)} ${pad(d.getUTCHours())}.${pad(d.getUTCMinutes())}`;
 }
 
-function daysSince(isoStr) {
-  if (!isoStr) return null;
-  return Math.floor((Date.now() - new Date(isoStr).getTime()) / 86400000);
+function daysSince(iso) {
+  if (!iso) return null;
+  return Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
 }
 
 function actionLabel(t) {
-  return { kunjungan: 'Kunjungan', telepon: 'Telepon', followup: 'Follow-up', received_order: 'Terima Order', note: 'Catatan' }[t] ?? t;
+  return {kunjungan:'Kunjungan',telepon:'Telepon',followup:'Follow-up',received_order:'Terima Order',note:'Catatan'}[t]??t;
 }
 
-// ── Render ────────────────────────────────────────────────────────────────────
-
-function renderTaskCard(sa, isOverdue) {
+function renderCard(sa, isOverdue) {
   const div = document.createElement('div');
   div.className = 'task-card';
   div.innerHTML = `
     <div class="tc-store">${sa.store_name}</div>
-    <div class="tc-meta">${sa.area ?? ''} · ${sa.category ?? ''} · ${stageBadge(sa.stage)}</div>
+    <div class="tc-meta">${sa.area??''} · ${sa.category??''} · ${stageBadge(sa.stage)}</div>
     ${sa.notes ? `<div class="tc-notes">${sa.notes}</div>` : ''}
-    <div class="tc-when ${isOverdue ? 'overdue' : ''}">
-      ${isOverdue ? '⚠ ' : ''}${actionLabel(sa.action_type)} · ${fmtWhen(sa.scheduled_for)} WIB
+    <div class="tc-when${isOverdue?' ov':''}">
+      ${isOverdue?'⚠ ':''}${actionLabel(sa.action_type)} · ${fmtWib(sa.scheduled_for)} WIB
     </div>
     <div class="tc-footer">
-      <a href="/account?id=${sa.account_id}" style="font-size:12px;color:#3182ce;text-decoration:none;">Lihat akun →</a>
+      <a href="/account?id=${sa.account_id}">Lihat akun →</a>
       <button class="done-btn" data-id="${sa.id}">✓ Selesai</button>
     </div>
   `;
   div.querySelector('.done-btn').addEventListener('click', async e => {
     e.stopPropagation();
-    const sid = e.currentTarget.dataset.id;
-    await fetch(`/api/scheduled/${sid}/done`, { method: 'PATCH' });
+    await fetch(`/api/scheduled/${e.currentTarget.dataset.id}/done`, {method:'PATCH'});
     load();
   });
   return div;
 }
 
-function renderAtRisk(c) {
+function renderArCard(c) {
   const days = daysSince(c.last_contact_at);
   const div = document.createElement('div');
   div.className = 'ar-card';
   div.onclick = () => location.href = `/account?id=${c.id}`;
   div.innerHTML = `
     <div class="ar-store">${c.store_name}</div>
-    <div class="ar-meta">${c.area ?? ''} · ${c.category ?? ''} · ${stageBadge(c.stage)}</div>
-    <div class="ar-days">${days !== null ? `Terakhir kontak ${days} hari lalu` : 'Belum pernah dihubungi'}</div>
+    <div class="ar-meta">${c.area??''} · ${c.category??''} · ${stageBadge(c.stage)}</div>
+    <div class="ar-days">${days!==null?`Terakhir kontak ${days}h lalu`:'Belum pernah dihubungi'}</div>
   `;
   return div;
 }
 
-// ── Data ──────────────────────────────────────────────────────────────────────
-
 async function loadReps() {
   try {
-    const r = await fetch('/api/salespeople');
-    const { salespeople } = await r.json();
-    const sel = $('rep-sel');
-    const cur = sel.value;
+    const {salespeople} = await fetch('/api/salespeople').then(r=>r.json());
+    const sel = $('rep-sel'), cur = sel.value;
     sel.innerHTML = '<option value="">— Pilih sales —</option>';
     for (const sp of salespeople) {
       const o = document.createElement('option');
-      o.value = sp.id;
-      o.textContent = `${sp.full_name} (${sp.code ?? '—'})`;
+      o.value = sp.id; o.textContent = `${sp.full_name} (${sp.code??'—'})`;
       sel.appendChild(o);
     }
     if (cur) sel.value = cur;
-  } catch (err) {
-    console.error('loadReps failed:', err);
-  }
+  } catch {}
 }
 
 async function load() {
   const repId = $('rep-sel').value;
   if (!repId) {
-    ['col-overdue','col-today','col-upcoming'].forEach(id => {
-      $(id).innerHTML = '<div class="empty-state">Pilih sales rep untuk melihat jadwal.</div>';
-    });
-    $('at-risk-grid').innerHTML = '';
+    ['col-overdue','col-today','col-upcoming'].forEach(id => $(id).innerHTML = '<div class="empty">Pilih sales rep untuk melihat jadwal.</div>');
+    $('at-risk-grid').innerHTML = '<div class="empty">—</div>';
     return;
   }
-
-  ['col-overdue','col-today','col-upcoming'].forEach(id => {
-    $(id).innerHTML = '<div class="spinner">Memuat…</div>';
-  });
-
+  ['col-overdue','col-today','col-upcoming'].forEach(id => $(id).innerHTML = '<div class="spinner">Memuat…</div>');
   try {
-    const r = await fetch(`/api/reps/${repId}/myday`);
-    if (!r.ok) throw new Error(await r.text());
-    const { overdue, today, upcoming, at_risk, stats } = await r.json();
+    const d = await fetch(`/api/reps/${repId}/myday`).then(r=>r.json());
+    $('s-visits').textContent  = d.stats?.today_visits  ?? 0;
+    $('s-overdue').textContent = d.stats?.overdue_count ?? 0;
+    $('s-atrisk').textContent  = d.stats?.at_risk_count ?? 0;
 
-    // Stats
-    $('s-visits').textContent  = stats.today_visits  ?? 0;
-    $('s-overdue').textContent = stats.overdue_count ?? 0;
-    $('s-atrisk').textContent  = stats.at_risk_count ?? 0;
+    const fill = (colId, cntId, items, isOv) => {
+      $(cntId).textContent = items.length;
+      const col = $(colId); col.innerHTML = '';
+      if (!items.length) { col.innerHTML = `<div class="empty">${isOv?'Tidak ada yang terlambat ✓':'Tidak ada jadwal'}</div>`; return; }
+      items.forEach(sa => col.appendChild(renderCard(sa, isOv)));
+    };
+    fill('col-overdue','cnt-overdue', d.overdue,  true);
+    fill('col-today',  'cnt-today',   d.today,    false);
+    fill('col-upcoming','cnt-upcoming',d.upcoming, false);
 
-    // Overdue column
-    $('cnt-overdue').textContent = overdue.length;
-    const colOv = $('col-overdue');
-    colOv.innerHTML = '';
-    if (overdue.length === 0) {
-      colOv.innerHTML = '<div class="empty-state">Tidak ada yang terlambat ✓</div>';
-    } else {
-      overdue.forEach(sa => colOv.appendChild(renderTaskCard(sa, true)));
-    }
-
-    // Today column
-    $('cnt-today').textContent = today.length;
-    const colTd = $('col-today');
-    colTd.innerHTML = '';
-    if (today.length === 0) {
-      colTd.innerHTML = '<div class="empty-state">Tidak ada jadwal hari ini</div>';
-    } else {
-      today.forEach(sa => colTd.appendChild(renderTaskCard(sa, false)));
-    }
-
-    // Upcoming column
-    $('cnt-upcoming').textContent = upcoming.length;
-    const colUp = $('col-upcoming');
-    colUp.innerHTML = '';
-    if (upcoming.length === 0) {
-      colUp.innerHTML = '<div class="empty-state">Tidak ada jadwal minggu ini</div>';
-    } else {
-      upcoming.forEach(sa => colUp.appendChild(renderTaskCard(sa, false)));
-    }
-
-    // At-risk
-    const grid = $('at-risk-grid');
-    grid.innerHTML = '';
-    if (at_risk.length === 0) {
-      grid.innerHTML = '<div class="empty-state">Semua akun dalam kondisi baik ✓</div>';
-    } else {
-      at_risk.forEach(c => grid.appendChild(renderAtRisk(c)));
-    }
-
+    const grid = $('at-risk-grid'); grid.innerHTML = '';
+    if (!d.at_risk?.length) { grid.innerHTML = '<div class="empty">Semua akun dalam kondisi baik ✓</div>'; }
+    else d.at_risk.forEach(c => grid.appendChild(renderArCard(c)));
   } catch (err) {
-    ['col-overdue','col-today','col-upcoming'].forEach(id => {
-      $(id).innerHTML = `<div class="empty-state" style="color:#e53e3e">Error: ${err.message}</div>`;
-    });
+    ['col-overdue','col-today','col-upcoming'].forEach(id =>
+      $(id).innerHTML = `<div class="empty" style="color:#f8a0a0">Error: ${err.message}</div>`);
   }
 }
 
-// ── Boot ──────────────────────────────────────────────────────────────────────
-
-$('rep-sel').addEventListener('change', load);
-
-// Auto-refresh every 30s
-setInterval(load, 30000);
-
-loadReps().then(() => {
-  // Try to restore last-used rep
-  const saved = sessionStorage.getItem('myday_rep');
-  if (saved) { $('rep-sel').value = saved; }
+$('rep-sel').addEventListener('change', () => {
+  sessionStorage.setItem('myday_rep', $('rep-sel').value);
   load();
 });
 
-$('rep-sel').addEventListener('change', () => {
-  sessionStorage.setItem('myday_rep', $('rep-sel').value);
+setInterval(load, 30000);
+
+loadReps().then(() => {
+  const saved = sessionStorage.getItem('myday_rep');
+  if (saved) $('rep-sel').value = saved;
+  load();
 });
 </script>
 </body>

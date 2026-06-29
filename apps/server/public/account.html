@@ -1,151 +1,234 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="id">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Akun — Kencana LeadScout</title>
-<style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  :root {
-    --c-bg: #f5f7fa; --c-card: #fff; --c-border: #e2e8f0;
-    --c-text: #1a202c; --c-muted: #718096;
-    --c-red: #e53e3e; --c-red-bg: #fff5f5; --c-red-border: #fed7d7;
-    --c-blue: #3182ce; --c-blue-bg: #ebf8ff; --c-blue-border: #bee3f8;
-    --c-green: #38a169; --c-green-bg: #f0fff4; --c-green-border: #c6f6d5;
-    --c-orange: #dd6b20; --c-gold: #b7791f;
-    --radius: 8px;
-  }
-  body { font-family: system-ui, sans-serif; background: var(--c-bg); color: var(--c-text); }
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Akun · Kencana LeadScout</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --ink: #14213d; --ink-2: #1b2949; --red: #9b2226; --gold: #bb9457; --green: #2c6e49;
+      --paper: #f5f2ec; --muted: #8a96ad; --line: rgba(255,255,255,.09);
+      --blue: #2E6FD6; --old: #3E9B4F;
+      --display: "Space Grotesk","Inter",system-ui,sans-serif;
+      --sans: "Inter",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      font-family: var(--sans); color: var(--paper);
+      background: radial-gradient(1200px 600px at 80% -10%, rgba(187,148,87,.12), transparent 60%), var(--ink);
+      -webkit-font-smoothing: antialiased;
+    }
 
-  nav { background: #1a2744; color: #fff; padding: 0 16px; display: flex; align-items: center; gap: 12px; height: 48px; }
-  nav .brand { font-weight: 700; font-size: 15px; color: #fff; text-decoration: none; flex-shrink: 0; }
-  nav a { color: rgba(255,255,255,.7); text-decoration: none; font-size: 13px; white-space: nowrap; }
-  nav a:hover { color: #fff; }
-  nav .spacer { flex: 1; }
-  nav .back-btn { color: rgba(255,255,255,.7); font-size: 13px; text-decoration: none; }
-  nav .back-btn:hover { color: #fff; }
+    /* ── Nav ──────────────────────────────────────────────────── */
+    .nav {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 20px; border-bottom: 1px solid var(--line);
+      background: rgba(20,33,61,.92); position: sticky; top: 0; z-index: 10;
+      backdrop-filter: blur(10px); gap: 12px; flex-wrap: wrap;
+    }
+    .nav-brand { display: flex; align-items: center; gap: 10px; }
+    .mark {
+      width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center;
+      background: linear-gradient(135deg, var(--red), #7a1a1d);
+      font-family: var(--display); font-weight: 700; color: #fff; font-size: 16px;
+    }
+    .nav-brand b { font-family: var(--display); font-size: 15px; }
+    .nav-brand span { color: var(--muted); font-size: 12px; }
+    .nav-links { display: flex; align-items: center; gap: 10px; }
+    .nav-links a { color: var(--muted); font-size: 13px; text-decoration: none; }
+    .nav-links a:hover { color: var(--paper); }
+    .nav-links a.gold { color: var(--gold); font-weight: 600; }
 
-  .page { max-width: 860px; margin: 0 auto; padding: 20px 16px 60px; }
+    /* ── Page ─────────────────────────────────────────────────── */
+    .page { max-width: 860px; margin: 0 auto; padding: 24px 20px 80px; }
 
-  /* Account header card */
-  .acct-header { background: var(--c-card); border: 1px solid var(--c-border); border-radius: var(--radius); padding: 20px 24px; margin-bottom: 16px; }
-  .acct-header .row { display: flex; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
-  .acct-header .name { font-size: 22px; font-weight: 700; flex: 1; min-width: 200px; }
-  .acct-header .meta { font-size: 13px; color: var(--c-muted); margin-top: 6px; }
-  .acct-header .meta span { margin-right: 14px; }
+    /* ── Panel ────────────────────────────────────────────────── */
+    .panel {
+      border: 1px solid var(--line); border-radius: 18px; padding: 20px 22px;
+      background: linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.015));
+      margin-bottom: 14px;
+    }
+    .panel h3 {
+      font-family: var(--display); font-size: 13px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: .7px; color: var(--muted); margin: 0 0 16px;
+    }
 
-  /* Stage badge + changer */
-  .stage-area { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
-  .stage-area label { font-size: 12px; color: var(--c-muted); }
-  .stage-area select { font-size: 13px; padding: 4px 8px; border: 1px solid var(--c-border); border-radius: 6px; }
-  .stage-area button { font-size: 12px; padding: 5px 14px; background: var(--c-blue); color: #fff; border: none; border-radius: 6px; cursor: pointer; }
-  .stage-area button:hover { background: #2b77c4; }
-  .stage-area .changed-by { font-size: 12px; color: var(--c-muted); }
+    /* ── Account header ───────────────────────────────────────── */
+    .acct-name { font-family: var(--display); font-size: 26px; font-weight: 700; margin: 0 0 8px; line-height: 1.2; }
+    .acct-meta { display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--muted); font-size: 13px; margin-bottom: 14px; }
+    .acct-meta strong { color: var(--paper); }
+    .acct-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
 
-  /* Badge */
-  .badge { display: inline-block; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 10px; text-transform: uppercase; letter-spacing: .4px; }
-  .badge-aktif      { background: #e6fffa; color: #2c7a7b; }
-  .badge-perlu      { background: #fffbeb; color: var(--c-gold); }
-  .badge-at_risk    { background: var(--c-red-bg); color: var(--c-red); }
-  .badge-hibernasi  { background: #e2e8f0; color: #4a5568; }
-  .badge-prospek    { background: #ebf4ff; color: #2b6cb0; }
-  .badge-penawaran  { background: #faf5ff; color: #6b46c1; }
-  .badge-negosiasi  { background: #fffaf0; color: var(--c-orange); }
-  .badge-won        { background: var(--c-green-bg); color: var(--c-green); }
-  .badge-gugur      { background: #fff5f5; color: #c53030; }
+    /* ── Stage badges ─────────────────────────────────────────── */
+    .stg {
+      display: inline-block; font-size: 12px; font-weight: 700; padding: 4px 12px;
+      border-radius: 99px; text-transform: uppercase; letter-spacing: .5px;
+    }
+    .stg-aktif     { background: rgba(44,110,73,.25); color: #9fe0b9; }
+    .stg-perlu     { background: rgba(187,148,87,.22); color: var(--gold); }
+    .stg-at_risk   { background: rgba(155,34,38,.25); color: #f8a0a0; }
+    .stg-hibernasi { background: rgba(255,255,255,.1); color: var(--muted); }
+    .stg-prospek   { background: rgba(46,111,214,.2); color: #7eb8f7; }
+    .stg-penawaran { background: rgba(128,90,213,.2); color: #c4b5fd; }
+    .stg-negosiasi { background: rgba(221,107,32,.2); color: #f6b87a; }
+    .stg-won       { background: rgba(44,110,73,.3); color: #9fe0b9; }
+    .stg-gugur     { background: rgba(155,34,38,.2); color: #f8a0a0; }
 
-  /* Action bar */
-  .action-bar { background: var(--c-card); border: 1px solid var(--c-border); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; }
-  .action-bar h3 { font-size: 13px; font-weight: 700; color: var(--c-muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 12px; }
-  .action-btns { display: flex; gap: 8px; flex-wrap: wrap; }
-  .action-btns button { padding: 8px 16px; border-radius: 6px; font-size: 13px; cursor: pointer; border: 1px solid var(--c-border); background: #fff; }
-  .action-btns button:hover { background: var(--c-bg); }
-  .action-btns .btn-primary { background: var(--c-blue); color: #fff; border-color: var(--c-blue); }
-  .action-btns .btn-primary:hover { background: #2b77c4; }
-  .action-btns .btn-order { background: var(--c-green); color: #fff; border-color: var(--c-green); }
-  .action-btns .btn-order:hover { background: #2f8a5a; }
-  .action-btns .btn-schedule { background: var(--c-orange); color: #fff; border-color: var(--c-orange); }
-  .action-btns .btn-schedule:hover { background: #c05e1a; }
+    /* ── Stage changer ────────────────────────────────────────── */
+    .stage-row { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+    .stage-row label { font-size: 11.5px; font-weight: 600; letter-spacing: .5px; text-transform: uppercase; color: var(--muted); }
+    .stage-row select, .stage-row .rep-sel {
+      background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.13); border-radius: 9px;
+      padding: 7px 10px; color: var(--paper); font-family: var(--sans); font-size: 13px;
+      outline: none; cursor: pointer; color-scheme: dark;
+    }
+    .stage-row select:focus, .stage-row .rep-sel:focus { border-color: var(--gold); }
+    .stage-row select option, .stage-row .rep-sel option { background: #1e2d50; }
+    .btn-apply {
+      background: rgba(187,148,87,.18); border: 1px solid rgba(187,148,87,.45); color: var(--gold);
+      border-radius: 9px; padding: 7px 14px; cursor: pointer; font-weight: 700; font-size: 12.5px;
+    }
+    .btn-apply:hover { background: rgba(187,148,87,.28); }
+    .stage-msg { font-size: 12px; color: var(--muted); }
+    .stage-msg.ok { color: #9fe0b9; }
+    .stage-msg.err { color: #f8a0a0; }
 
-  /* Modal overlay */
-  .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 100; align-items: center; justify-content: center; padding: 16px; }
-  .overlay.open { display: flex; }
-  .modal { background: #fff; border-radius: var(--radius); padding: 24px; width: 100%; max-width: 440px; }
-  .modal h3 { font-size: 16px; font-weight: 700; margin-bottom: 16px; }
-  .modal label { display: block; font-size: 13px; color: var(--c-muted); margin-bottom: 4px; }
-  .modal input, .modal select, .modal textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--c-border); border-radius: 6px; font-size: 14px; font-family: inherit; margin-bottom: 12px; }
-  .modal textarea { resize: vertical; min-height: 70px; }
-  .modal .modal-footer { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; }
-  .modal .modal-footer button { padding: 8px 18px; border-radius: 6px; font-size: 13px; cursor: pointer; }
-  .modal .modal-footer .btn-cancel { border: 1px solid var(--c-border); background: #fff; }
-  .modal .modal-footer .btn-save { background: var(--c-blue); color: #fff; border: none; }
-  .modal .modal-footer .btn-save:hover { background: #2b77c4; }
+    /* ── Action bar ───────────────────────────────────────────── */
+    .action-btns { display: flex; gap: 9px; flex-wrap: wrap; }
+    .abn {
+      border: 1px solid var(--line); background: rgba(255,255,255,.06); color: var(--paper);
+      border-radius: 10px; padding: 10px 16px; cursor: pointer; font-family: var(--sans);
+      font-size: 13.5px; font-weight: 600; transition: background .15s, border-color .15s;
+    }
+    .abn:hover { background: rgba(255,255,255,.11); border-color: rgba(255,255,255,.22); }
+    .abn-red    { background: rgba(155,34,38,.14); border-color: rgba(155,34,38,.35); color: #f8a0a0; }
+    .abn-red:hover    { background: rgba(155,34,38,.22); }
+    .abn-green  { background: rgba(44,110,73,.14); border-color: rgba(44,110,73,.35); color: #9fe0b9; }
+    .abn-green:hover  { background: rgba(44,110,73,.22); }
+    .abn-gold   { background: rgba(187,148,87,.14); border-color: rgba(187,148,87,.35); color: var(--gold); }
+    .abn-gold:hover   { background: rgba(187,148,87,.22); }
 
-  /* Timeline */
-  .section { background: var(--c-card); border: 1px solid var(--c-border); border-radius: var(--radius); padding: 16px; margin-bottom: 14px; }
-  .section h3 { font-size: 13px; font-weight: 700; color: var(--c-muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 12px; }
-  .timeline { display: flex; flex-direction: column; gap: 0; }
-  .tl-item { display: flex; gap: 14px; padding: 10px 0; border-bottom: 1px solid var(--c-border); }
-  .tl-item:last-child { border-bottom: none; }
-  .tl-dot { width: 28px; flex-shrink: 0; display: flex; align-items: flex-start; justify-content: center; padding-top: 4px; }
-  .tl-dot span { width: 10px; height: 10px; border-radius: 50%; display: block; }
-  .dot-kunjungan    { background: var(--c-blue); }
-  .dot-telepon      { background: #805ad5; }
-  .dot-received_order { background: var(--c-green); }
-  .dot-note         { background: var(--c-muted); }
-  .tl-body { flex: 1; }
-  .tl-body .tl-who  { font-size: 13px; font-weight: 600; }
-  .tl-body .tl-type { font-size: 12px; color: var(--c-muted); }
-  .tl-body .tl-notes { font-size: 13px; color: #4a5568; margin-top: 3px; }
-  .tl-body .tl-inv   { font-size: 12px; background: var(--c-green-bg); color: var(--c-green); padding: 2px 8px; border-radius: 4px; display: inline-block; margin-top: 3px; }
-  .tl-time { font-size: 11px; color: var(--c-muted); white-space: nowrap; padding-top: 3px; }
+    /* ── Scheduled items ──────────────────────────────────────── */
+    .sched-item {
+      display: flex; align-items: flex-start; gap: 12px; padding: 10px 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .sched-item:last-child { border-bottom: none; }
+    .si-info { flex: 1; }
+    .si-type { font-weight: 600; font-size: 13.5px; }
+    .si-meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
+    .si-notes { font-size: 12px; color: #b8c4d8; margin-top: 3px; }
+    .done-btn {
+      font-size: 11.5px; padding: 4px 12px; border-radius: 99px; cursor: pointer; font-weight: 600;
+      border: 1px solid rgba(44,110,73,.45); color: #9fe0b9; background: rgba(44,110,73,.1); white-space: nowrap;
+    }
+    .done-btn:hover { background: rgba(44,110,73,.2); }
 
-  /* Scheduled section */
-  .sched-item { display: flex; align-items: flex-start; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--c-border); }
-  .sched-item:last-child { border-bottom: none; }
-  .sched-item .si-info { flex: 1; }
-  .sched-item .si-type { font-size: 13px; font-weight: 600; }
-  .sched-item .si-meta { font-size: 12px; color: var(--c-muted); }
-  .sched-item .si-notes { font-size: 12px; color: #4a5568; margin-top: 2px; }
-  .sched-item .done-btn { font-size: 11px; padding: 3px 10px; border: 1px solid var(--c-green); color: var(--c-green); background: none; border-radius: 12px; cursor: pointer; white-space: nowrap; }
-  .sched-item .done-btn:hover { background: var(--c-green-bg); }
+    /* ── Timeline ─────────────────────────────────────────────── */
+    .timeline { display: flex; flex-direction: column; }
+    .tl-item { display: flex; gap: 14px; padding: 11px 0; border-bottom: 1px solid var(--line); }
+    .tl-item:last-child { border-bottom: none; }
+    .tl-dot { flex-shrink: 0; padding-top: 5px; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; display: block; }
+    .dot-kunjungan     { background: #7eb8f7; }
+    .dot-telepon       { background: #c4b5fd; }
+    .dot-received_order { background: #9fe0b9; }
+    .dot-note          { background: var(--muted); }
+    .dot-stage         { background: var(--gold); }
+    .tl-body { flex: 1; }
+    .tl-who  { font-size: 13.5px; font-weight: 600; }
+    .tl-type { color: var(--muted); font-size: 12px; font-weight: 400; }
+    .tl-notes { font-size: 13px; color: #b8c4d8; margin-top: 3px; }
+    .tl-inv {
+      display: inline-block; margin-top: 4px; font-size: 11.5px; font-weight: 600;
+      background: rgba(44,110,73,.2); color: #9fe0b9; border-radius: 6px; padding: 2px 8px;
+    }
+    .tl-time { font-size: 11.5px; color: var(--muted); padding-top: 3px; white-space: nowrap; }
 
-  .empty-state { text-align: center; padding: 24px; color: var(--c-muted); font-size: 13px; }
-  .error-msg { color: var(--c-red); font-size: 13px; padding: 4px 0; }
-</style>
+    /* ── Modal ────────────────────────────────────────────────── */
+    .overlay {
+      display: none; position: fixed; inset: 0; z-index: 100;
+      background: rgba(0,0,0,.65); backdrop-filter: blur(4px);
+      align-items: center; justify-content: center; padding: 16px;
+    }
+    .overlay.open { display: flex; }
+    .modal {
+      background: #1b2949; border: 1px solid rgba(255,255,255,.12); border-radius: 18px;
+      padding: 24px; width: 100%; max-width: 440px;
+      box-shadow: 0 20px 60px rgba(0,0,0,.5);
+    }
+    .modal h3 { font-family: var(--display); font-size: 17px; margin: 0 0 18px; }
+    .modal label {
+      display: block; font-size: 11px; font-weight: 600; letter-spacing: .7px;
+      text-transform: uppercase; color: var(--muted); margin-bottom: 5px;
+    }
+    .modal input, .modal select, .modal textarea {
+      background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.13); border-radius: 10px;
+      padding: 11px 13px; color: var(--paper); font-family: var(--sans); font-size: 14px;
+      width: 100%; outline: none; margin-bottom: 14px; color-scheme: dark;
+    }
+    .modal input:focus, .modal select:focus, .modal textarea:focus { border-color: var(--gold); }
+    .modal select option { background: #1e2d50; }
+    .modal input::placeholder, .modal textarea::placeholder { color: var(--muted); }
+    .modal textarea { resize: vertical; min-height: 72px; }
+    .modal-footer { display: flex; gap: 9px; justify-content: flex-end; margin-top: 4px; }
+    .btn-cancel {
+      border: 1px solid var(--line); background: rgba(255,255,255,.06); color: var(--paper);
+      border-radius: 9px; padding: 10px 18px; cursor: pointer; font-size: 13px; font-weight: 600;
+    }
+    .btn-cancel:hover { background: rgba(255,255,255,.1); }
+    .btn-save {
+      background: linear-gradient(135deg, var(--red), #7a1a1d); border: none; color: #fff;
+      border-radius: 9px; padding: 10px 20px; cursor: pointer; font-size: 13px; font-weight: 700;
+      box-shadow: 0 4px 14px rgba(155,34,38,.35);
+    }
+    .btn-save:hover { opacity: .9; }
+    .modal-err { color: #f8a0a0; font-size: 12.5px; min-height: 18px; margin-bottom: 8px; }
+
+    .empty { color: var(--muted); font-size: 13.5px; text-align: center; padding: 24px 0; }
+    .spinner { color: var(--muted); font-size: 13px; text-align: center; padding: 40px; }
+  </style>
 </head>
 <body>
 
-<nav>
-  <a class="brand" href="/">Kencana</a>
-  <a href="/visits">Catat</a>
-  <a href="/visits-rack">Rack-up</a>
-  <a href="/myday">My Day</a>
-  <a href="/visits-insights">Insights</a>
-  <div class="spacer"></div>
-  <a class="back-btn" href="javascript:history.back()">← Kembali</a>
+<nav class="nav">
+  <div class="nav-brand">
+    <div class="mark">K</div>
+    <div><b>Akun</b><span>Kencana LeadScout · pipeline</span></div>
+  </div>
+  <div class="nav-links">
+    <a href="/visits">Catat ↗</a>
+    <a href="/visits-rack">Rack-up ↗</a>
+    <a href="/myday">My Day ↗</a>
+    <a href="/visits-insights">Insights ↗</a>
+    <a class="gold" href="javascript:history.back()">← Kembali</a>
+  </div>
 </nav>
 
 <div class="page" id="page">
-  <div class="empty-state">Memuat akun…</div>
+  <div class="spinner">Memuat akun…</div>
 </div>
 
 <!-- Action modal -->
 <div class="overlay" id="action-overlay">
   <div class="modal">
-    <h3 id="modal-title">Catat Aktivitas</h3>
+    <h3 id="m-title">Catat Aktivitas</h3>
     <label>Sales rep</label>
     <select id="m-rep"><option value="">— Pilih —</option></select>
-    <div id="m-invoice-wrap">
-      <label>Nomor Invoice <span style="color:#e53e3e">*</span></label>
+    <div id="m-inv-wrap">
+      <label>Nomor Invoice <span style="color:#f8a0a0">*</span></label>
       <input type="text" id="m-invoice" placeholder="INV-2025-001">
     </div>
     <label>Catatan</label>
-    <textarea id="m-notes" placeholder="Catatan (opsional)"></textarea>
-    <div class="error-msg" id="m-err"></div>
+    <textarea id="m-notes" placeholder="Catatan tambahan (opsional)"></textarea>
+    <div class="modal-err" id="m-err"></div>
     <div class="modal-footer">
-      <button class="btn-cancel" onclick="closeModal()">Batal</button>
-      <button class="btn-save" id="m-save-btn" onclick="saveAction()">Simpan</button>
+      <button class="btn-cancel" onclick="closeModal('action-overlay')">Batal</button>
+      <button class="btn-save" onclick="saveAction()">Simpan</button>
     </div>
   </div>
 </div>
@@ -162,13 +245,13 @@
       <option value="kunjungan">Kunjungan</option>
       <option value="telepon">Telepon</option>
     </select>
-    <label>Waktu <span style="color:#e53e3e">*</span></label>
+    <label>Waktu (WIB) <span style="color:#f8a0a0">*</span></label>
     <input type="datetime-local" id="s-when">
     <label>Catatan</label>
     <textarea id="s-notes" placeholder="Catatan (opsional)"></textarea>
-    <div class="error-msg" id="s-err"></div>
+    <div class="modal-err" id="s-err"></div>
     <div class="modal-footer">
-      <button class="btn-cancel" onclick="closeScheduleModal()">Batal</button>
+      <button class="btn-cancel" onclick="closeModal('sched-overlay')">Batal</button>
       <button class="btn-save" onclick="saveSchedule()">Simpan</button>
     </div>
   </div>
@@ -176,130 +259,116 @@
 
 <script>
 const $ = id => document.getElementById(id);
-const qs = s => document.querySelector(s);
-
 const params = new URLSearchParams(location.search);
 const ACCT_ID = Number(params.get('id'));
-
-let currentAccount = null;
-let pendingActionType = null;
 let salespeople = [];
+let pendingActionType = null;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function stageBadge(stage) {
-  const map = {
-    aktif: ['badge-aktif','Aktif'],
-    perlu_followup: ['badge-perlu','Perlu Follow-up'],
-    at_risk: ['badge-at_risk','At Risk'],
-    hibernasi: ['badge-hibernasi','Hibernasi'],
-    prospek: ['badge-prospek','Prospek'],
-    penawaran: ['badge-penawaran','Penawaran'],
-    negosiasi: ['badge-negosiasi','Negosiasi'],
-    won: ['badge-won','Won'],
-    gugur: ['badge-gugur','Gugur'],
-  };
-  const [cls, label] = map[stage] ?? ['', stage ?? '—'];
-  return `<span class="badge ${cls}">${label}</span>`;
+function stageBadge(s) {
+  const cls = {aktif:'stg-aktif',perlu_followup:'stg-perlu',at_risk:'stg-at_risk',hibernasi:'stg-hibernasi',
+    prospek:'stg-prospek',penawaran:'stg-penawaran',negosiasi:'stg-negosiasi',won:'stg-won',gugur:'stg-gugur'};
+  const lbl = {aktif:'Aktif',perlu_followup:'Perlu Follow-up',at_risk:'At Risk',hibernasi:'Hibernasi',
+    prospek:'Prospek',penawaran:'Penawaran',negosiasi:'Negosiasi',won:'Won',gugur:'Gugur'};
+  return `<span class="stg ${cls[s]??''}">${lbl[s]??s}</span>`;
 }
 
-function fmtWib(isoStr) {
-  if (!isoStr) return '—';
-  const d = new Date(isoStr);
-  const s = new Date(d.getTime() + 7*3600*1000);
-  return `${s.getUTCDate().toString().padStart(2,'0')}/${(s.getUTCMonth()+1).toString().padStart(2,'0')}/${s.getUTCFullYear()} ${s.getUTCHours().toString().padStart(2,'0')}.${s.getUTCMinutes().toString().padStart(2,'0')}`;
+function fmtWib(iso) {
+  if (!iso) return '—';
+  const d = new Date(new Date(iso).getTime() + 7*3600*1000);
+  const pad = n => n.toString().padStart(2,'0');
+  return `${pad(d.getUTCDate())}/${pad(d.getUTCMonth()+1)}/${d.getUTCFullYear()} ${pad(d.getUTCHours())}.${pad(d.getUTCMinutes())}`;
 }
 
 function actionLabel(t) {
-  return {kunjungan:'Kunjungan',telepon:'Telepon',received_order:'Terima Order',note:'Catatan',followup:'Follow-up'}[t] ?? t;
+  return {kunjungan:'Kunjungan',telepon:'Telepon',received_order:'Terima Order',note:'Catatan',followup:'Follow-up'}[t]??t;
 }
 
-function dotClass(t) {
-  return {kunjungan:'dot-kunjungan',telepon:'dot-telepon',received_order:'dot-received_order',note:'dot-note'}[t] ?? 'dot-note';
-}
-
-function stageOptionsFor(acctType) {
-  if (acctType === 'project') {
-    return ['prospek','penawaran','negosiasi','won','gugur'];
-  }
-  return ['aktif','perlu_followup','at_risk','hibernasi'];
+function stagesFor(type) {
+  return type === 'project'
+    ? ['prospek','penawaran','negosiasi','won','gugur']
+    : ['aktif','perlu_followup','at_risk','hibernasi'];
 }
 
 function stageLabel(s) {
-  return {aktif:'Aktif',perlu_followup:'Perlu Follow-up',at_risk:'At Risk',hibernasi:'Hibernasi',prospek:'Prospek',penawaran:'Penawaran',negosiasi:'Negosiasi',won:'Won',gugur:'Gugur'}[s] ?? s;
+  return {aktif:'Aktif',perlu_followup:'Perlu Follow-up',at_risk:'At Risk',hibernasi:'Hibernasi',
+    prospek:'Prospek',penawaran:'Penawaran',negosiasi:'Negosiasi',won:'Won',gugur:'Gugur'}[s]??s;
+}
+
+function dotClass(t) {
+  return {kunjungan:'dot-kunjungan',telepon:'dot-telepon',received_order:'dot-received_order',note:'dot-note'}[t]??'dot-note';
 }
 
 // ── Render ────────────────────────────────────────────────────────────────────
 
-function renderPage(data) {
-  const { account, actions, stage_history, scheduled } = data;
-  currentAccount = account;
+function renderPage({account, actions, stage_history, scheduled}) {
+  document.title = `${account.store_name} · Kencana LeadScout`;
 
-  const stages = stageOptionsFor(account.account_type);
-
+  const stages = stagesFor(account.account_type);
   const stageOpts = stages.map(s =>
-    `<option value="${s}" ${s === account.stage ? 'selected' : ''}>${stageLabel(s)}</option>`
+    `<option value="${s}"${s===account.stage?' selected':''}>${stageLabel(s)}</option>`
   ).join('');
 
   const typeLabel = account.account_type === 'project' ? 'Project' : 'Repeating';
 
-  const page = $('page');
-  page.innerHTML = `
-    <div class="acct-header">
-      <div class="row">
-        <div style="flex:1">
-          <div class="name">${account.store_name}</div>
-          <div class="meta">
-            <span>${account.area ?? '—'}</span>
-            <span>${account.category ?? '—'}</span>
+  $('page').innerHTML = `
+    <!-- Account header -->
+    <div class="panel">
+      <div class="acct-row">
+        <div>
+          <div class="acct-name">${account.store_name}</div>
+          <div class="acct-meta">
+            <span>${account.area??'—'}</span>
+            <span>${account.category??'—'}</span>
             <span>Tipe: <strong>${typeLabel}</strong></span>
-            ${account.owner_name ? `<span>Owner: ${account.owner_name} (${account.owner_code ?? '—'})</span>` : ''}
+            ${account.owner_name?`<span>Owner: <strong>${account.owner_name} (${account.owner_code??'—'})</strong></span>`:''}
           </div>
-          <div class="meta" style="margin-top:4px">
+          <div class="acct-meta">
             <span>Pertama dicatat: ${fmtWib(account.first_seen_at)}</span>
             <span>Terakhir kontak: ${fmtWib(account.last_contact_at)}</span>
           </div>
         </div>
-        <div style="text-align:right;flex-shrink:0">
-          ${stageBadge(account.stage)}
-        </div>
+        <div>${stageBadge(account.stage)}</div>
       </div>
-      <div class="stage-area">
-        <label>Ubah stage:</label>
-        <select id="stage-sel">${stageOpts}</select>
-        <select id="stage-rep">
-          <option value="">— Pilih rep —</option>
-          ${salespeople.map(sp => `<option value="${sp.id}">${sp.full_name}</option>`).join('')}
+      <div class="stage-row">
+        <label>Ubah stage</label>
+        <select id="stage-sel" class="rep-sel">${stageOpts}</select>
+        <select id="stage-rep" class="rep-sel">
+          <option value="">— Oleh —</option>
+          ${salespeople.map(sp=>`<option value="${sp.id}">${sp.full_name}</option>`).join('')}
         </select>
-        <button onclick="changeStage()">Terapkan</button>
-        <span class="changed-by" id="stage-msg"></span>
+        <button class="btn-apply" onclick="changeStage()">Terapkan</button>
+        <span class="stage-msg" id="stage-msg"></span>
       </div>
     </div>
 
-    <div class="action-bar">
+    <!-- Action bar -->
+    <div class="panel">
       <h3>Catat Aktivitas</h3>
       <div class="action-btns">
-        <button class="btn-primary" onclick="openAction('kunjungan')">+ Kunjungan</button>
-        <button onclick="openAction('telepon')">📞 Telepon</button>
-        <button class="btn-order" onclick="openAction('received_order')">📦 Terima Order</button>
-        <button onclick="openAction('note')">📝 Catatan</button>
-        <button class="btn-schedule" onclick="openSchedule()">📅 Jadwal Follow-up</button>
+        <button class="abn abn-red"   onclick="openAction('kunjungan')">+ Kunjungan</button>
+        <button class="abn"           onclick="openAction('telepon')">📞 Telepon</button>
+        <button class="abn abn-green" onclick="openAction('received_order')">📦 Terima Order</button>
+        <button class="abn"           onclick="openAction('note')">📝 Catatan</button>
+        <button class="abn abn-gold"  onclick="openSchedule()">📅 Jadwal Follow-up</button>
       </div>
     </div>
 
     ${renderScheduled(scheduled)}
 
-    <div class="section">
-      <h3>Timeline Aktivitas <span style="font-weight:400;color:#a0aec0">(${actions.length})</span></h3>
-      <div class="timeline" id="timeline">
-        ${actions.length === 0 ? '<div class="empty-state">Belum ada aktivitas.</div>' :
-          actions.map(a => `
+    <!-- Timeline -->
+    <div class="panel">
+      <h3>Timeline Aktivitas <span style="font-weight:400;opacity:.5">(${actions.length})</span></h3>
+      <div class="timeline">
+        ${!actions.length ? '<div class="empty">Belum ada aktivitas.</div>' :
+          actions.map(a=>`
             <div class="tl-item">
-              <div class="tl-dot"><span class="${dotClass(a.action_type)}"></span></div>
+              <div class="tl-dot"><span class="dot ${dotClass(a.action_type)}"></span></div>
               <div class="tl-body">
-                <div class="tl-who">${a.salesperson_name ?? '—'} <span class="tl-type">· ${actionLabel(a.action_type)}</span></div>
-                ${a.notes ? `<div class="tl-notes">${a.notes}</div>` : ''}
-                ${a.invoice_number ? `<div class="tl-inv">Invoice: ${a.invoice_number}</div>` : ''}
+                <div class="tl-who">${a.salesperson_name??'—'} <span class="tl-type">· ${actionLabel(a.action_type)}</span></div>
+                ${a.notes?`<div class="tl-notes">${a.notes}</div>`:''}
+                ${a.invoice_number?`<div class="tl-inv">Invoice: ${a.invoice_number}</div>`:''}
               </div>
               <div class="tl-time">${fmtWib(a.actioned_at)}</div>
             </div>
@@ -307,37 +376,39 @@ function renderPage(data) {
       </div>
     </div>
 
-    <div class="section">
+    <!-- Stage history -->
+    <div class="panel">
       <h3>Riwayat Stage</h3>
-      ${stage_history.length === 0 ? '<div class="empty-state">Belum ada perubahan stage.</div>' :
-        stage_history.map(h => `
-          <div class="tl-item">
-            <div class="tl-dot"><span style="background:#805ad5" class=""></span></div>
-            <div class="tl-body">
-              <div class="tl-who">${h.changed_by_name ?? 'Sistem'}</div>
-              <div class="tl-type">${stageBadge(h.old_stage ?? '—')} → ${stageBadge(h.new_stage)}</div>
+      <div class="timeline">
+        ${!stage_history.length ? '<div class="empty">Belum ada perubahan stage.</div>' :
+          stage_history.map(h=>`
+            <div class="tl-item">
+              <div class="tl-dot"><span class="dot dot-stage"></span></div>
+              <div class="tl-body">
+                <div class="tl-who">${h.changed_by_name??'Sistem'}</div>
+                <div class="tl-type">${stageBadge(h.old_stage??'—')} → ${stageBadge(h.new_stage)}</div>
+              </div>
+              <div class="tl-time">${fmtWib(h.changed_at)}</div>
             </div>
-            <div class="tl-time">${fmtWib(h.changed_at)}</div>
-          </div>
-        `).join('')}
+          `).join('')}
+      </div>
     </div>
   `;
 
-  // Populate rep dropdowns in modals
   populateRepDropdowns();
 }
 
 function renderScheduled(scheduled) {
-  if (!scheduled || scheduled.length === 0) return '';
+  if (!scheduled?.length) return '';
   return `
-    <div class="section">
-      <h3>Follow-up Terjadwal <span style="font-weight:400;color:#a0aec0">(${scheduled.length})</span></h3>
-      ${scheduled.map(sa => `
+    <div class="panel">
+      <h3>Follow-up Terjadwal <span style="font-weight:400;opacity:.5">(${scheduled.length})</span></h3>
+      ${scheduled.map(sa=>`
         <div class="sched-item">
           <div class="si-info">
             <div class="si-type">${actionLabel(sa.action_type)}</div>
-            <div class="si-meta">${fmtWib(sa.scheduled_for)} WIB · ${sa.salesperson_name ?? '—'}</div>
-            ${sa.notes ? `<div class="si-notes">${sa.notes}</div>` : ''}
+            <div class="si-meta">${fmtWib(sa.scheduled_for)} WIB · ${sa.salesperson_name??'—'}</div>
+            ${sa.notes?`<div class="si-notes">${sa.notes}</div>`:''}
           </div>
           <button class="done-btn" onclick="markDone(${sa.id})">✓ Selesai</button>
         </div>
@@ -349,142 +420,101 @@ function renderScheduled(scheduled) {
 // ── Stage change ──────────────────────────────────────────────────────────────
 
 async function changeStage() {
-  const stage = $('stage-sel').value;
-  const repId = $('stage-rep').value || null;
+  const stage = $('stage-sel')?.value;
+  const repId = $('stage-rep')?.value || null;
   const msg = $('stage-msg');
-  msg.textContent = '';
+  if (!msg) return;
+  msg.className = 'stage-msg'; msg.textContent = '';
   try {
     const r = await fetch(`/api/accounts/${ACCT_ID}/stage`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ stage, changed_by: repId ? Number(repId) : null }),
+      method: 'PATCH', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({stage, changed_by: repId ? Number(repId) : null}),
     });
     const d = await r.json();
-    if (!r.ok) { msg.style.color = '#e53e3e'; msg.textContent = d.error; return; }
-    msg.style.color = '#38a169'; msg.textContent = 'Stage diperbarui ✓';
+    if (!r.ok) { msg.className = 'stage-msg err'; msg.textContent = d.error; return; }
+    msg.className = 'stage-msg ok'; msg.textContent = 'Stage diperbarui ✓';
     await load();
-  } catch (err) {
-    msg.style.color = '#e53e3e'; msg.textContent = err.message;
-  }
+  } catch(e) { msg.className = 'stage-msg err'; msg.textContent = e.message; }
 }
 
 // ── Action modal ──────────────────────────────────────────────────────────────
 
 function openAction(type) {
   pendingActionType = type;
-  $('modal-title').textContent = { kunjungan:'Catat Kunjungan', telepon:'Catat Telepon', received_order:'Catat Terima Order', note:'Tambah Catatan' }[type] ?? 'Catat Aktivitas';
-  $('m-invoice-wrap').style.display = type === 'received_order' ? 'block' : 'none';
-  $('m-invoice').value = '';
-  $('m-notes').value = '';
-  $('m-err').textContent = '';
+  $('m-title').textContent = {kunjungan:'Catat Kunjungan',telepon:'Catat Telepon',received_order:'Catat Terima Order',note:'Tambah Catatan'}[type]??'Catat Aktivitas';
+  $('m-inv-wrap').style.display = type === 'received_order' ? 'block' : 'none';
+  $('m-invoice').value = ''; $('m-notes').value = ''; $('m-err').textContent = '';
   $('action-overlay').classList.add('open');
 }
 
-function closeModal() {
-  $('action-overlay').classList.remove('open');
-  pendingActionType = null;
-}
+function closeModal(id) { $(id).classList.remove('open'); }
 
 async function saveAction() {
-  const rep_id        = $('m-rep').value;
-  const invoice_number = $('m-invoice').value.trim();
-  const notes         = $('m-notes').value.trim();
+  const rep_id = $('m-rep').value;
+  const inv    = $('m-invoice').value.trim();
+  const notes  = $('m-notes').value.trim();
   $('m-err').textContent = '';
-
-  if (pendingActionType === 'received_order' && !invoice_number) {
-    $('m-err').textContent = 'Nomor invoice wajib diisi untuk Terima Order.';
-    return;
+  if (pendingActionType === 'received_order' && !inv) {
+    $('m-err').textContent = 'Nomor invoice wajib diisi.'; return;
   }
-
-  const body = { action_type: pendingActionType, salesperson_id: rep_id ? Number(rep_id) : null, notes: notes || null };
-  if (pendingActionType === 'received_order') body.invoice_number = invoice_number;
-
+  const body = {action_type: pendingActionType, salesperson_id: rep_id ? Number(rep_id) : null, notes: notes || null};
+  if (pendingActionType === 'received_order') body.invoice_number = inv;
   try {
     const r = await fetch(`/api/accounts/${ACCT_ID}/actions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body),
     });
     const d = await r.json();
     if (!r.ok) { $('m-err').textContent = d.error; return; }
-    closeModal();
-    await load();
-  } catch (err) {
-    $('m-err').textContent = err.message;
-  }
+    closeModal('action-overlay'); await load();
+  } catch(e) { $('m-err').textContent = e.message; }
 }
 
 // ── Schedule modal ────────────────────────────────────────────────────────────
 
 function openSchedule() {
-  $('s-notes').value = '';
-  $('s-err').textContent = '';
-  // Default to tomorrow 09:00 WIB
-  const tomorrow = new Date(Date.now() + 24*3600*1000 + 7*3600*1000);
-  tomorrow.setUTCHours(2, 0, 0, 0); // 09:00 WIB = 02:00 UTC
-  const wibStr = new Date(tomorrow.getTime() - 7*3600*1000 + 7*3600*1000);
+  $('s-notes').value = ''; $('s-err').textContent = '';
   const pad = n => n.toString().padStart(2,'0');
-  $('s-when').value = `${wibStr.getFullYear()}-${pad(wibStr.getMonth()+1)}-${pad(wibStr.getDate())}T09:00`;
+  const tom = new Date(Date.now() + 24*3600*1000);
+  $('s-when').value = `${tom.getFullYear()}-${pad(tom.getMonth()+1)}-${pad(tom.getDate())}T09:00`;
   $('sched-overlay').classList.add('open');
 }
 
-function closeScheduleModal() {
-  $('sched-overlay').classList.remove('open');
-}
-
 async function saveSchedule() {
-  const rep_id      = $('s-rep').value;
-  const action_type = $('s-type').value;
-  const when        = $('s-when').value;
-  const notes       = $('s-notes').value.trim();
+  const rep_id = $('s-rep').value, type = $('s-type').value;
+  const when = $('s-when').value, notes = $('s-notes').value.trim();
   $('s-err').textContent = '';
-
   if (!when) { $('s-err').textContent = 'Pilih waktu jadwal.'; return; }
-
-  // Convert from WIB datetime-local input to UTC ISO
-  const localDate = new Date(when);
-  const wibOffsetMs = 7 * 3600 * 1000;
-  const utcDate = new Date(localDate.getTime() - wibOffsetMs);
-
+  // datetime-local input has no timezone info — treat it as WIB (UTC+7)
+  const utc = new Date(new Date(when).getTime() - 7*3600*1000);
   try {
     const r = await fetch(`/api/accounts/${ACCT_ID}/schedule`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        salesperson_id: rep_id ? Number(rep_id) : null,
-        action_type,
-        scheduled_for: utcDate.toISOString(),
-        notes: notes || null,
-      }),
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({salesperson_id: rep_id ? Number(rep_id) : null, action_type: type, scheduled_for: utc.toISOString(), notes: notes||null}),
     });
     const d = await r.json();
     if (!r.ok) { $('s-err').textContent = d.error; return; }
-    closeScheduleModal();
-    await load();
-  } catch (err) {
-    $('s-err').textContent = err.message;
-  }
+    closeModal('sched-overlay'); await load();
+  } catch(e) { $('s-err').textContent = e.message; }
 }
 
 // ── Mark done ─────────────────────────────────────────────────────────────────
 
 async function markDone(sid) {
-  await fetch(`/api/scheduled/${sid}/done`, { method: 'PATCH' });
+  await fetch(`/api/scheduled/${sid}/done`, {method:'PATCH'});
   await load();
 }
 
 // ── Populate reps ─────────────────────────────────────────────────────────────
 
 function populateRepDropdowns() {
-  for (const selId of ['m-rep','s-rep']) {
-    const sel = $(selId);
-    if (!sel) continue;
+  for (const id of ['m-rep','s-rep']) {
+    const sel = $(id); if (!sel) continue;
     sel.innerHTML = '<option value="">— Pilih rep —</option>';
-    for (const sp of salespeople) {
+    salespeople.forEach(sp => {
       const o = document.createElement('option');
-      o.value = sp.id; o.textContent = `${sp.full_name} (${sp.code ?? '—'})`;
+      o.value = sp.id; o.textContent = `${sp.full_name} (${sp.code??'—'})`;
       sel.appendChild(o);
-    }
+    });
   }
 }
 
@@ -492,32 +522,28 @@ function populateRepDropdowns() {
 
 async function load() {
   if (!ACCT_ID) {
-    $('page').innerHTML = '<div class="empty-state" style="color:#e53e3e">ID akun tidak ditemukan di URL.</div>';
+    $('page').innerHTML = '<div class="empty" style="color:#f8a0a0;padding-top:60px">ID akun tidak ditemukan di URL (?id=...).</div>';
     return;
   }
   try {
     const r = await fetch(`/api/accounts/${ACCT_ID}`);
     if (!r.ok) {
-      const d = await r.json().catch(() => ({}));
-      $('page').innerHTML = `<div class="empty-state" style="color:#e53e3e">Error: ${d.error ?? r.statusText}</div>`;
+      const d = await r.json().catch(()=>({}));
+      $('page').innerHTML = `<div class="empty" style="color:#f8a0a0;padding-top:60px">Error: ${d.error??r.statusText}</div>`;
       return;
     }
-    const data = await r.json();
-    renderPage(data);
-  } catch (err) {
-    $('page').innerHTML = `<div class="empty-state" style="color:#e53e3e">Gagal memuat: ${err.message}</div>`;
+    renderPage(await r.json());
+  } catch(e) {
+    $('page').innerHTML = `<div class="empty" style="color:#f8a0a0;padding-top:60px">Gagal memuat: ${e.message}</div>`;
   }
 }
 
 async function loadReps() {
   try {
-    const r = await fetch('/api/salespeople');
-    const d = await r.json();
+    const d = await fetch('/api/salespeople').then(r=>r.json());
     salespeople = d.salespeople ?? [];
   } catch {}
 }
-
-// ── Boot ──────────────────────────────────────────────────────────────────────
 
 loadReps().then(load);
 </script>
