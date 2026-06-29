@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My Day — Kencana LeadScout</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --c-bg: #f5f7fa; --c-card: #fff; --c-border: #e2e8f0;
+    --c-text: #1a202c; --c-muted: #718096;
+    --c-red: #e53e3e; --c-red-bg: #fff5f5; --c-red-border: #fed7d7;
+    --c-blue: #3182ce; --c-blue-bg: #ebf8ff; --c-blue-border: #bee3f8;
+    --c-green: #38a169; --c-green-bg: #f0fff4; --c-green-border: #c6f6d5;
+    --c-orange: #dd6b20; --c-orange-bg: #fffaf0; --c-orange-border: #fbd38d;
+    --c-gold: #b7791f;
+    --radius: 8px;
+  }
+  body { font-family: system-ui, sans-serif; background: var(--c-bg); color: var(--c-text); min-height: 100vh; }
+
+  /* Nav */
+  nav { background: #1a2744; color: #fff; padding: 0 16px; display: flex; align-items: center; gap: 12px; height: 48px; }
+  nav .brand { font-weight: 700; font-size: 15px; color: #fff; text-decoration: none; flex-shrink: 0; }
+  nav a { color: rgba(255,255,255,.7); text-decoration: none; font-size: 13px; white-space: nowrap; }
+  nav a.active, nav a:hover { color: #fff; }
+  nav .spacer { flex: 1; }
+
+  /* Rep picker */
+  .rep-bar { background: #fff; border-bottom: 1px solid var(--c-border); padding: 10px 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .rep-bar label { font-size: 13px; color: var(--c-muted); }
+  .rep-bar select { font-size: 14px; padding: 5px 10px; border: 1px solid var(--c-border); border-radius: 6px; background: #fff; }
+  .rep-bar .refresh-btn { margin-left: auto; font-size: 12px; padding: 5px 12px; border: 1px solid var(--c-border); border-radius: 6px; background: #fff; cursor: pointer; color: var(--c-muted); }
+  .rep-bar .refresh-btn:hover { background: var(--c-bg); }
+
+  /* Stats strip */
+  .stats-strip { display: flex; gap: 12px; padding: 12px 16px; flex-wrap: wrap; }
+  .stat-card { background: var(--c-card); border: 1px solid var(--c-border); border-radius: var(--radius); padding: 12px 20px; min-width: 120px; flex: 1; }
+  .stat-card .val { font-size: 28px; font-weight: 700; line-height: 1; }
+  .stat-card .lbl { font-size: 11px; color: var(--c-muted); margin-top: 4px; text-transform: uppercase; letter-spacing: .5px; }
+  .stat-card.red  .val { color: var(--c-red); }
+  .stat-card.blue .val { color: var(--c-blue); }
+  .stat-card.orange .val { color: var(--c-orange); }
+
+  /* Kanban */
+  .kanban { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding: 0 16px 24px; }
+  @media (max-width: 700px) { .kanban { grid-template-columns: 1fr; } }
+
+  .col-header { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; padding: 10px 12px 8px; border-radius: 6px 6px 0 0; display: flex; align-items: center; gap: 8px; }
+  .col-header .cnt { background: rgba(0,0,0,.12); border-radius: 10px; padding: 1px 8px; font-size: 11px; }
+  .col-overdue   .col-header { background: var(--c-red-bg); color: var(--c-red); border: 1px solid var(--c-red-border); border-bottom: none; }
+  .col-today     .col-header { background: var(--c-blue-bg); color: var(--c-blue); border: 1px solid var(--c-blue-border); border-bottom: none; }
+  .col-upcoming  .col-header { background: var(--c-green-bg); color: var(--c-green); border: 1px solid var(--c-green-border); border-bottom: none; }
+
+  .col-body { border: 1px solid var(--c-border); border-radius: 0 0 6px 6px; background: var(--c-bg); min-height: 120px; display: flex; flex-direction: column; gap: 8px; padding: 10px; }
+  .col-overdue  .col-body { border-color: var(--c-red-border); }
+  .col-today    .col-body { border-color: var(--c-blue-border); }
+  .col-upcoming .col-body { border-color: var(--c-green-border); }
+
+  /* Task card */
+  .task-card { background: var(--c-card); border: 1px solid var(--c-border); border-radius: 6px; padding: 10px 12px; cursor: pointer; transition: box-shadow .15s; }
+  .task-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,.1); }
+  .task-card .tc-store { font-size: 14px; font-weight: 600; }
+  .task-card .tc-meta  { font-size: 12px; color: var(--c-muted); margin-top: 3px; }
+  .task-card .tc-notes { font-size: 12px; color: #4a5568; margin-top: 5px; background: var(--c-bg); padding: 4px 7px; border-radius: 4px; }
+  .task-card .tc-when  { font-size: 11px; color: var(--c-muted); margin-top: 6px; }
+  .task-card .tc-when.overdue { color: var(--c-red); font-weight: 600; }
+  .task-card .tc-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; }
+  .task-card .done-btn { font-size: 11px; padding: 3px 10px; border: 1px solid var(--c-green); color: var(--c-green); background: none; border-radius: 12px; cursor: pointer; }
+  .task-card .done-btn:hover { background: var(--c-green-bg); }
+
+  /* Stage badge */
+  .badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px; text-transform: uppercase; letter-spacing: .4px; }
+  .badge-aktif       { background: #e6fffa; color: #2c7a7b; }
+  .badge-perlu       { background: #fffbeb; color: var(--c-gold); }
+  .badge-at_risk     { background: var(--c-red-bg); color: var(--c-red); }
+  .badge-hibernasi   { background: #e2e8f0; color: #4a5568; }
+  .badge-prospek     { background: #ebf4ff; color: #2b6cb0; }
+  .badge-penawaran   { background: #faf5ff; color: #6b46c1; }
+  .badge-negosiasi   { background: #fffaf0; color: var(--c-orange); }
+  .badge-won         { background: var(--c-green-bg); color: var(--c-green); }
+  .badge-gugur       { background: #fff5f5; color: #c53030; }
+
+  /* At-risk section */
+  .at-risk-section { padding: 0 16px 24px; }
+  .section-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; color: var(--c-muted); margin-bottom: 8px; }
+  .at-risk-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+  .ar-card { background: var(--c-card); border: 1px solid var(--c-red-border); border-radius: var(--radius); padding: 12px 14px; cursor: pointer; }
+  .ar-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+  .ar-card .ar-store { font-size: 14px; font-weight: 600; }
+  .ar-card .ar-meta  { font-size: 12px; color: var(--c-muted); margin-top: 3px; }
+  .ar-card .ar-days  { font-size: 12px; color: var(--c-red); font-weight: 600; margin-top: 5px; }
+
+  .empty-state { text-align: center; padding: 32px 16px; color: var(--c-muted); font-size: 13px; }
+  .spinner { text-align: center; padding: 40px; color: var(--c-muted); font-size: 14px; }
+</style>
+</head>
+<body>
+
+<nav>
+  <a class="brand" href="/">Kencana</a>
+  <a href="/visits">Catat Kunjungan</a>
+  <a href="/visits-rack">Rack-up</a>
+  <a href="/myday" class="active">My Day</a>
+  <a href="/visits-insights">Insights</a>
+  <a href="/salespeople">Sales</a>
+  <div class="spacer"></div>
+</nav>
+
+<div class="rep-bar">
+  <label for="rep-sel">Sales rep:</label>
+  <select id="rep-sel"><option value="">— Pilih sales —</option></select>
+  <button class="refresh-btn" onclick="load()">↻ Refresh</button>
+</div>
+
+<div class="stats-strip" id="stats-strip">
+  <div class="stat-card blue"><div class="val" id="s-visits">—</div><div class="lbl">Kunjungan hari ini</div></div>
+  <div class="stat-card red"><div class="val" id="s-overdue">—</div><div class="lbl">Terlambat</div></div>
+  <div class="stat-card orange"><div class="val" id="s-atrisk">—</div><div class="lbl">At Risk / Perlu Follow-up</div></div>
+</div>
+
+<div class="kanban" id="kanban">
+  <div class="col-overdue">
+    <div class="col-header">Terlambat <span class="cnt" id="cnt-overdue">0</span></div>
+    <div class="col-body" id="col-overdue"><div class="spinner">Memuat…</div></div>
+  </div>
+  <div class="col-today">
+    <div class="col-header">Hari Ini <span class="cnt" id="cnt-today">0</span></div>
+    <div class="col-body" id="col-today"><div class="spinner">Memuat…</div></div>
+  </div>
+  <div class="col-upcoming">
+    <div class="col-header">7 Hari ke Depan <span class="cnt" id="cnt-upcoming">0</span></div>
+    <div class="col-body" id="col-upcoming"><div class="spinner">Memuat…</div></div>
+  </div>
+</div>
+
+<div class="at-risk-section">
+  <div class="section-title">Akun Butuh Perhatian</div>
+  <div class="at-risk-grid" id="at-risk-grid"></div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function stageBadge(stage) {
+  const map = {
+    aktif: ['badge-aktif','Aktif'],
+    perlu_followup: ['badge-perlu','Perlu Follow-up'],
+    at_risk: ['badge-at_risk','At Risk'],
+    hibernasi: ['badge-hibernasi','Hibernasi'],
+    prospek: ['badge-prospek','Prospek'],
+    penawaran: ['badge-penawaran','Penawaran'],
+    negosiasi: ['badge-negosiasi','Negosiasi'],
+    won: ['badge-won','Won'],
+    gugur: ['badge-gugur','Gugur'],
+  };
+  const [cls, label] = map[stage] ?? ['', stage];
+  return `<span class="badge ${cls}">${label}</span>`;
+}
+
+function fmtWhen(isoStr) {
+  if (!isoStr) return '';
+  const d = new Date(isoStr);
+  const now = new Date();
+  const wib = dt => {
+    const s = new Date(dt.getTime() + 7*3600*1000);
+    return `${s.getUTCDate().toString().padStart(2,'0')}/${(s.getUTCMonth()+1).toString().padStart(2,'0')} ${s.getUTCHours().toString().padStart(2,'0')}.${s.getUTCMinutes().toString().padStart(2,'0')}`;
+  };
+  return wib(d);
+}
+
+function daysSince(isoStr) {
+  if (!isoStr) return null;
+  return Math.floor((Date.now() - new Date(isoStr).getTime()) / 86400000);
+}
+
+function actionLabel(t) {
+  return { kunjungan: 'Kunjungan', telepon: 'Telepon', followup: 'Follow-up', received_order: 'Terima Order', note: 'Catatan' }[t] ?? t;
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+
+function renderTaskCard(sa, isOverdue) {
+  const div = document.createElement('div');
+  div.className = 'task-card';
+  div.innerHTML = `
+    <div class="tc-store">${sa.store_name}</div>
+    <div class="tc-meta">${sa.area ?? ''} · ${sa.category ?? ''} · ${stageBadge(sa.stage)}</div>
+    ${sa.notes ? `<div class="tc-notes">${sa.notes}</div>` : ''}
+    <div class="tc-when ${isOverdue ? 'overdue' : ''}">
+      ${isOverdue ? '⚠ ' : ''}${actionLabel(sa.action_type)} · ${fmtWhen(sa.scheduled_for)} WIB
+    </div>
+    <div class="tc-footer">
+      <a href="/account?id=${sa.account_id}" style="font-size:12px;color:#3182ce;text-decoration:none;">Lihat akun →</a>
+      <button class="done-btn" data-id="${sa.id}">✓ Selesai</button>
+    </div>
+  `;
+  div.querySelector('.done-btn').addEventListener('click', async e => {
+    e.stopPropagation();
+    const sid = e.currentTarget.dataset.id;
+    await fetch(`/api/scheduled/${sid}/done`, { method: 'PATCH' });
+    load();
+  });
+  return div;
+}
+
+function renderAtRisk(c) {
+  const days = daysSince(c.last_contact_at);
+  const div = document.createElement('div');
+  div.className = 'ar-card';
+  div.onclick = () => location.href = `/account?id=${c.id}`;
+  div.innerHTML = `
+    <div class="ar-store">${c.store_name}</div>
+    <div class="ar-meta">${c.area ?? ''} · ${c.category ?? ''} · ${stageBadge(c.stage)}</div>
+    <div class="ar-days">${days !== null ? `Terakhir kontak ${days} hari lalu` : 'Belum pernah dihubungi'}</div>
+  `;
+  return div;
+}
+
+// ── Data ──────────────────────────────────────────────────────────────────────
+
+async function loadReps() {
+  try {
+    const r = await fetch('/api/salespeople');
+    const { salespeople } = await r.json();
+    const sel = $('rep-sel');
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">— Pilih sales —</option>';
+    for (const sp of salespeople) {
+      const o = document.createElement('option');
+      o.value = sp.id;
+      o.textContent = `${sp.full_name} (${sp.code ?? '—'})`;
+      sel.appendChild(o);
+    }
+    if (cur) sel.value = cur;
+  } catch (err) {
+    console.error('loadReps failed:', err);
+  }
+}
+
+async function load() {
+  const repId = $('rep-sel').value;
+  if (!repId) {
+    ['col-overdue','col-today','col-upcoming'].forEach(id => {
+      $(id).innerHTML = '<div class="empty-state">Pilih sales rep untuk melihat jadwal.</div>';
+    });
+    $('at-risk-grid').innerHTML = '';
+    return;
+  }
+
+  ['col-overdue','col-today','col-upcoming'].forEach(id => {
+    $(id).innerHTML = '<div class="spinner">Memuat…</div>';
+  });
+
+  try {
+    const r = await fetch(`/api/reps/${repId}/myday`);
+    if (!r.ok) throw new Error(await r.text());
+    const { overdue, today, upcoming, at_risk, stats } = await r.json();
+
+    // Stats
+    $('s-visits').textContent  = stats.today_visits  ?? 0;
+    $('s-overdue').textContent = stats.overdue_count ?? 0;
+    $('s-atrisk').textContent  = stats.at_risk_count ?? 0;
+
+    // Overdue column
+    $('cnt-overdue').textContent = overdue.length;
+    const colOv = $('col-overdue');
+    colOv.innerHTML = '';
+    if (overdue.length === 0) {
+      colOv.innerHTML = '<div class="empty-state">Tidak ada yang terlambat ✓</div>';
+    } else {
+      overdue.forEach(sa => colOv.appendChild(renderTaskCard(sa, true)));
+    }
+
+    // Today column
+    $('cnt-today').textContent = today.length;
+    const colTd = $('col-today');
+    colTd.innerHTML = '';
+    if (today.length === 0) {
+      colTd.innerHTML = '<div class="empty-state">Tidak ada jadwal hari ini</div>';
+    } else {
+      today.forEach(sa => colTd.appendChild(renderTaskCard(sa, false)));
+    }
+
+    // Upcoming column
+    $('cnt-upcoming').textContent = upcoming.length;
+    const colUp = $('col-upcoming');
+    colUp.innerHTML = '';
+    if (upcoming.length === 0) {
+      colUp.innerHTML = '<div class="empty-state">Tidak ada jadwal minggu ini</div>';
+    } else {
+      upcoming.forEach(sa => colUp.appendChild(renderTaskCard(sa, false)));
+    }
+
+    // At-risk
+    const grid = $('at-risk-grid');
+    grid.innerHTML = '';
+    if (at_risk.length === 0) {
+      grid.innerHTML = '<div class="empty-state">Semua akun dalam kondisi baik ✓</div>';
+    } else {
+      at_risk.forEach(c => grid.appendChild(renderAtRisk(c)));
+    }
+
+  } catch (err) {
+    ['col-overdue','col-today','col-upcoming'].forEach(id => {
+      $(id).innerHTML = `<div class="empty-state" style="color:#e53e3e">Error: ${err.message}</div>`;
+    });
+  }
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+
+$('rep-sel').addEventListener('change', load);
+
+// Auto-refresh every 30s
+setInterval(load, 30000);
+
+loadReps().then(() => {
+  // Try to restore last-used rep
+  const saved = sessionStorage.getItem('myday_rep');
+  if (saved) { $('rep-sel').value = saved; }
+  load();
+});
+
+$('rep-sel').addEventListener('change', () => {
+  sessionStorage.setItem('myday_rep', $('rep-sel').value);
+});
+</script>
+</body>
+</html>

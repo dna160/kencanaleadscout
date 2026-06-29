@@ -30,6 +30,7 @@ import { visitsRoutes } from "./routes/visits.js";
 import { salespeopleRoutes } from "./routes/salespeople.js";
 import { listsRoutes } from "./routes/lists.js";
 import { insightsRoutes } from "./routes/insights.js";
+import { accountsRoutes, startCadenceEngine } from "./routes/accounts.js";
 
 const PUBLIC_DIR = fileURLToPath(new URL("../public", import.meta.url));
 
@@ -81,6 +82,8 @@ async function main(): Promise<void> {
   app.get("/visits-rep", (_req, reply) => reply.sendFile("visits-rep.html"));
   app.get("/salespeople", (_req, reply) => reply.sendFile("salespeople.html"));
   app.get("/visits-insights", (_req, reply) => reply.sendFile("visits-insights.html"));
+  app.get("/myday",           (_req, reply) => reply.sendFile("myday.html"));
+  app.get("/account",         (_req, reply) => reply.sendFile("account.html"));
 
   // [A] Scraper APIs.
   await app.register(enrichRoutes);
@@ -100,8 +103,10 @@ async function main(): Promise<void> {
   await app.register(salespeopleRoutes);
   await app.register(listsRoutes);
   await app.register(insightsRoutes);
+  await app.register(accountsRoutes);
 
   await bootDatabase(app);
+  startCadenceEngine();
 
   try {
     await app.listen({ host: config.host, port: config.port });

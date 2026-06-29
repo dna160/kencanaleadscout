@@ -53,17 +53,30 @@ export async function visitsRoutes(app: FastifyInstance): Promise<void> {
 
     const salesperson_id = salesperson_id_raw;
 
-    // Upsert customer master so New/Old auto-detection works on future visits.
+    // Derive account_type from category.
+    const account_type = ["Kontraktor", "Aplikator", "Project"].includes(category)
+      ? "project"
+      : "repeating";
+
+    // Upsert customer master so New/Old auto-detection + pipeline work.
     let customer_id: number | null = null;
     try {
       const [cust] = await db<{ id: number }[]>`
-        insert into customers (store_name, category, area, address, postal_code, first_seen_at, created_by)
-        values (${store_name}, ${category}, ${area}, ${address}, ${postal_code}, now(), ${salesperson_id})
+        insert into customers (store_name, category, area, address, postal_code,
+                               first_seen_at, created_by, account_type, last_contact_at, owner_id)
+        values (${store_name}, ${category}, ${area}, ${address}, ${postal_code},
+                now(), ${salesperson_id}, ${account_type}, now(), ${salesperson_id})
         on conflict (lower(trim(store_name)), coalesce(area, ''))
         do update set
-          category    = customers.category,
-          address     = coalesce(customers.address, excluded.address),
-          postal_code = coalesce(customers.postal_code, excluded.postal_code)
+          category        = customers.category,
+          address         = coalesce(customers.address, excluded.address),
+          postal_code     = coalesce(customers.postal_code, excluded.postal_code),
+          last_contact_at = excluded.last_contact_at,
+          owner_id        = coalesce(customers.owner_id, excluded.owner_id),
+          stage           = case
+            when customers.stage = 'hibernasi' then customers.stage
+            else coalesce(customers.stage, 'aktif')
+          end
         returning id
       `;
       customer_id = cust?.id ?? null;

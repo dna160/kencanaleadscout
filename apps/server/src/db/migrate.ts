@@ -191,6 +191,59 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
   `;
   await db`create index if not exists visit_photos_visit_idx on visit_photos (visit_id)`;
 
+  // ── Module D — Accounts (customers enhancement + pipeline tables) ──────────
+
+  // Enhance customers table with account pipeline columns.
+  await db`alter table customers add column if not exists account_type   text default 'repeating'`;
+  await db`alter table customers add column if not exists stage          text default 'aktif'`;
+  await db`alter table customers add column if not exists owner_id       bigint references salespeople(id)`;
+  await db`alter table customers add column if not exists last_contact_at timestamptz`;
+
+  // Every touchpoint (visit, call, order) linked to an account.
+  await db`
+    create table if not exists actions (
+      id             bigserial primary key,
+      account_id     bigint not null references customers(id),
+      salesperson_id bigint references salespeople(id),
+      action_type    text not null,
+      invoice_number text,
+      notes          text,
+      actioned_at    timestamptz not null default now(),
+      created_at     timestamptz not null default now()
+    )
+  `;
+  await db`create index if not exists actions_account_idx on actions (account_id, actioned_at desc)`;
+  await db`create index if not exists actions_rep_idx     on actions (salesperson_id, actioned_at desc)`;
+
+  // Audit trail for stage transitions.
+  await db`
+    create table if not exists stage_history (
+      id          bigserial primary key,
+      account_id  bigint not null references customers(id),
+      old_stage   text,
+      new_stage   text not null,
+      changed_by  bigint references salespeople(id),
+      changed_at  timestamptz not null default now()
+    )
+  `;
+  await db`create index if not exists stage_history_account_idx on stage_history (account_id, changed_at desc)`;
+
+  // Scheduled follow-up actions.
+  await db`
+    create table if not exists scheduled_actions (
+      id             bigserial primary key,
+      account_id     bigint not null references customers(id),
+      salesperson_id bigint references salespeople(id),
+      action_type    text not null default 'followup',
+      scheduled_for  timestamptz not null,
+      notes          text,
+      completed_at   timestamptz,
+      created_at     timestamptz not null default now()
+    )
+  `;
+  await db`create index if not exists scheduled_actions_rep_idx  on scheduled_actions (salesperson_id, scheduled_for)`;
+  await db`create index if not exists scheduled_actions_acct_idx on scheduled_actions (account_id, scheduled_for)`;
+
   // Seed categories + areas — wrapped so a missing visit_lists table never
   // prevents the salespeople seeding below from running.
   try {
