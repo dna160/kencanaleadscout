@@ -92,6 +92,41 @@
       }
       .toast.show { opacity: 1; }
 
+      /* ── Prefill banner ─────────────────────────────────────────────── */
+      .prefill-banner {
+        background: rgba(46,111,214,.1); border: 1px solid rgba(46,111,214,.3);
+        border-radius: 12px; padding: 10px 14px; font-size: 13px; color: #9ec8fb;
+        display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      }
+      .prefill-banner a { color: var(--muted); font-size: 12px; cursor: pointer; }
+
+      /* ── Success panel ──────────────────────────────────────────────── */
+      .success-panel {
+        display: none; padding: 32px 18px 100px; flex-direction: column;
+        align-items: center; gap: 18px; text-align: center;
+      }
+      .success-icon { font-size: 56px; }
+      .success-title { font-family: var(--display); font-size: 24px; font-weight: 700; }
+      .success-sub { color: var(--muted); font-size: 14px; }
+      .success-time {
+        background: rgba(255,255,255,.06); border: 1px solid var(--line);
+        border-radius: 12px; padding: 14px 22px; font-family: var(--display);
+        font-size: 20px; font-weight: 600; color: var(--gold);
+      }
+      .success-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-top: 4px; }
+      .btn-logagain {
+        background: linear-gradient(135deg, var(--red), #7a1a1d); border: none; border-radius: 12px;
+        padding: 14px 24px; color: #fff; font-family: var(--display); font-weight: 600; font-size: 16px;
+        cursor: pointer; box-shadow: 0 8px 20px rgba(155,34,38,.32);
+      }
+      .btn-logagain:hover { opacity: .9; }
+      .btn-rackup {
+        background: rgba(255,255,255,.07); border: 1px solid var(--line); border-radius: 12px;
+        padding: 14px 24px; color: var(--paper); font-family: var(--display); font-weight: 600;
+        font-size: 16px; cursor: pointer; text-decoration: none; display: inline-block;
+      }
+      .btn-rackup:hover { background: rgba(255,255,255,.12); }
+
       /* ── Photo section ───────────────────────────────────────────────── */
       .photo-grid { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 2px; }
       .photo-add {
@@ -138,7 +173,24 @@
         </div>
       </div>
 
+      <!-- Success panel (shown post-submit instead of resetting) -->
+      <div class="success-panel" id="success-panel">
+        <div class="success-icon">✓</div>
+        <div class="success-title" id="success-title">Kunjungan Tersimpan</div>
+        <div class="success-sub" id="success-sub"></div>
+        <div class="success-time" id="success-time"></div>
+        <div class="success-actions">
+          <button class="btn-logagain" onclick="logAgain()">+ Log Lagi</button>
+          <a class="btn-rackup" href="/visits-rack">Lihat Rack-up →</a>
+        </div>
+      </div>
+
       <form id="vform" novalidate>
+
+        <div id="prefill-banner" class="prefill-banner" style="display:none">
+          <span id="prefill-text"></span>
+          <a onclick="clearPrefill()">Bersihkan ×</a>
+        </div>
 
         <div class="act-toggle">
           <button type="button" class="act-seg active" id="act-kunjungan" onclick="setAct('kunjungan')">Kunjungan</button>
@@ -223,7 +275,7 @@
 
         <div class="err" id="err"></div>
 
-        <button type="submit" class="btn-save" id="btn">Simpan Kunjungan</button>
+        <button type="submit" class="btn-save" id="btn" disabled>Simpan Kunjungan</button>
 
       </form>
     </div>
@@ -234,6 +286,7 @@
     (() => {
       "use strict";
       const $ = id => document.getElementById(id);
+      const WIB_MS = 7 * 3600 * 1000;
 
       // ── Activity type toggle ─────────────────────────────────────────────
       let activityType = "kunjungan";
@@ -242,7 +295,80 @@
         ["kunjungan", "telepon"].forEach(t => {
           $("act-" + t).classList.toggle("active", t === type);
         });
-        $("btn").textContent = type === "telepon" ? "Simpan Telepon" : "Simpan Kunjungan";
+        updateBtnLabel();
+      };
+
+      function updateBtnLabel() {
+        $("btn").textContent = activityType === "telepon" ? "Simpan Telepon" : "Simpan Kunjungan";
+      }
+
+      // ── Reactive submit button ───────────────────────────────────────────
+      function checkRequired() {
+        const ok = !!$("f-sales").value && !!$("f-store").value.trim() &&
+                   !!$("f-type").value && !!$("f-cat").value.trim() && !!$("f-area").value.trim();
+        $("btn").disabled = !ok;
+      }
+      ["f-sales","f-type"].forEach(id => $(id).addEventListener("change", checkRequired));
+      ["f-store","f-cat","f-area"].forEach(id => $(id).addEventListener("input", checkRequired));
+
+      // ── Prefill from ?prefill=accountId ─────────────────────────────────
+      let prefillAccountId = null;
+
+      window.clearPrefill = function() {
+        prefillAccountId = null;
+        $("prefill-banner").style.display = "none";
+        $("f-store").value = "";
+        $("f-type").value  = "";
+        $("f-cat").value   = "";
+        $("f-area").value  = "";
+        checkRequired();
+      };
+
+      async function applyPrefill(accountId) {
+        const data = await fetch(`/api/accounts/${accountId}`).then(r => r.json()).catch(() => null);
+        if (!data?.account) return;
+        const a = data.account;
+        prefillAccountId = accountId;
+        $("f-store").value = a.store_name ?? "";
+        $("f-type").value  = "old";
+        $("f-cat").value   = a.category ?? "";
+        $("f-area").value  = a.area ?? "";
+        const banner = $("prefill-banner");
+        $("prefill-text").textContent = `Melanjutkan dari akun: ${a.store_name}`;
+        banner.style.display = "flex";
+        checkRequired();
+      }
+
+      // ── Post-submit state ────────────────────────────────────────────────
+      function showSuccess(visit) {
+        $("vform").style.display = "none";
+        const panel = $("success-panel");
+        panel.style.display = "flex";
+
+        const label = activityType === "telepon" ? "Telepon" : "Kunjungan";
+        $("success-title").textContent = `${label} Tersimpan ✓`;
+
+        if (visit) {
+          const d  = new Date(new Date(visit.visited_at).getTime() + WIB_MS);
+          const p  = n => n.toString().padStart(2,'0');
+          const wibStr = `${p(d.getUTCHours())}:${p(d.getUTCMinutes())} WIB`;
+          $("success-time").textContent = `Dicatat: ${wibStr}`;
+          $("success-sub").textContent  = visit.store_name ?? "";
+        }
+      }
+
+      window.logAgain = function() {
+        $("success-panel").style.display = "none";
+        $("vform").style.display = "";
+        const savedSales = $("f-sales").value;
+        document.getElementById("vform").reset();
+        $("f-sales").value = savedSales;
+        pendingPhotos = [];
+        renderPhotoGrid();
+        $("prefill-banner").style.display = "none";
+        prefillAccountId = null;
+        checkRequired();
+        updateBtnLabel();
       };
 
       // ── Load dropdowns & datalists ───────────────────────────────────────
@@ -285,6 +411,10 @@
         (areaRes.values ?? []).forEach(a => {
           const o = document.createElement("option"); o.value = a; areaDl.appendChild(o);
         });
+
+        // Prefill from URL param
+        const prefillId = new URLSearchParams(location.search).get("prefill");
+        if (prefillId) applyPrefill(Number(prefillId));
       }
 
       // Store-name autocomplete + auto-suggest Old + prefill area when matched
@@ -447,24 +577,12 @@
           errEl.style.display = "block"; return;
         }
 
-        // Success — upload any pending photos, then reset form
-        const visitId    = res.visit?.id;
-        const savedSales = $("f-sales").value;
-        const savedAct   = activityType;
-
+        // Success — upload photos then show success panel
+        const visitId = res.visit?.id;
         if (pendingPhotos.length && visitId) {
           await uploadPendingPhotos(visitId);
         }
-
-        document.getElementById("vform").reset();
-        $("f-sales").value = savedSales;
-        setAct(savedAct);
-        renderPhotoGrid();
-
-        const t = $("toast");
-        t.textContent = (savedAct === "telepon" ? "Telepon tersimpan" : "Kunjungan tersimpan") + " ✓";
-        t.classList.add("show");
-        setTimeout(() => t.classList.remove("show"), 2800);
+        showSuccess(res.visit);
       });
 
       boot().catch(console.error);

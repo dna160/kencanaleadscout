@@ -116,6 +116,32 @@
       .cat-pill span { color: var(--gold); font-weight: 600; }
       .no-data { text-align: center; color: var(--muted); padding: 20px; font-size: 14px; }
 
+      /* ── Pipeline funnel (rep cards) ────────────────────────────────── */
+      .pipeline-section { margin-bottom: 12px; }
+      .pipeline-section .ps-title { font-size: 11px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+      .funnel-bar { display: flex; flex-direction: column; gap: 5px; }
+      .funnel-row { display: flex; align-items: center; gap: 8px; }
+      .funnel-label { font-size: 11.5px; color: var(--muted); width: 90px; flex-shrink: 0; }
+      .funnel-track { flex: 1; height: 8px; background: rgba(255,255,255,.07); border-radius: 99px; overflow: hidden; }
+      .funnel-fill { height: 100%; border-radius: 99px; }
+      .fill-prospek   { background: #2E6FD6; }
+      .fill-penawaran { background: #7c3aed; }
+      .fill-negosiasi { background: #d97706; }
+      .fill-won       { background: var(--green); }
+      .fill-gugur     { background: var(--red); opacity: .6; }
+      .fill-aktif     { background: var(--green); }
+      .fill-perlu     { background: #d97706; }
+      .fill-at_risk   { background: var(--red); }
+      .fill-hibernasi { background: rgba(255,255,255,.3); }
+      .funnel-cnt { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; width: 22px; text-align: right; flex-shrink: 0; }
+
+      /* ── Team pipeline ───────────────────────────────────────────── */
+      .team-pipeline { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+      @media (max-width: 640px) { .team-pipeline { grid-template-columns: 1fr; } }
+      .tp-panel { background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
+        border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; }
+      .tp-title { font-size: 12px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; color: var(--muted); margin-bottom: 12px; }
+
       /* ── Leaderboard ─────────────────────────────────────────────── */
       .lb-tabs { display: flex; gap: 6px; margin-bottom: 12px; }
       .lb-tab {
@@ -200,6 +226,14 @@
         </div>
       </div>
 
+      <!-- Team Pipeline Funnel -->
+      <div class="section" id="team-pipeline-section">
+        <div class="section-title">Pipeline Tim</div>
+        <div class="team-pipeline" id="team-pipeline">
+          <div class="spinner">Memuat…</div>
+        </div>
+      </div>
+
       <!-- Leaderboard -->
       <div class="section">
         <div class="section-title">Leaderboard</div>
@@ -281,6 +315,7 @@
         const teamRes = await fetch(`/api/insights/team?${qs}`).then(r => r.json()).catch(() => null);
         teamData = teamRes;
         renderKPIs(teamRes);
+        renderTeamPipeline(teamRes);
         renderLeaderboard(teamRes, lbMode);
         renderHeatmap(teamRes);
         renderTrend(teamRes);
@@ -297,6 +332,40 @@
         );
         repScores = scores.filter(Boolean);
         renderRepCards(repScores);
+      }
+
+      // ── Pipeline funnel helpers ──────────────────────────────────────────
+      function pipelineFunnel(stages, counts, fillClasses, maxOverride) {
+        const max = maxOverride ?? Math.max(1, ...Object.values(counts).map(Number));
+        return stages.map(([key, label]) => {
+          const cnt = Number(counts[key] ?? 0);
+          const pct = Math.round((cnt / max) * 100);
+          return `<div class="funnel-row">
+            <div class="funnel-label">${label}</div>
+            <div class="funnel-track"><div class="funnel-fill ${fillClasses[key]??''}" style="width:${pct}%"></div></div>
+            <div class="funnel-cnt">${cnt}</div>
+          </div>`;
+        }).join('');
+      }
+
+      function renderTeamPipeline(data) {
+        const el = $("team-pipeline");
+        if (!data) { el.innerHTML = '<div class="no-data">Data tidak tersedia.</div>'; return; }
+        const pc = data.project_stage_counts   ?? {};
+        const rc = data.repeating_stage_counts ?? {};
+        const pStages = [['prospek','Prospek'],['penawaran','Penawaran'],['negosiasi','Negosiasi'],['won','Won'],['gugur','Gugur']];
+        const rStages = [['aktif','Aktif'],['perlu_followup','Perlu F-up'],['at_risk','At Risk'],['hibernasi','Hibernasi']];
+        const pFills = {prospek:'fill-prospek',penawaran:'fill-penawaran',negosiasi:'fill-negosiasi',won:'fill-won',gugur:'fill-gugur'};
+        const rFills = {aktif:'fill-aktif',perlu_followup:'fill-perlu',at_risk:'fill-at_risk',hibernasi:'fill-hibernasi'};
+        el.innerHTML = `
+          <div class="tp-panel">
+            <div class="tp-title">Project Pipeline</div>
+            <div class="funnel-bar">${pipelineFunnel(pStages, pc, pFills)}</div>
+          </div>
+          <div class="tp-panel">
+            <div class="tp-title">Repeating Health</div>
+            <div class="funnel-bar">${pipelineFunnel(rStages, rc, rFills)}</div>
+          </div>`;
       }
 
       // ── Team KPIs ────────────────────────────────────────────────────────
@@ -377,6 +446,24 @@
           const hunterPct = sc.hunter_index;
           const archetypeText = archetypeDescription(s, sc);
 
+          // Pipeline funnel for this rep
+          const pc = s.project_stage_counts   ?? {};
+          const rc = s.repeating_stage_counts ?? {};
+          const pStages = [['prospek','Prospek'],['penawaran','Penawaran'],['negosiasi','Negosiasi'],['won','Won'],['gugur','Gugur']];
+          const rStages = [['aktif','Aktif'],['perlu_followup','Perlu F-up'],['at_risk','At Risk'],['hibernasi','Hibernasi']];
+          const pFills = {prospek:'fill-prospek',penawaran:'fill-penawaran',negosiasi:'fill-negosiasi',won:'fill-won',gugur:'fill-gugur'};
+          const rFills = {aktif:'fill-aktif',perlu_followup:'fill-perlu',at_risk:'fill-at_risk',hibernasi:'fill-hibernasi'};
+          const hasPipeline = Object.keys(pc).length > 0 || Object.keys(rc).length > 0;
+          const pipelineHtml = hasPipeline ? `
+            <div class="pipeline-section">
+              ${Object.keys(pc).length ? `
+                <div class="ps-title">Project Pipeline</div>
+                <div class="funnel-bar">${pipelineFunnel(pStages, pc, pFills)}</div>` : ''}
+              ${Object.keys(rc).length ? `
+                <div class="ps-title" style="margin-top:${Object.keys(pc).length?'10px':'0'}">Repeating Health</div>
+                <div class="funnel-bar">${pipelineFunnel(rStages, rc, rFills)}</div>` : ''}
+            </div>` : '';
+
           return `
             <div class="rep-card">
               <div class="rc-head">
@@ -389,6 +476,7 @@
                   <div class="archetype-tag">${esc(s.archetype)}</div>
                 </div>
               </div>
+              ${pipelineHtml}
               <div class="rc-metrics">
                 <div class="rc-metric">
                   <div class="m-label">Total Kunjungan</div>

@@ -107,6 +107,20 @@
       .spark .dn { color: var(--muted); font-size: 10.5px; }
       .spark .ds { color: var(--muted); font-size: 9.5px; opacity: .6; }
 
+      /* ── Count bar ───────────────────────────────────────────── */
+      .count-bar {
+        display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+        padding: 10px 16px; margin-bottom: 4px;
+        background: rgba(255,255,255,.03); border: 1px solid var(--line); border-radius: 12px;
+        font-size: 13px;
+      }
+      .count-bar .cb-sep { color: var(--line); font-size: 18px; font-weight: 300; }
+      .count-bar .cb-label { font-size: 11px; font-weight: 700; letter-spacing: .7px; text-transform: uppercase; color: var(--muted); margin-right: 6px; }
+      .count-bar .cb-val  { font-family: var(--display); font-weight: 700; font-variant-numeric: tabular-nums; }
+      .count-bar .cb-new  { color: #7eb8f7; }
+      .count-bar .cb-old  { color: #9fe0b9; }
+      .count-bar .cb-won  { color: var(--gold); }
+
       /* ── Table section ───────────────────────────────────────── */
       .head-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
       .exportBtn { border: 1px solid rgba(187,148,87,.45); background: rgba(187,148,87,.12); color: var(--gold);
@@ -212,6 +226,12 @@
             <p class="cap" id="tableCaption">Hari ini · diperbarui otomatis.</p>
           </div>
           <button class="exportBtn" id="exportBtn" disabled>Export XLSX</button>
+        </div>
+
+        <div class="count-bar" id="count-bar">
+          <span><span class="cb-label">Hari Ini</span><span class="cb-val" id="cb-today">—</span> kunjungan · <span class="cb-val cb-old" id="cb-today-old">—</span> lama · <span class="cb-val cb-new" id="cb-today-new">—</span> baru</span>
+          <span class="cb-sep">|</span>
+          <span><span class="cb-label">Bulan Ini</span><span class="cb-val" id="cb-month">—</span> · <span class="cb-val cb-new" id="cb-month-new">—</span> baru · <span class="cb-val cb-won" id="cb-month-won">—</span> won</span>
         </div>
 
         <div class="range-row">
@@ -435,6 +455,26 @@
         }
       }
 
+      // ── Count bar (today + month summary) ──────────────────────────────────
+      async function loadCountBar() {
+        const WIB_OFF = 7 * 3600 * 1000;
+        const now     = new Date(Date.now() + WIB_OFF);
+        const todayStr   = now.toISOString().slice(0, 10);
+        const monthStart = `${now.toISOString().slice(0, 7)}-01`;
+        try {
+          const [todayS, monthS] = await Promise.all([
+            fetch(`/api/visits/summary?from=${todayStr}T00:00:00%2B07:00&to=${todayStr}T23:59:59%2B07:00`).then(r => r.json()),
+            fetch(`/api/visits/summary?from=${monthStart}T00:00:00%2B07:00&to=${todayStr}T23:59:59%2B07:00`).then(r => r.json()),
+          ]);
+          $("cb-today").textContent     = todayS.total_visits ?? '—';
+          $("cb-today-old").textContent = todayS.old_visits   ?? '—';
+          $("cb-today-new").textContent = todayS.new_visits   ?? '—';
+          $("cb-month").textContent     = monthS.total_visits ?? '—';
+          $("cb-month-new").textContent = monthS.new_visits   ?? '—';
+          $("cb-month-won").textContent = monthS.won_accounts ?? '—';
+        } catch { /* non-fatal */ }
+      }
+
       // ── Main stats poll ──────────────────────────────────────────────────────
       async function load() {
         let data;
@@ -454,6 +494,7 @@
         // Auto-refresh the table only when showing today
         if (isRangeToday()) renderTable(data.today_visits);
         firstLoad = false;
+        loadCountBar();
       }
 
       function tickSync() {

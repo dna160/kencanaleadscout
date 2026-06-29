@@ -1,331 +1,500 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="id">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>My Day — Kencana LeadScout</title>
-<style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  :root {
-    --c-bg: #f5f7fa; --c-card: #fff; --c-border: #e2e8f0;
-    --c-text: #1a202c; --c-muted: #718096;
-    --c-red: #e53e3e; --c-red-bg: #fff5f5; --c-red-border: #fed7d7;
-    --c-blue: #3182ce; --c-blue-bg: #ebf8ff; --c-blue-border: #bee3f8;
-    --c-green: #38a169; --c-green-bg: #f0fff4; --c-green-border: #c6f6d5;
-    --c-orange: #dd6b20; --c-orange-bg: #fffaf0; --c-orange-border: #fbd38d;
-    --c-gold: #b7791f;
-    --radius: 8px;
-  }
-  body { font-family: system-ui, sans-serif; background: var(--c-bg); color: var(--c-text); min-height: 100vh; }
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>My Day · Kencana LeadScout</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --ink: #14213d; --ink-2: #1b2949; --red: #9b2226; --gold: #bb9457; --green: #2c6e49;
+      --paper: #f5f2ec; --muted: #8a96ad; --line: rgba(255,255,255,.09);
+      --blue: #2E6FD6; --old: #3E9B4F; --amber: #d97706;
+      --display: "Space Grotesk","Inter",system-ui,sans-serif;
+      --sans: "Inter",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      font-family: var(--sans); color: var(--paper);
+      background: radial-gradient(1200px 600px at 90% -10%, rgba(187,148,87,.14), transparent 60%), var(--ink);
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 0 22px 70px; }
 
-  /* Nav */
-  nav { background: #1a2744; color: #fff; padding: 0 16px; display: flex; align-items: center; gap: 12px; height: 48px; }
-  nav .brand { font-weight: 700; font-size: 15px; color: #fff; text-decoration: none; flex-shrink: 0; }
-  nav a { color: rgba(255,255,255,.7); text-decoration: none; font-size: 13px; white-space: nowrap; }
-  nav a.active, nav a:hover { color: #fff; }
-  nav .spacer { flex: 1; }
+    /* ── Nav ──────────────────────────────────────────────────────────── */
+    nav {
+      display: flex; align-items: center; justify-content: space-between; gap: 14px;
+      padding: 12px 22px; border-bottom: 1px solid var(--line);
+      background: rgba(20,33,61,.92); position: sticky; top: 0; z-index: 10;
+      backdrop-filter: blur(10px); flex-wrap: wrap;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .mark { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center;
+      background: linear-gradient(135deg, var(--red), #7a1a1d);
+      font-family: var(--display); font-weight: 700; color: #fff; font-size: 17px; }
+    .brand b { font-family: var(--display); font-size: 16px; }
+    .brand span { color: var(--muted); font-size: 12px; display: block; }
+    .nav-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .nav-right select {
+      background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.13); border-radius: 9px;
+      padding: 7px 12px; color: var(--paper); font-family: var(--sans); font-size: 13.5px;
+      outline: none; cursor: pointer; color-scheme: dark;
+    }
+    .nav-right select:focus { border-color: var(--gold); }
+    .nav-right select option { background: #1e2d50; }
+    .nav-right a { color: var(--muted); text-decoration: none; font-size: 13px; }
+    .nav-right a:hover { color: var(--paper); }
+    .btn-refresh {
+      border: 1px solid var(--line); background: rgba(255,255,255,.05); color: var(--paper);
+      border-radius: 9px; padding: 6px 12px; cursor: pointer; font-weight: 600; font-size: 12.5px;
+    }
+    .btn-refresh:hover { background: rgba(255,255,255,.09); }
 
-  /* Rep picker */
-  .rep-bar { background: #fff; border-bottom: 1px solid var(--c-border); padding: 10px 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-  .rep-bar label { font-size: 13px; color: var(--c-muted); }
-  .rep-bar select { font-size: 14px; padding: 5px 10px; border: 1px solid var(--c-border); border-radius: 6px; background: #fff; }
-  .rep-bar .refresh-btn { margin-left: auto; font-size: 12px; padding: 5px 12px; border: 1px solid var(--c-border); border-radius: 6px; background: #fff; cursor: pointer; color: var(--c-muted); }
-  .rep-bar .refresh-btn:hover { background: var(--c-bg); }
+    /* ── Zone 1: Portfolio Summary Bar ───────────────────────────────── */
+    .portfolio-bar {
+      display: flex; gap: 8px; padding: 16px 0 12px;
+      overflow-x: auto; -webkit-overflow-scrolling: touch;
+      scrollbar-width: none; border-bottom: 1px solid var(--line);
+    }
+    .portfolio-bar::-webkit-scrollbar { display: none; }
+    .chip {
+      flex-shrink: 0; display: flex; align-items: center; gap: 7px;
+      border: 1px solid rgba(255,255,255,.13); background: rgba(255,255,255,.05);
+      border-radius: 99px; padding: 7px 14px; cursor: pointer; white-space: nowrap;
+      font-family: var(--display); font-weight: 600; font-size: 12px;
+      letter-spacing: .4px; color: var(--muted);
+      transition: background .15s, border-color .15s, color .15s;
+    }
+    .chip:hover { background: rgba(255,255,255,.1); color: var(--paper); }
+    .chip.active { background: rgba(187,148,87,.18); border-color: rgba(187,148,87,.5); color: var(--gold); }
+    .chip .cnt {
+      background: rgba(255,255,255,.12); border-radius: 99px; padding: 1px 8px;
+      font-size: 11.5px; font-variant-numeric: tabular-nums;
+      transition: background .15s;
+    }
+    .chip.active .cnt { background: rgba(187,148,87,.25); }
+    .chip-red.active  { background: rgba(155,34,38,.2); border-color: rgba(155,34,38,.5); color: #f8a0a0; }
+    .chip-red.active .cnt { background: rgba(155,34,38,.3); }
+    .chip-amber.active { background: rgba(217,119,6,.2); border-color: rgba(217,119,6,.5); color: #fbbf24; }
+    .chip-amber.active .cnt { background: rgba(217,119,6,.25); }
+    .chip-green.active { background: rgba(44,110,73,.2); border-color: rgba(44,110,73,.5); color: #9fe0b9; }
+    .chip-green.active .cnt { background: rgba(44,110,73,.3); }
+    .chip-blue.active { background: rgba(46,111,214,.2); border-color: rgba(46,111,214,.5); color: #7eb8f7; }
+    .chip-blue.active .cnt { background: rgba(46,111,214,.25); }
 
-  /* Stats strip */
-  .stats-strip { display: flex; gap: 12px; padding: 12px 16px; flex-wrap: wrap; }
-  .stat-card { background: var(--c-card); border: 1px solid var(--c-border); border-radius: var(--radius); padding: 12px 20px; min-width: 120px; flex: 1; }
-  .stat-card .val { font-size: 28px; font-weight: 700; line-height: 1; }
-  .stat-card .lbl { font-size: 11px; color: var(--c-muted); margin-top: 4px; text-transform: uppercase; letter-spacing: .5px; }
-  .stat-card.red  .val { color: var(--c-red); }
-  .stat-card.blue .val { color: var(--c-blue); }
-  .stat-card.orange .val { color: var(--c-orange); }
+    /* ── Zone 2: Today's Actions ─────────────────────────────────────── */
+    .zone2 { padding: 20px 0 0; }
+    .zone2-header {
+      display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px;
+    }
+    .zone2-title { font-family: var(--display); font-size: 15px; font-weight: 700; }
+    .zone2-toggle {
+      border: 1px solid var(--line); background: rgba(255,255,255,.04); color: var(--muted);
+      border-radius: 8px; padding: 5px 12px; cursor: pointer; font-size: 12px; font-weight: 600;
+    }
+    .zone2-toggle:hover { background: rgba(255,255,255,.08); }
+    .zone2-body { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    @media (max-width: 600px) { .zone2-body { grid-template-columns: 1fr; } }
+    .col-label {
+      font-size: 11px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase;
+      margin-bottom: 10px; padding: 6px 12px; border-radius: 8px;
+    }
+    .col-label-red { background: rgba(155,34,38,.15); color: #f8a0a0; }
+    .col-label-blue { background: rgba(46,111,214,.15); color: #7eb8f7; }
 
-  /* Kanban */
-  .kanban { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding: 0 16px 24px; }
-  @media (max-width: 700px) { .kanban { grid-template-columns: 1fr; } }
+    .action-item {
+      display: flex; align-items: flex-start; gap: 10px; padding: 11px 13px;
+      border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.03);
+      margin-bottom: 8px;
+    }
+    .ai-body { flex: 1; }
+    .ai-store { font-weight: 600; font-size: 13.5px; }
+    .ai-store a { color: inherit; text-decoration: none; }
+    .ai-store a:hover { color: var(--gold); }
+    .ai-meta { color: var(--muted); font-size: 12px; margin-top: 3px; }
+    .ai-time { font-size: 12px; color: var(--muted); white-space: nowrap; }
+    .done-btn {
+      flex-shrink: 0; font-size: 11.5px; padding: 4px 11px; border-radius: 99px;
+      cursor: pointer; font-weight: 600; border: 1px solid rgba(44,110,73,.45);
+      color: #9fe0b9; background: rgba(44,110,73,.1); white-space: nowrap; margin-top: 3px;
+    }
+    .done-btn:hover { background: rgba(44,110,73,.2); }
+    .zone2-empty { color: var(--muted); font-size: 13px; text-align: center; padding: 20px 0; }
 
-  .col-header { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; padding: 10px 12px 8px; border-radius: 6px 6px 0 0; display: flex; align-items: center; gap: 8px; }
-  .col-header .cnt { background: rgba(0,0,0,.12); border-radius: 10px; padding: 1px 8px; font-size: 11px; }
-  .col-overdue   .col-header { background: var(--c-red-bg); color: var(--c-red); border: 1px solid var(--c-red-border); border-bottom: none; }
-  .col-today     .col-header { background: var(--c-blue-bg); color: var(--c-blue); border: 1px solid var(--c-blue-border); border-bottom: none; }
-  .col-upcoming  .col-header { background: var(--c-green-bg); color: var(--c-green); border: 1px solid var(--c-green-border); border-bottom: none; }
+    /* ── Zone 3: Full Account List ───────────────────────────────────── */
+    .zone3 { padding-top: 24px; }
+    .zone3-header {
+      display: flex; align-items: baseline; gap: 12px; margin-bottom: 14px; flex-wrap: wrap;
+    }
+    .zone3-title { font-family: var(--display); font-size: 15px; font-weight: 700; }
+    .zone3-count { color: var(--muted); font-size: 13px; }
 
-  .col-body { border: 1px solid var(--c-border); border-radius: 0 0 6px 6px; background: var(--c-bg); min-height: 120px; display: flex; flex-direction: column; gap: 8px; padding: 10px; }
-  .col-overdue  .col-body { border-color: var(--c-red-border); }
-  .col-today    .col-body { border-color: var(--c-blue-border); }
-  .col-upcoming .col-body { border-color: var(--c-green-border); }
+    .acct-card {
+      border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px;
+      background: rgba(255,255,255,.03); margin-bottom: 10px;
+      transition: border-color .15s;
+    }
+    .acct-card:hover { border-color: rgba(255,255,255,.18); }
+    .acct-card.card-at_risk { border-left: 3px solid rgba(155,34,38,.6); }
+    .acct-card.card-perlu_followup { border-left: 3px solid rgba(217,119,6,.6); }
+    .acct-card.card-aktif { border-left: 3px solid rgba(44,110,73,.5); }
+    .acct-card.card-hibernasi { border-left: 3px solid rgba(255,255,255,.15); }
+    .acct-card.card-prospek,
+    .acct-card.card-penawaran,
+    .acct-card.card-negosiasi { border-left: 3px solid rgba(46,111,214,.5); }
+    .acct-card.card-won { border-left: 3px solid rgba(44,110,73,.7); }
+    .acct-row1 { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+    .acct-name { font-family: var(--display); font-size: 15px; font-weight: 700; }
+    .acct-name a { color: inherit; text-decoration: none; }
+    .acct-name a:hover { color: var(--gold); }
+    .acct-row2 { display: flex; align-items: center; gap: 12px; margin-top: 5px; flex-wrap: wrap; }
+    .acct-meta-txt { color: var(--muted); font-size: 12.5px; }
+    .acct-days { font-size: 12px; font-weight: 600; }
+    .days-ok    { color: #9fe0b9; }
+    .days-warn  { color: #fbbf24; }
+    .days-crit  { color: #f8a0a0; }
+    .acct-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+    .btn-sm {
+      font-size: 12px; font-weight: 600; padding: 5px 12px; border-radius: 8px; cursor: pointer;
+      border: 1px solid; transition: background .12s;
+    }
+    .btn-visit {
+      border-color: rgba(155,34,38,.4); background: rgba(155,34,38,.12); color: #f8a0a0;
+    }
+    .btn-visit:hover { background: rgba(155,34,38,.2); }
+    .btn-view {
+      border-color: rgba(255,255,255,.15); background: rgba(255,255,255,.05); color: var(--muted);
+    }
+    .btn-view:hover { background: rgba(255,255,255,.1); color: var(--paper); }
+    .btn-sched {
+      border-color: rgba(187,148,87,.3); background: rgba(187,148,87,.1); color: var(--gold);
+    }
+    .btn-sched:hover { background: rgba(187,148,87,.2); }
 
-  /* Task card */
-  .task-card { background: var(--c-card); border: 1px solid var(--c-border); border-radius: 6px; padding: 10px 12px; cursor: pointer; transition: box-shadow .15s; }
-  .task-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,.1); }
-  .task-card .tc-store { font-size: 14px; font-weight: 600; }
-  .task-card .tc-meta  { font-size: 12px; color: var(--c-muted); margin-top: 3px; }
-  .task-card .tc-notes { font-size: 12px; color: #4a5568; margin-top: 5px; background: var(--c-bg); padding: 4px 7px; border-radius: 4px; }
-  .task-card .tc-when  { font-size: 11px; color: var(--c-muted); margin-top: 6px; }
-  .task-card .tc-when.overdue { color: var(--c-red); font-weight: 600; }
-  .task-card .tc-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; }
-  .task-card .done-btn { font-size: 11px; padding: 3px 10px; border: 1px solid var(--c-green); color: var(--c-green); background: none; border-radius: 12px; cursor: pointer; }
-  .task-card .done-btn:hover { background: var(--c-green-bg); }
+    /* ── Stage badges ───────────────────────────────────────────────── */
+    .stg {
+      display: inline-block; font-size: 11px; font-weight: 700; padding: 3px 10px;
+      border-radius: 99px; text-transform: uppercase; letter-spacing: .4px; white-space: nowrap;
+    }
+    .stg-aktif     { background: rgba(44,110,73,.25); color: #9fe0b9; }
+    .stg-perlu     { background: rgba(217,119,6,.22); color: #fbbf24; }
+    .stg-at_risk   { background: rgba(155,34,38,.25); color: #f8a0a0; }
+    .stg-hibernasi { background: rgba(255,255,255,.1); color: var(--muted); }
+    .stg-prospek   { background: rgba(46,111,214,.2); color: #7eb8f7; }
+    .stg-penawaran { background: rgba(128,90,213,.2); color: #c4b5fd; }
+    .stg-negosiasi { background: rgba(221,107,32,.2); color: #f6b87a; }
+    .stg-won       { background: rgba(44,110,73,.3); color: #9fe0b9; }
+    .stg-gugur     { background: rgba(155,34,38,.2); color: #f8a0a0; }
 
-  /* Stage badge */
-  .badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px; text-transform: uppercase; letter-spacing: .4px; }
-  .badge-aktif       { background: #e6fffa; color: #2c7a7b; }
-  .badge-perlu       { background: #fffbeb; color: var(--c-gold); }
-  .badge-at_risk     { background: var(--c-red-bg); color: var(--c-red); }
-  .badge-hibernasi   { background: #e2e8f0; color: #4a5568; }
-  .badge-prospek     { background: #ebf4ff; color: #2b6cb0; }
-  .badge-penawaran   { background: #faf5ff; color: #6b46c1; }
-  .badge-negosiasi   { background: #fffaf0; color: var(--c-orange); }
-  .badge-won         { background: var(--c-green-bg); color: var(--c-green); }
-  .badge-gugur       { background: #fff5f5; color: #c53030; }
-
-  /* At-risk section */
-  .at-risk-section { padding: 0 16px 24px; }
-  .section-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; color: var(--c-muted); margin-bottom: 8px; }
-  .at-risk-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
-  .ar-card { background: var(--c-card); border: 1px solid var(--c-red-border); border-radius: var(--radius); padding: 12px 14px; cursor: pointer; }
-  .ar-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,.08); }
-  .ar-card .ar-store { font-size: 14px; font-weight: 600; }
-  .ar-card .ar-meta  { font-size: 12px; color: var(--c-muted); margin-top: 3px; }
-  .ar-card .ar-days  { font-size: 12px; color: var(--c-red); font-weight: 600; margin-top: 5px; }
-
-  .empty-state { text-align: center; padding: 32px 16px; color: var(--c-muted); font-size: 13px; }
-  .spinner { text-align: center; padding: 40px; color: var(--c-muted); font-size: 14px; }
-</style>
+    .spinner { color: var(--muted); font-size: 13px; text-align: center; padding: 40px 0; }
+    .list-empty { color: var(--muted); font-size: 13.5px; text-align: center; padding: 40px 0; }
+  </style>
 </head>
 <body>
 
 <nav>
-  <a class="brand" href="/">Kencana</a>
-  <a href="/visits">Catat Kunjungan</a>
-  <a href="/visits-rack">Rack-up</a>
-  <a href="/myday" class="active">My Day</a>
-  <a href="/visits-insights">Insights</a>
-  <a href="/salespeople">Sales</a>
-  <div class="spacer"></div>
+  <div class="brand">
+    <div class="mark">K</div>
+    <div><b>My Day</b><span>Kencana LeadScout · pipeline</span></div>
+  </div>
+  <div class="nav-right">
+    <select id="rep-sel"><option value="">— Pilih Sales —</option></select>
+    <button class="btn-refresh" id="btn-refresh" onclick="load()">↻ Refresh</button>
+    <a href="/visits">Catat ↗</a>
+    <a href="/visits-rack">Rack-up ↗</a>
+    <a href="/visits-insights">Insights ↗</a>
+  </div>
 </nav>
 
-<div class="rep-bar">
-  <label for="rep-sel">Sales rep:</label>
-  <select id="rep-sel"><option value="">— Pilih sales —</option></select>
-  <button class="refresh-btn" onclick="load()">↻ Refresh</button>
-</div>
+<div class="wrap">
 
-<div class="stats-strip" id="stats-strip">
-  <div class="stat-card blue"><div class="val" id="s-visits">—</div><div class="lbl">Kunjungan hari ini</div></div>
-  <div class="stat-card red"><div class="val" id="s-overdue">—</div><div class="lbl">Terlambat</div></div>
-  <div class="stat-card orange"><div class="val" id="s-atrisk">—</div><div class="lbl">At Risk / Perlu Follow-up</div></div>
-</div>
+  <!-- Zone 1: Portfolio Summary Bar -->
+  <div class="portfolio-bar" id="portfolio-bar">
+    <button class="chip active" data-filter="semua"       onclick="setFilter('semua',this)">SEMUA<span class="cnt" id="cnt-total">—</span></button>
+    <button class="chip chip-green" data-filter="aktif"   onclick="setFilter('aktif',this)">AKTIF<span class="cnt" id="cnt-aktif">—</span></button>
+    <button class="chip chip-amber" data-filter="perlu_followup" onclick="setFilter('perlu_followup',this)">PERLU FOLLOW-UP<span class="cnt" id="cnt-pf">—</span></button>
+    <button class="chip chip-red"   data-filter="at_risk" onclick="setFilter('at_risk',this)">AT RISK<span class="cnt" id="cnt-ar">—</span></button>
+    <button class="chip chip-blue"  data-filter="project_active" onclick="setFilter('project_active',this)">PROJECT AKTIF<span class="cnt" id="cnt-pa">—</span></button>
+    <button class="chip chip-green" data-filter="won"     onclick="setFilter('won',this)">MENANG BLN INI<span class="cnt" id="cnt-won">—</span></button>
+    <button class="chip"            data-filter="hibernasi" onclick="setFilter('hibernasi',this)">HIBERNASI<span class="cnt" id="cnt-hib">—</span></button>
+  </div>
 
-<div class="kanban" id="kanban">
-  <div class="col-overdue">
-    <div class="col-header">Terlambat <span class="cnt" id="cnt-overdue">0</span></div>
-    <div class="col-body" id="col-overdue"><div class="spinner">Memuat…</div></div>
+  <!-- Zone 2: Today's Actions -->
+  <div class="zone2" id="zone2">
+    <div class="zone2-header">
+      <div class="zone2-title" id="z2-title">Aksi Hari Ini</div>
+      <button class="zone2-toggle" id="z2-toggle" onclick="toggleZone2()">Sembunyikan ↑</button>
+    </div>
+    <div class="zone2-body" id="z2-body">
+      <div>
+        <div class="col-label col-label-red">TERLAMBAT</div>
+        <div id="overdue-list"><div class="zone2-empty">Memuat…</div></div>
+      </div>
+      <div>
+        <div class="col-label col-label-blue">HARI INI</div>
+        <div id="today-list"><div class="zone2-empty">Memuat…</div></div>
+      </div>
+    </div>
   </div>
-  <div class="col-today">
-    <div class="col-header">Hari Ini <span class="cnt" id="cnt-today">0</span></div>
-    <div class="col-body" id="col-today"><div class="spinner">Memuat…</div></div>
-  </div>
-  <div class="col-upcoming">
-    <div class="col-header">7 Hari ke Depan <span class="cnt" id="cnt-upcoming">0</span></div>
-    <div class="col-body" id="col-upcoming"><div class="spinner">Memuat…</div></div>
-  </div>
-</div>
 
-<div class="at-risk-section">
-  <div class="section-title">Akun Butuh Perhatian</div>
-  <div class="at-risk-grid" id="at-risk-grid"></div>
+  <!-- Zone 3: Full Account List -->
+  <div class="zone3">
+    <div class="zone3-header">
+      <div class="zone3-title">Portfolio Akun</div>
+      <div class="zone3-count" id="z3-count"></div>
+    </div>
+    <div id="account-list"><div class="spinner">Pilih sales untuk memuat portfolio…</div></div>
+  </div>
+
 </div>
 
 <script>
-const $ = id => document.getElementById(id);
+(() => {
+  "use strict";
+  const $ = id => document.getElementById(id);
+  const WIB_MS = 7 * 3600 * 1000;
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+  let allAccounts = [];
+  let activeFilter = "semua";
+  let zone2Visible = true;
+  let currentRepId = null;
 
-function stageBadge(stage) {
-  const map = {
-    aktif: ['badge-aktif','Aktif'],
-    perlu_followup: ['badge-perlu','Perlu Follow-up'],
-    at_risk: ['badge-at_risk','At Risk'],
-    hibernasi: ['badge-hibernasi','Hibernasi'],
-    prospek: ['badge-prospek','Prospek'],
-    penawaran: ['badge-penawaran','Penawaran'],
-    negosiasi: ['badge-negosiasi','Negosiasi'],
-    won: ['badge-won','Won'],
-    gugur: ['badge-gugur','Gugur'],
+  // ── Helpers ────────────────────────────────────────────────────────────────
+
+  function esc(s) {
+    if (s == null) return "";
+    return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  }
+
+  function fmtWib(iso) {
+    if (!iso) return null;
+    const d = new Date(new Date(iso).getTime() + WIB_MS);
+    const p = n => n.toString().padStart(2,'0');
+    return `${p(d.getUTCDate())}/${p(d.getUTCMonth()+1)} ${p(d.getUTCHours())}.${p(d.getUTCMinutes())}`;
+  }
+
+  function daysAgo(iso) {
+    if (!iso) return null;
+    return Math.floor((Date.now() - new Date(iso).getTime()) / (24*3600*1000));
+  }
+
+  function relDays(iso) {
+    const d = daysAgo(iso);
+    if (d === null) return null;
+    if (d === 0) return "hari ini";
+    if (d === 1) return "kemarin";
+    return `${d} hari lalu`;
+  }
+
+  function stageBadge(s) {
+    const cls = {aktif:'stg-aktif',perlu_followup:'stg-perlu',at_risk:'stg-at_risk',
+      hibernasi:'stg-hibernasi',prospek:'stg-prospek',penawaran:'stg-penawaran',
+      negosiasi:'stg-negosiasi',won:'stg-won',gugur:'stg-gugur'};
+    const lbl = {aktif:'Aktif',perlu_followup:'Perlu Follow-up',at_risk:'At Risk',
+      hibernasi:'Hibernasi',prospek:'Prospek',penawaran:'Penawaran',negosiasi:'Negosiasi',
+      won:'Won',gugur:'Gugur'};
+    return `<span class="stg ${cls[s]??''}">${lbl[s]??s}</span>`;
+  }
+
+  function actionLabel(t) {
+    return {kunjungan:'Kunjungan',telepon:'Telepon',received_order:'Terima Order',
+            note:'Catatan',followup:'Follow-up'}[t]??t;
+  }
+
+  function daysClass(days) {
+    if (days === null) return 'days-crit';
+    if (days <= 14)  return 'days-ok';
+    if (days <= 28)  return 'days-warn';
+    return 'days-crit';
+  }
+
+  // ── Zone 1: Portfolio chips ────────────────────────────────────────────────
+
+  function updateChipCounts(pc) {
+    if (!pc) return;
+    $("cnt-total").textContent = pc.total ?? '—';
+    $("cnt-aktif").textContent = pc.aktif ?? '—';
+    $("cnt-pf").textContent    = pc.perlu_followup ?? '—';
+    $("cnt-ar").textContent    = pc.at_risk ?? '—';
+    $("cnt-pa").textContent    = pc.project_active ?? '—';
+    $("cnt-won").textContent   = pc.won_this_month ?? '—';
+    $("cnt-hib").textContent   = pc.hibernasi ?? '—';
+  }
+
+  window.setFilter = function(filter, chipEl) {
+    activeFilter = filter;
+    document.querySelectorAll(".chip").forEach(c => c.classList.remove("active"));
+    if (chipEl) chipEl.classList.add("active");
+    renderAccountList();
   };
-  const [cls, label] = map[stage] ?? ['', stage];
-  return `<span class="badge ${cls}">${label}</span>`;
-}
 
-function fmtWhen(isoStr) {
-  if (!isoStr) return '';
-  const d = new Date(isoStr);
-  const now = new Date();
-  const wib = dt => {
-    const s = new Date(dt.getTime() + 7*3600*1000);
-    return `${s.getUTCDate().toString().padStart(2,'0')}/${(s.getUTCMonth()+1).toString().padStart(2,'0')} ${s.getUTCHours().toString().padStart(2,'0')}.${s.getUTCMinutes().toString().padStart(2,'0')}`;
+  // ── Zone 2: Today's Actions ────────────────────────────────────────────────
+
+  window.toggleZone2 = function() {
+    zone2Visible = !zone2Visible;
+    $("z2-body").style.display  = zone2Visible ? "" : "none";
+    $("z2-toggle").textContent  = zone2Visible ? "Sembunyikan ↑" : "Tampilkan ↓";
   };
-  return wib(d);
-}
 
-function daysSince(isoStr) {
-  if (!isoStr) return null;
-  return Math.floor((Date.now() - new Date(isoStr).getTime()) / 86400000);
-}
+  function renderScheduledList(items, elId, isOverdue) {
+    const el = $(elId);
+    if (!items.length) {
+      el.innerHTML = `<div class="zone2-empty">${isOverdue ? 'Tidak ada aksi terlambat ✓' : 'Tidak ada jadwal hari ini'}</div>`;
+      return;
+    }
+    el.innerHTML = items.map(item => {
+      const timeLabel = isOverdue
+        ? `${daysAgo(item.scheduled_for)} hari terlambat`
+        : fmtWib(item.scheduled_for) + ' WIB';
+      return `
+        <div class="action-item" id="sched-${item.id}">
+          <div class="ai-body">
+            <div class="ai-store"><a href="/account?id=${item.account_id}">${esc(item.store_name)}</a></div>
+            <div class="ai-meta">${actionLabel(item.action_type)} · ${esc(item.area??'')} · ${esc(item.category??'')}</div>
+            ${item.notes ? `<div class="ai-meta" style="margin-top:2px">${esc(item.notes)}</div>` : ''}
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px">
+            <div class="ai-time">${esc(timeLabel)}</div>
+            <button class="done-btn" onclick="markDone(${item.id})">Selesai ✓</button>
+          </div>
+        </div>`;
+    }).join('');
+  }
 
-function actionLabel(t) {
-  return { kunjungan: 'Kunjungan', telepon: 'Telepon', followup: 'Follow-up', received_order: 'Terima Order', note: 'Catatan' }[t] ?? t;
-}
+  window.markDone = async function(sid) {
+    const res = await fetch(`/api/scheduled/${sid}/done`, { method: 'PATCH' })
+      .then(r => r.json()).catch(() => null);
+    if (res?.ok) {
+      const el = $(`sched-${sid}`);
+      if (el) el.remove();
+    }
+  };
 
-// ── Render ────────────────────────────────────────────────────────────────────
+  function autoCollapseZone2(overdue, today) {
+    const hasItems = overdue.length > 0 || today.length > 0;
+    if (!hasItems && zone2Visible) {
+      zone2Visible = false;
+      $("z2-body").style.display = "none";
+      $("z2-toggle").textContent = "Tampilkan ↓";
+      $("z2-title").textContent = "Aksi Hari Ini (kosong)";
+    }
+  }
 
-function renderTaskCard(sa, isOverdue) {
-  const div = document.createElement('div');
-  div.className = 'task-card';
-  div.innerHTML = `
-    <div class="tc-store">${sa.store_name}</div>
-    <div class="tc-meta">${sa.area ?? ''} · ${sa.category ?? ''} · ${stageBadge(sa.stage)}</div>
-    ${sa.notes ? `<div class="tc-notes">${sa.notes}</div>` : ''}
-    <div class="tc-when ${isOverdue ? 'overdue' : ''}">
-      ${isOverdue ? '⚠ ' : ''}${actionLabel(sa.action_type)} · ${fmtWhen(sa.scheduled_for)} WIB
-    </div>
-    <div class="tc-footer">
-      <a href="/account?id=${sa.account_id}" style="font-size:12px;color:#3182ce;text-decoration:none;">Lihat akun →</a>
-      <button class="done-btn" data-id="${sa.id}">✓ Selesai</button>
-    </div>
-  `;
-  div.querySelector('.done-btn').addEventListener('click', async e => {
-    e.stopPropagation();
-    const sid = e.currentTarget.dataset.id;
-    await fetch(`/api/scheduled/${sid}/done`, { method: 'PATCH' });
-    load();
-  });
-  return div;
-}
+  // ── Zone 3: Account List ───────────────────────────────────────────────────
 
-function renderAtRisk(c) {
-  const days = daysSince(c.last_contact_at);
-  const div = document.createElement('div');
-  div.className = 'ar-card';
-  div.onclick = () => location.href = `/account?id=${c.id}`;
-  div.innerHTML = `
-    <div class="ar-store">${c.store_name}</div>
-    <div class="ar-meta">${c.area ?? ''} · ${c.category ?? ''} · ${stageBadge(c.stage)}</div>
-    <div class="ar-days">${days !== null ? `Terakhir kontak ${days} hari lalu` : 'Belum pernah dihubungi'}</div>
-  `;
-  return div;
-}
+  function filterAccounts(accounts) {
+    switch (activeFilter) {
+      case "aktif":         return accounts.filter(a => a.stage === 'aktif');
+      case "perlu_followup":return accounts.filter(a => a.stage === 'perlu_followup');
+      case "at_risk":       return accounts.filter(a => a.stage === 'at_risk');
+      case "project_active":return accounts.filter(a => a.account_type === 'project' && a.stage !== 'won' && a.stage !== 'gugur');
+      case "won":           return accounts.filter(a => a.stage === 'won');
+      case "hibernasi":     return accounts.filter(a => a.stage === 'hibernasi');
+      default:              return accounts;
+    }
+  }
 
-// ── Data ──────────────────────────────────────────────────────────────────────
+  function renderAccountList() {
+    const el = $("account-list");
+    if (!allAccounts.length) {
+      el.innerHTML = `<div class="list-empty">${currentRepId ? 'Belum ada akun dalam portfolio.' : 'Pilih sales untuk memuat portfolio…'}</div>`;
+      $("z3-count").textContent = '';
+      return;
+    }
+    const filtered = filterAccounts(allAccounts);
+    $("z3-count").textContent = `${filtered.length} akun`;
 
-async function loadReps() {
-  try {
-    const r = await fetch('/api/salespeople');
-    const { salespeople } = await r.json();
-    const sel = $('rep-sel');
-    const cur = sel.value;
-    sel.innerHTML = '<option value="">— Pilih sales —</option>';
-    for (const sp of salespeople) {
-      const o = document.createElement('option');
+    if (!filtered.length) {
+      el.innerHTML = '<div class="list-empty">Tidak ada akun untuk filter ini.</div>';
+      return;
+    }
+
+    el.innerHTML = filtered.map(a => {
+      const days = daysAgo(a.last_contact_at);
+      const daysStr = days === null ? 'Belum pernah' : (days === 0 ? 'Hari ini' : `${days} hari lalu`);
+      const dClass  = daysClass(days);
+      const showVisitBtn = ['at_risk','perlu_followup'].includes(a.stage);
+      const typeTag = a.account_type === 'project'
+        ? '<span style="font-size:10.5px;color:#7eb8f7;background:rgba(46,111,214,.15);border-radius:4px;padding:1px 7px;font-weight:700">PROJECT</span>'
+        : '';
+      return `
+        <div class="acct-card card-${esc(a.stage)}">
+          <div class="acct-row1">
+            <div class="acct-name"><a href="/account?id=${a.id}">${esc(a.store_name)}</a>${typeTag ? ' '+typeTag : ''}</div>
+            <div>${stageBadge(a.stage)}</div>
+          </div>
+          <div class="acct-row2">
+            <span class="acct-meta-txt">${esc(a.category??'')} · ${esc(a.area??'')}</span>
+            <span class="acct-days ${dClass}">↻ ${daysStr}</span>
+          </div>
+          <div class="acct-actions">
+            ${showVisitBtn ? `<button class="btn-sm btn-visit" onclick="location.href='/visits?prefill=${a.id}'">+ Log Kunjungan</button>` : ''}
+            <button class="btn-sm btn-view" onclick="location.href='/account?id=${a.id}'">Lihat Akun →</button>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  // ── Main load ──────────────────────────────────────────────────────────────
+
+  window.load = async function() {
+    const repId = currentRepId;
+    if (!repId) {
+      $("account-list").innerHTML = '<div class="list-empty">Pilih sales untuk memuat portfolio…</div>';
+      $("overdue-list").innerHTML = '<div class="zone2-empty">Pilih sales dahulu.</div>';
+      $("today-list").innerHTML   = '<div class="zone2-empty">Pilih sales dahulu.</div>';
+      return;
+    }
+
+    $("account-list").innerHTML = '<div class="spinner">Memuat portfolio…</div>';
+
+    const [myday, accts] = await Promise.all([
+      fetch(`/api/reps/${repId}/myday`).then(r => r.json()).catch(() => null),
+      fetch(`/api/accounts?owner=${repId}&sort=urgency&limit=200`).then(r => r.json()).catch(() => ({ accounts: [] })),
+    ]);
+
+    if (myday) {
+      updateChipCounts(myday.portfolio_counts);
+      renderScheduledList(myday.overdue ?? [], 'overdue-list', true);
+      renderScheduledList(myday.today   ?? [], 'today-list',   false);
+      autoCollapseZone2(myday.overdue ?? [], myday.today ?? []);
+    }
+
+    allAccounts = accts.accounts ?? [];
+    renderAccountList();
+  };
+
+  // ── Boot ───────────────────────────────────────────────────────────────────
+
+  async function boot() {
+    const res = await fetch("/api/salespeople?active=true").then(r => r.json()).catch(() => ({ salespeople: [] }));
+    const sel = $("rep-sel");
+    (res.salespeople ?? []).forEach(sp => {
+      const o = document.createElement("option");
       o.value = sp.id;
-      o.textContent = `${sp.full_name} (${sp.code ?? '—'})`;
+      o.textContent = `${sp.full_name}${sp.code ? ' (' + sp.code + ')' : ''}`;
       sel.appendChild(o);
-    }
-    if (cur) sel.value = cur;
-  } catch (err) {
-    console.error('loadReps failed:', err);
-  }
-}
-
-async function load() {
-  const repId = $('rep-sel').value;
-  if (!repId) {
-    ['col-overdue','col-today','col-upcoming'].forEach(id => {
-      $(id).innerHTML = '<div class="empty-state">Pilih sales rep untuk melihat jadwal.</div>';
     });
-    $('at-risk-grid').innerHTML = '';
-    return;
-  }
 
-  ['col-overdue','col-today','col-upcoming'].forEach(id => {
-    $(id).innerHTML = '<div class="spinner">Memuat…</div>';
-  });
-
-  try {
-    const r = await fetch(`/api/reps/${repId}/myday`);
-    if (!r.ok) throw new Error(await r.text());
-    const { overdue, today, upcoming, at_risk, stats } = await r.json();
-
-    // Stats
-    $('s-visits').textContent  = stats.today_visits  ?? 0;
-    $('s-overdue').textContent = stats.overdue_count ?? 0;
-    $('s-atrisk').textContent  = stats.at_risk_count ?? 0;
-
-    // Overdue column
-    $('cnt-overdue').textContent = overdue.length;
-    const colOv = $('col-overdue');
-    colOv.innerHTML = '';
-    if (overdue.length === 0) {
-      colOv.innerHTML = '<div class="empty-state">Tidak ada yang terlambat ✓</div>';
-    } else {
-      overdue.forEach(sa => colOv.appendChild(renderTaskCard(sa, true)));
+    const savedRep = localStorage.getItem("myday_rep_id");
+    if (savedRep && sel.querySelector(`option[value="${savedRep}"]`)) {
+      sel.value = savedRep;
+      currentRepId = Number(savedRep);
+      load();
     }
 
-    // Today column
-    $('cnt-today').textContent = today.length;
-    const colTd = $('col-today');
-    colTd.innerHTML = '';
-    if (today.length === 0) {
-      colTd.innerHTML = '<div class="empty-state">Tidak ada jadwal hari ini</div>';
-    } else {
-      today.forEach(sa => colTd.appendChild(renderTaskCard(sa, false)));
-    }
-
-    // Upcoming column
-    $('cnt-upcoming').textContent = upcoming.length;
-    const colUp = $('col-upcoming');
-    colUp.innerHTML = '';
-    if (upcoming.length === 0) {
-      colUp.innerHTML = '<div class="empty-state">Tidak ada jadwal minggu ini</div>';
-    } else {
-      upcoming.forEach(sa => colUp.appendChild(renderTaskCard(sa, false)));
-    }
-
-    // At-risk
-    const grid = $('at-risk-grid');
-    grid.innerHTML = '';
-    if (at_risk.length === 0) {
-      grid.innerHTML = '<div class="empty-state">Semua akun dalam kondisi baik ✓</div>';
-    } else {
-      at_risk.forEach(c => grid.appendChild(renderAtRisk(c)));
-    }
-
-  } catch (err) {
-    ['col-overdue','col-today','col-upcoming'].forEach(id => {
-      $(id).innerHTML = `<div class="empty-state" style="color:#e53e3e">Error: ${err.message}</div>`;
+    sel.addEventListener("change", () => {
+      currentRepId = sel.value ? Number(sel.value) : null;
+      if (currentRepId) localStorage.setItem("myday_rep_id", String(currentRepId));
+      load();
     });
   }
-}
 
-// ── Boot ──────────────────────────────────────────────────────────────────────
-
-$('rep-sel').addEventListener('change', load);
-
-// Auto-refresh every 30s
-setInterval(load, 30000);
-
-loadReps().then(() => {
-  // Try to restore last-used rep
-  const saved = sessionStorage.getItem('myday_rep');
-  if (saved) { $('rep-sel').value = saved; }
-  load();
-});
-
-$('rep-sel').addEventListener('change', () => {
-  sessionStorage.setItem('myday_rep', $('rep-sel').value);
-});
+  boot();
+})();
 </script>
 </body>
 </html>

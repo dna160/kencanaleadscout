@@ -34,6 +34,7 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
     const search   = q.q        ? `%${q.q}%`                     : null;
     const limit    = Math.min(Number(q.limit)  || 50, 200);
     const offset   = Number(q.offset) || 0;
+    const sortUrgency = q.sort === "urgency";
 
     const rows = await db`
       select
@@ -51,7 +52,10 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
         ${area      ? db`and lower(c.area) = lower(${area})`                  : db``}
         ${acct_type ? db`and c.account_type = ${acct_type}`                   : db``}
         ${search    ? db`and (lower(c.store_name) like lower(${search}) or lower(c.area) like lower(${search}))` : db``}
-      order by c.last_contact_at desc nulls last, c.store_name
+      order by ${sortUrgency
+        ? db`case c.stage when 'at_risk' then 1 when 'perlu_followup' then 2 when 'negosiasi' then 3 when 'penawaran' then 4 when 'prospek' then 5 when 'aktif' then 6 when 'won' then 7 when 'gugur' then 8 when 'hibernasi' then 9 else 10 end, c.last_contact_at asc nulls first`
+        : db`c.last_contact_at desc nulls last`},
+      c.store_name
       limit ${limit} offset ${offset}
     `;
 
@@ -269,7 +273,7 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
     const todayEndUTC   = new Date(todayStartUTC.getTime() + 24 * 3600 * 1000);
     const sevenDaysOut  = new Date(todayEndUTC.getTime()   + 6  * 24 * 3600 * 1000);
 
-    const [overdue, today, upcoming, atRisk, stats] = await Promise.all([
+    const [overdue, today, upcoming, atRisk, stats, portfolioRows, wonRows] = await Promise.all([
       // Overdue: past due, not completed, for this rep
       db`
         select sa.id, sa.account_id, sa.action_type, sa.scheduled_for, sa.notes,
@@ -335,14 +339,48 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
              and c.stage in ('at_risk', 'perlu_followup')
           )::int as at_risk_count
       `,
+      // Portfolio counts by stage (Zone 1 chips)
+      db`
+        select
+          count(*)::int                                                                        as total,
+          count(*) filter (where stage = 'aktif')::int                                        as aktif,
+          count(*) filter (where stage = 'perlu_followup')::int                               as perlu_followup,
+          count(*) filter (where stage = 'at_risk')::int                                      as at_risk,
+          count(*) filter (where account_type = 'project'
+                                and stage not in ('won','gugur'))::int                         as project_active,
+          count(*) filter (where stage = 'hibernasi')::int                                    as hibernasi,
+          count(*) filter (where stage = 'won')::int                                          as won_total
+        from customers
+        where owner_id = ${rep_id}
+      `,
+      // Won this month (stage transitions)
+      db`
+        select count(*)::int as won_this_month
+        from stage_history sh
+        join customers c on c.id = sh.account_id
+        where sh.new_stage = 'won'
+          and c.owner_id = ${rep_id}
+          and sh.changed_at >= date_trunc('month', now())
+      `,
     ]);
 
+    const pc = portfolioRows[0] ?? {};
     return {
       overdue,
       today,
       upcoming,
       at_risk: atRisk,
       stats:   stats[0] ?? { today_visits: 0, overdue_count: 0, at_risk_count: 0 },
+      portfolio_counts: {
+        total:          pc.total          ?? 0,
+        aktif:          pc.aktif          ?? 0,
+        perlu_followup: pc.perlu_followup ?? 0,
+        at_risk:        pc.at_risk        ?? 0,
+        project_active: pc.project_active ?? 0,
+        won_this_month: wonRows[0]?.won_this_month ?? 0,
+        won_total:      pc.won_total      ?? 0,
+        hibernasi:      pc.hibernasi      ?? 0,
+      },
     };
   });
 }
