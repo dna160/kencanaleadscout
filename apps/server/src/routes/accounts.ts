@@ -273,7 +273,7 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
     const todayEndUTC   = new Date(todayStartUTC.getTime() + 24 * 3600 * 1000);
     const sevenDaysOut  = new Date(todayEndUTC.getTime()   + 6  * 24 * 3600 * 1000);
 
-    const [overdue, today, upcoming, atRisk, stats, portfolioRows, wonRows] = await Promise.all([
+    const [overdue, today, upcoming, atRisk, stats, portfolioRows, wonRows, resolvedEscalations] = await Promise.all([
       // Overdue: past due, not completed, for this rep
       db`
         select sa.id, sa.account_id, sa.action_type, sa.scheduled_for, sa.notes,
@@ -362,6 +362,18 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
           and c.owner_id = ${rep_id}
           and sh.changed_at >= date_trunc('month', now())
       `,
+      // Resolved escalations not yet acknowledged by the rep
+      db`
+        select id, store_name, category, area, address, notes,
+               resolved_contact_name, resolved_contact_phone, resolved_notes,
+               resolved_by, resolved_at
+        from escalations
+        where salesperson_id = ${rep_id}
+          and status = 'resolved'
+          and followed_up_at is null
+        order by resolved_at desc
+        limit 20
+      `,
     ]);
 
     const pc = portfolioRows[0] ?? {};
@@ -381,6 +393,7 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
         won_total:      pc.won_total      ?? 0,
         hibernasi:      pc.hibernasi      ?? 0,
       },
+      resolved_escalations: resolvedEscalations,
     };
   });
 }

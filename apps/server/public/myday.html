@@ -124,6 +124,33 @@
     .done-btn:hover { background: rgba(44,110,73,.2); }
     .zone2-empty { color: var(--muted); font-size: 13px; text-align: center; padding: 20px 0; }
 
+    /* ── Zone 2b: Resolved Escalations ──────────────────────────────── */
+    .zone2b { padding: 16px 0 0; display: none; }
+    .zone2b.has-items { display: block; }
+    .zone2b-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+    .zone2b-title { font-family: var(--display); font-size: 15px; font-weight: 700; color: var(--gold); }
+    .zone2b-badge { background: rgba(187,148,87,.2); color: var(--gold); border-radius: 99px;
+      font-size: 11px; font-weight: 700; padding: 2px 9px; }
+    .esk-card { border: 1px solid rgba(187,148,87,.3); border-radius: 14px; padding: 14px 16px;
+      background: rgba(187,148,87,.05); margin-bottom: 10px; }
+    .esk-card .ec-store { font-family: var(--display); font-size: 14.5px; font-weight: 700; }
+    .esk-card .ec-meta { color: var(--muted); font-size: 12px; margin-top: 3px; }
+    .esk-card .ec-contact { margin-top: 10px; padding: 10px 12px; background: rgba(255,255,255,.04);
+      border: 1px solid rgba(255,255,255,.08); border-radius: 10px; }
+    .esk-card .ec-contact-label { font-size: 10.5px; font-weight: 700; letter-spacing: .6px;
+      text-transform: uppercase; color: var(--gold); margin-bottom: 5px; }
+    .esk-card .ec-contact-name  { font-weight: 700; font-size: 14px; }
+    .esk-card .ec-contact-phone { font-size: 13px; color: #9ec8fb; margin-top: 2px; }
+    .esk-card .ec-contact-notes { font-size: 12.5px; color: var(--muted); margin-top: 4px; font-style: italic; }
+    .esk-card .ec-by { font-size: 11.5px; color: rgba(187,148,87,.7); margin-top: 5px; }
+    .esk-card .ec-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+    .btn-followup { border: 1px solid rgba(44,110,73,.45); background: rgba(44,110,73,.1); color: #9fe0b9;
+      border-radius: 8px; padding: 7px 16px; cursor: pointer; font-size: 12.5px; font-weight: 600; }
+    .btn-followup:hover { background: rgba(44,110,73,.2); }
+    .btn-call-wa { border: 1px solid rgba(46,111,214,.35); background: rgba(46,111,214,.1); color: #7eb8f7;
+      border-radius: 8px; padding: 7px 16px; cursor: pointer; font-size: 12.5px; font-weight: 600;
+      text-decoration: none; display: inline-block; }
+
     /* ── Zone 3: Full Account List ───────────────────────────────────── */
     .zone3 { padding-top: 24px; }
     .zone3-header {
@@ -238,6 +265,15 @@
         <div id="today-list"><div class="zone2-empty">Memuat…</div></div>
       </div>
     </div>
+  </div>
+
+  <!-- Zone 2b: Resolved Escalations (shown only when there are items) -->
+  <div class="zone2b" id="zone2b">
+    <div class="zone2b-header">
+      <div class="zone2b-title">Eskalasi Kembali</div>
+      <span class="zone2b-badge" id="z2b-count">0</span>
+    </div>
+    <div id="esk-resolved-list"></div>
   </div>
 
   <!-- Zone 3: Full Account List -->
@@ -438,6 +474,51 @@
     }).join('');
   }
 
+  // ── Zone 2b: Resolved Escalations ─────────────────────────────────────────
+
+  function renderResolvedEscalations(items) {
+    const zone = $("zone2b");
+    const list = $("esk-resolved-list");
+    if (!items || !items.length) { zone.classList.remove("has-items"); return; }
+    zone.classList.add("has-items");
+    $("z2b-count").textContent = items.length;
+
+    list.innerHTML = items.map(e => {
+      const phone = e.resolved_contact_phone ?? "";
+      const waHref = phone ? `https://wa.me/${phone.replace(/\D/g,'')}` : null;
+      return `
+      <div class="esk-card" id="ec-${e.id}">
+        <div class="ec-store">${esc(e.store_name)}</div>
+        <div class="ec-meta">${[e.category, e.area].filter(Boolean).map(esc).join(' · ')}</div>
+        <div class="ec-contact">
+          <div class="ec-contact-label">Kontak Ditemukan</div>
+          <div class="ec-contact-name">${esc(e.resolved_contact_name ?? '—')}</div>
+          ${phone ? `<div class="ec-contact-phone">📱 ${esc(phone)}</div>` : ''}
+          ${e.resolved_notes ? `<div class="ec-contact-notes">${esc(e.resolved_notes)}</div>` : ''}
+          ${e.resolved_by ? `<div class="ec-by">Ditemukan oleh: ${esc(e.resolved_by)}</div>` : ''}
+        </div>
+        <div class="ec-actions">
+          ${waHref ? `<a class="btn-call-wa" href="${waHref}" target="_blank">💬 WhatsApp</a>` : ''}
+          <button class="btn-followup" onclick="markEskFollowup(${e.id})">✓ Tandai Follow-up</button>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  window.markEskFollowup = async function(id) {
+    const res = await fetch(`/api/escalations/${id}/followup`, { method: "PATCH" })
+      .then(r => r.json()).catch(() => ({ error: "Koneksi gagal." }));
+    if (res.error) { alert(res.error); return; }
+    const el = $(`ec-${id}`);
+    if (el) { el.style.opacity = "0"; el.style.transition = "opacity .3s"; setTimeout(() => { el.remove(); refreshEskBadge(); }, 320); }
+  };
+
+  function refreshEskBadge() {
+    const remaining = $("esk-resolved-list").querySelectorAll(".esk-card").length;
+    if (remaining === 0) $("zone2b").classList.remove("has-items");
+    else $("z2b-count").textContent = remaining;
+  }
+
   // ── Main load ──────────────────────────────────────────────────────────────
 
   window.load = async function() {
@@ -461,6 +542,7 @@
       renderScheduledList(myday.overdue ?? [], 'overdue-list', true);
       renderScheduledList(myday.today   ?? [], 'today-list',   false);
       autoCollapseZone2(myday.overdue ?? [], myday.today ?? []);
+      renderResolvedEscalations(myday.resolved_escalations ?? []);
     }
 
     allAccounts = accts.accounts ?? [];

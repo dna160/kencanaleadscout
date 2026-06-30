@@ -261,6 +261,29 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
   await db`create index if not exists scheduled_actions_rep_idx  on scheduled_actions (salesperson_id, scheduled_for)`;
   await db`create index if not exists scheduled_actions_acct_idx on scheduled_actions (account_id, scheduled_for)`;
 
+  // Escalation table — leads the rep cannot visit; sourced by eskalasi team.
+  await db`
+    create table if not exists escalations (
+      id                     bigserial primary key,
+      salesperson_id         bigint not null references salespeople(id),
+      store_name             text not null,
+      category               text,
+      area                   text,
+      address                text,
+      notes                  text,
+      status                 text not null default 'pending',
+      resolved_contact_name  text,
+      resolved_contact_phone text,
+      resolved_notes         text,
+      resolved_at            timestamptz,
+      resolved_by            text,
+      followed_up_at         timestamptz,
+      created_at             timestamptz not null default now()
+    )
+  `;
+  await db`create index if not exists escalations_rep_idx    on escalations (salesperson_id, created_at desc)`;
+  await db`create index if not exists escalations_status_idx on escalations (status, created_at desc)`;
+
   // Seed categories + areas — wrapped so a missing visit_lists table never
   // prevents the salespeople seeding below from running.
   try {

@@ -31,6 +31,7 @@ import { salespeopleRoutes } from "./routes/salespeople.js";
 import { listsRoutes } from "./routes/lists.js";
 import { insightsRoutes } from "./routes/insights.js";
 import { accountsRoutes, startCadenceEngine } from "./routes/accounts.js";
+import { escalationsRoutes } from "./routes/escalations.js";
 
 const PUBLIC_DIR = fileURLToPath(new URL("../public", import.meta.url));
 
@@ -104,6 +105,7 @@ async function main(): Promise<void> {
   await app.register(listsRoutes);
   await app.register(insightsRoutes);
   await app.register(accountsRoutes);
+  await app.register(escalationsRoutes);
 
   await bootDatabase(app);
   startCadenceEngine();

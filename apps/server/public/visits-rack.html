@@ -41,7 +41,9 @@
       a.back { color: var(--muted); text-decoration: none; font-size: 13px; }
 
       /* ── KPI cards ───────────────────────────────────────────── */
-      .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 18px; }
+      .kpis { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; margin-bottom: 18px; }
+      @media (max-width: 820px) { .kpis { grid-template-columns: repeat(3, 1fr); } }
+      @media (max-width: 540px) { .kpis { grid-template-columns: repeat(2, 1fr); } }
       .kpi { border: 1px solid var(--line); border-radius: 18px; padding: 20px; position: relative; overflow: hidden;
         background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02)); }
       .kpi .l { color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: .8px; text-transform: uppercase; }
@@ -54,9 +56,50 @@
       .kpi.green-kpi { background: linear-gradient(135deg, rgba(62,155,79,.18), rgba(62,155,79,.05)); border-color: rgba(62,155,79,.35); }
       .kpi.green-kpi .v { color: #9fe0b9; }
 
+      /* ── Escalation KPI ─────────────────────────────────────── */
+      .kpi.esk-kpi { background: linear-gradient(135deg, rgba(187,148,87,.18), rgba(187,148,87,.05)); border-color: rgba(187,148,87,.4); cursor: pointer; transition: background .15s; }
+      .kpi.esk-kpi:hover { background: linear-gradient(135deg, rgba(187,148,87,.28), rgba(187,148,87,.1)); }
+      .kpi.esk-kpi .v { color: var(--gold); }
+      .kpi.esk-kpi .s { color: rgba(187,148,87,.7); }
+
+      /* ── Escalation panel ────────────────────────────────────── */
+      .esk-panel { display: none; border: 1px solid rgba(187,148,87,.3); border-radius: 18px; padding: 20px; margin-bottom: 14px;
+        background: linear-gradient(180deg, rgba(187,148,87,.07), rgba(187,148,87,.02)); }
+      .esk-panel.open { display: block; }
+      .esk-panel h3 { font-family: var(--display); font-size: 16px; margin: 0 0 4px; color: var(--gold); }
+      .esk-panel .cap { color: var(--muted); font-size: 12.5px; margin: 0 0 16px; }
+      .esk-list { display: flex; flex-direction: column; gap: 10px; }
+      .esk-item { border: 1px solid var(--line); border-radius: 13px; padding: 14px 16px; background: rgba(255,255,255,.03); }
+      .esk-item .ei-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+      .esk-item .ei-name { font-weight: 700; font-size: 14px; }
+      .esk-item .ei-meta { color: var(--muted); font-size: 12px; margin-top: 3px; }
+      .esk-item .ei-rep  { font-size: 12px; color: rgba(187,148,87,.8); margin-top: 2px; }
+      .esk-item .ei-notes { font-size: 12.5px; color: #aeb8cc; margin-top: 8px; font-style: italic; }
+      .esk-item .ei-age { font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+      .btn-resolve { border: 1px solid rgba(187,148,87,.45); background: rgba(187,148,87,.12); color: var(--gold);
+        border-radius: 8px; padding: 6px 14px; cursor: pointer; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+      .btn-resolve:hover { background: rgba(187,148,87,.22); }
+      .resolve-form { display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line);
+        display: none; flex-direction: column; gap: 9px; }
+      .resolve-form.open { display: flex; }
+      .resolve-form input, .resolve-form textarea {
+        background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12);
+        border-radius: 10px; padding: 10px 12px; color: var(--paper); font-family: var(--sans);
+        font-size: 13.5px; width: 100%; box-sizing: border-box; outline: none;
+      }
+      .resolve-form input:focus, .resolve-form textarea:focus { border-color: var(--gold); }
+      .resolve-form textarea { resize: vertical; min-height: 60px; }
+      .resolve-form .rf-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+      @media (max-width: 540px) { .resolve-form .rf-row { grid-template-columns: 1fr; } }
+      .btn-send-resolve { background: linear-gradient(135deg, rgba(187,148,87,.7), rgba(187,148,87,.4)); border: none;
+        border-radius: 10px; padding: 11px; color: #fff; font-family: var(--display); font-weight: 600;
+        font-size: 14px; cursor: pointer; width: 100%; }
+      .btn-send-resolve:hover { opacity: .9; }
+      .esk-empty { color: var(--muted); font-size: 13.5px; text-align: center; padding: 26px 0; }
+
       /* ── Layout ──────────────────────────────────────────────── */
       .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-      @media (max-width: 820px) { .kpis { grid-template-columns: repeat(2, 1fr); } .cols { grid-template-columns: 1fr; } }
+      @media (max-width: 820px) { .cols { grid-template-columns: 1fr; } }
       .mt { margin-top: 14px; }
       .panel { border: 1px solid var(--line); border-radius: 18px; padding: 20px;
         background: linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.015)); }
@@ -198,6 +241,18 @@
           <div class="v" id="kReps">—</div>
           <div class="s">bergerak hari ini</div>
         </div>
+        <div class="kpi esk-kpi" onclick="toggleEskPanel()" title="Klik untuk lihat eskalasi">
+          <div class="l">Eskalasi</div>
+          <div class="v" id="kEsk">—</div>
+          <div class="s">menunggu kontak ↓</div>
+        </div>
+      </div>
+
+      <!-- Escalation panel — toggle via KPI card click -->
+      <div class="esk-panel" id="esk-panel">
+        <h3>Eskalasi Pending</h3>
+        <p class="cap">Lead yang tidak bisa dikunjungi sales — cari kontak dan kirimkan ke rep yang bersangkutan.</p>
+        <div class="esk-list" id="esk-list"><div class="esk-empty">Memuat…</div></div>
       </div>
 
       <div class="cols mt">
@@ -441,6 +496,90 @@
         }).join("");
       }
 
+      // ── Escalation panel ─────────────────────────────────────────────────────
+      let eskPanelOpen = false;
+
+      window.toggleEskPanel = function() {
+        eskPanelOpen = !eskPanelOpen;
+        $("esk-panel").classList.toggle("open", eskPanelOpen);
+        if (eskPanelOpen) loadEskPanel();
+      };
+
+      async function loadEskPanel() {
+        $("esk-list").innerHTML = '<div class="esk-empty">Memuat…</div>';
+        const data = await fetch("/api/escalations?status=pending").then(r => r.json()).catch(() => ({ escalations: [] }));
+        const items = data.escalations ?? [];
+        $("kEsk").textContent = items.length;
+        if (!items.length) {
+          $("esk-list").innerHTML = '<div class="esk-empty">Tidak ada eskalasi pending ✓</div>';
+          return;
+        }
+        $("esk-list").innerHTML = items.map(e => {
+          const ago = Math.floor((Date.now() - new Date(e.created_at).getTime()) / (3600*1000));
+          const agoStr = ago < 1 ? 'baru saja' : ago < 24 ? `${ago}j lalu` : `${Math.floor(ago/24)}h lalu`;
+          return `
+          <div class="esk-item" id="esk-${e.id}">
+            <div class="ei-top">
+              <div>
+                <div class="ei-name">${esc(e.store_name)}</div>
+                <div class="ei-meta">${esc(e.category??'')}${e.area ? ' · ' + esc(e.area) : ''}${e.address ? ' · ' + esc(e.address) : ''}</div>
+                <div class="ei-rep">↑ ${esc(e.salesperson_name)} (${esc(e.salesperson_code)}) · ${agoStr}</div>
+                ${e.notes ? `<div class="ei-notes">"${esc(e.notes)}"</div>` : ''}
+              </div>
+              <button class="btn-resolve" onclick="openResolveForm(${e.id})">Temukan Kontak</button>
+            </div>
+            <div class="resolve-form" id="rf-${e.id}">
+              <div class="rf-row">
+                <input id="rf-name-${e.id}"  type="text" placeholder="Nama Kontak *" />
+                <input id="rf-phone-${e.id}" type="tel"  placeholder="No. HP / WA *" />
+              </div>
+              <textarea id="rf-notes-${e.id}" placeholder="Catatan tambahan (opsional)"></textarea>
+              <input id="rf-by-${e.id}" type="text" placeholder="Nama petugas eskalasi *" />
+              <button class="btn-send-resolve" onclick="submitResolve(${e.id})">Kirim ke Sales ↗</button>
+              <div id="rf-err-${e.id}" style="color:#e05252;font-size:12.5px;display:none"></div>
+            </div>
+          </div>`;
+        }).join('');
+      }
+
+      window.openResolveForm = function(id) {
+        const rf = $(`rf-${id}`);
+        rf.classList.toggle("open");
+      };
+
+      window.submitResolve = async function(id) {
+        const contact_name  = $(`rf-name-${id}`).value.trim();
+        const contact_phone = $(`rf-phone-${id}`).value.trim();
+        const notes         = $(`rf-notes-${id}`).value.trim();
+        const resolved_by   = $(`rf-by-${id}`).value.trim();
+        const errEl = $(`rf-err-${id}`);
+        errEl.style.display = "none";
+
+        if (!contact_name || !contact_phone || !resolved_by) {
+          errEl.textContent = "Nama kontak, nomor HP, dan nama petugas harus diisi.";
+          errEl.style.display = "block"; return;
+        }
+        const res = await fetch(`/api/escalations/${id}/resolve`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            resolved_contact_name: contact_name,
+            resolved_contact_phone: contact_phone,
+            resolved_notes: notes || null,
+            resolved_by,
+          }),
+        }).then(r => r.json()).catch(() => ({ error: "Koneksi gagal." }));
+
+        if (res.error) { errEl.textContent = res.error; errEl.style.display = "block"; return; }
+
+        // Animate out
+        const el = $(`esk-${id}`);
+        if (el) { el.style.opacity = "0"; el.style.transition = "opacity .3s"; setTimeout(() => el.remove(), 320); }
+        const remaining = $("esk-list").querySelectorAll(".esk-item").length - 1;
+        $("kEsk").textContent = remaining;
+        if (remaining === 0) $("esk-list").innerHTML = '<div class="esk-empty">Semua eskalasi selesai ✓</div>';
+      };
+
       // ── Load table from /api/visits ──────────────────────────────────────────
       async function loadTable() {
         const from = `${tableFrom}T00:00:00+07:00`;
@@ -453,6 +592,13 @@
         } catch {
           $("tableBody").innerHTML = '<tr><td colspan="8" style="text-align:center;padding:26px;color:#e05252">Gagal memuat data.</td></tr>';
         }
+      }
+
+      // ── Escalation count on load ─────────────────────────────────────────────
+      async function loadEskCount() {
+        const data = await fetch("/api/escalations?status=pending").then(r => r.json()).catch(() => ({ count: 0 }));
+        $("kEsk").textContent = data.count ?? 0;
+        if (eskPanelOpen) loadEskPanel();
       }
 
       // ── Count bar (today + month summary) ──────────────────────────────────
@@ -495,6 +641,7 @@
         if (isRangeToday()) renderTable(data.today_visits);
         firstLoad = false;
         loadCountBar();
+        loadEskCount();
       }
 
       function tickSync() {

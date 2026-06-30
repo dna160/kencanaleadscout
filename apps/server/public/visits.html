@@ -127,6 +127,14 @@
       }
       .btn-rackup:hover { background: rgba(255,255,255,.12); }
 
+      /* ── Eskalasi callout ────────────────────────────────────────────── */
+      .eskalasi-note {
+        background: rgba(187,148,87,.08); border: 1px solid rgba(187,148,87,.3);
+        border-radius: 12px; padding: 12px 14px; font-size: 13px; color: #e0c88a;
+        display: none;
+      }
+      .eskalasi-note b { display: block; margin-bottom: 4px; font-size: 13.5px; }
+
       /* ── Photo section ───────────────────────────────────────────────── */
       .photo-grid { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 2px; }
       .photo-add {
@@ -195,6 +203,12 @@
         <div class="act-toggle">
           <button type="button" class="act-seg active" id="act-kunjungan" onclick="setAct('kunjungan')">Kunjungan</button>
           <button type="button" class="act-seg"        id="act-telepon"   onclick="setAct('telepon')">Telepon</button>
+          <button type="button" class="act-seg"        id="act-eskalasi"  onclick="setAct('eskalasi')">Eskalasi</button>
+        </div>
+
+        <div class="eskalasi-note" id="eskalasi-note">
+          <b>Tidak bisa mengunjungi lokasi?</b>
+          Isi informasi lead di bawah. Tim Eskalasi akan mencari kontak dan mengirimkan hasilnya ke My Day kamu.
         </div>
 
         <div class="field">
@@ -218,8 +232,8 @@
           <datalist id="store-dl"></datalist>
         </div>
 
-        <div class="two">
-          <div class="field">
+        <div class="two" id="type-cat-row">
+          <div class="field" id="type-field">
             <label>Tipe Customer *</label>
             <select id="f-type" required>
               <option value="">Pilih tipe</option>
@@ -292,20 +306,30 @@
       let activityType = "kunjungan";
       window.setAct = function(type) {
         activityType = type;
-        ["kunjungan", "telepon"].forEach(t => {
+        ["kunjungan", "telepon", "eskalasi"].forEach(t => {
           $("act-" + t).classList.toggle("active", t === type);
         });
+        const isEsk = type === "eskalasi";
+        $("eskalasi-note").style.display = isEsk ? "" : "none";
+        $("type-field").style.display    = isEsk ? "none" : "";
+        // In eskalasi mode the two-col grid becomes single-col (category only)
+        $("type-cat-row").style.gridTemplateColumns = isEsk ? "1fr" : "";
         updateBtnLabel();
+        checkRequired();
       };
 
       function updateBtnLabel() {
-        $("btn").textContent = activityType === "telepon" ? "Simpan Telepon" : "Simpan Kunjungan";
+        if (activityType === "telepon")   $("btn").textContent = "Simpan Telepon";
+        else if (activityType === "eskalasi") $("btn").textContent = "Kirim ke Tim Eskalasi";
+        else                              $("btn").textContent = "Simpan Kunjungan";
       }
 
       // ── Reactive submit button ───────────────────────────────────────────
       function checkRequired() {
+        const needsType = activityType !== "eskalasi";
         const ok = !!$("f-sales").value && !!$("f-store").value.trim() &&
-                   !!$("f-type").value && !!$("f-cat").value.trim() && !!$("f-area").value.trim();
+                   (!needsType || !!$("f-type").value) &&
+                   !!$("f-cat").value.trim() && !!$("f-area").value.trim();
         $("btn").disabled = !ok;
       }
       ["f-sales","f-type"].forEach(id => $(id).addEventListener("change", checkRequired));
@@ -340,20 +364,26 @@
       }
 
       // ── Post-submit state ────────────────────────────────────────────────
-      function showSuccess(visit) {
+      function showSuccess(payload) {
         $("vform").style.display = "none";
         const panel = $("success-panel");
         panel.style.display = "flex";
 
-        const label = activityType === "telepon" ? "Telepon" : "Kunjungan";
-        $("success-title").textContent = `${label} Tersimpan ✓`;
-
-        if (visit) {
-          const d  = new Date(new Date(visit.visited_at).getTime() + WIB_MS);
-          const p  = n => n.toString().padStart(2,'0');
-          const wibStr = `${p(d.getUTCHours())}:${p(d.getUTCMinutes())} WIB`;
-          $("success-time").textContent = `Dicatat: ${wibStr}`;
-          $("success-sub").textContent  = visit.store_name ?? "";
+        if (activityType === "eskalasi") {
+          $("success-icon").textContent  = "📋";
+          $("success-title").textContent = "Eskalasi Terkirim ✓";
+          $("success-sub").textContent   = payload?.store_name ?? "";
+          $("success-time").textContent  = "Tim Eskalasi sedang mencari kontak";
+        } else {
+          $("success-icon").textContent = "✓";
+          const label = activityType === "telepon" ? "Telepon" : "Kunjungan";
+          $("success-title").textContent = `${label} Tersimpan ✓`;
+          if (payload) {
+            const d  = new Date(new Date(payload.visited_at).getTime() + WIB_MS);
+            const p  = n => n.toString().padStart(2,'0');
+            $("success-time").textContent = `Dicatat: ${p(d.getUTCHours())}:${p(d.getUTCMinutes())} WIB`;
+            $("success-sub").textContent  = payload.store_name ?? "";
+          }
         }
       }
 
@@ -562,22 +592,36 @@
         btn.disabled = true;
         btn.textContent = "Menyimpan...";
 
-        const res = await fetch("/api/visits", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ salesperson_id, store_name, customer_type, category,
-            area, pic_name, address, postal_code, notes, activity_type: activityType }),
-        }).then(r => r.json()).catch(() => ({ error: "Koneksi gagal." }));
+        let res;
+        if (activityType === "eskalasi") {
+          res = await fetch("/api/escalations", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ salesperson_id, store_name, category, area, address, notes }),
+          }).then(r => r.json()).catch(() => ({ error: "Koneksi gagal." }));
+        } else {
+          res = await fetch("/api/visits", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ salesperson_id, store_name, customer_type, category,
+              area, pic_name, address, postal_code, notes, activity_type: activityType }),
+          }).then(r => r.json()).catch(() => ({ error: "Koneksi gagal." }));
+        }
 
         btn.disabled = false;
-        btn.textContent = activityType === "telepon" ? "Simpan Telepon" : "Simpan Kunjungan";
+        updateBtnLabel();
 
         if (res.error) {
           errEl.textContent = res.error;
           errEl.style.display = "block"; return;
         }
 
-        // Success — upload photos then show success panel
+        if (activityType === "eskalasi") {
+          showSuccess(res.escalation);
+          return;
+        }
+
+        // Normal visit — upload photos then show success panel
         const visitId = res.visit?.id;
         if (pendingPhotos.length && visitId) {
           await uploadPendingPhotos(visitId);
