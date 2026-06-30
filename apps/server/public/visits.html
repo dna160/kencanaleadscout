@@ -127,6 +127,13 @@
       }
       .btn-rackup:hover { background: rgba(255,255,255,.12); }
 
+      .btn-wa {
+        background: rgba(37,211,102,.1); border: 1px solid rgba(37,211,102,.35);
+        border-radius: 12px; padding: 14px 24px; color: #25d366;
+        font-family: var(--display); font-weight: 600; font-size: 16px; cursor: pointer;
+      }
+      .btn-wa:hover { background: rgba(37,211,102,.18); }
+
       /* ── Eskalasi callout ────────────────────────────────────────────── */
       .eskalasi-note {
         background: rgba(187,148,87,.08); border: 1px solid rgba(187,148,87,.3);
@@ -196,6 +203,7 @@
         <div class="success-time" id="success-time"></div>
         <div class="success-actions">
           <button class="btn-logagain" onclick="logAgain()">+ Log Lagi</button>
+          <button class="btn-wa" id="btn-wa" onclick="copyWaFormat()" style="display:none">📋 Copy Format WA</button>
           <a class="btn-rackup" id="btn-acct-link" href="#" style="display:none">Lihat Akun →</a>
           <a class="btn-rackup" href="/visits-rack">Lihat Rack-up →</a>
         </div>
@@ -424,14 +432,78 @@
         checkRequired();
       }
 
+      // ── Copy to WhatsApp ─────────────────────────────────────────────────
+      let lastSubmittedVisit = null;
+      let toastTimer = null;
+
+      const CUSTOMER_TYPE_LABELS = { new: "Baru (New)", old: "Lama (Old)" };
+
+      function showToast(msg) {
+        const el = $("toast");
+        el.textContent = msg;
+        el.classList.add("show");
+        if (toastTimer) clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => { el.classList.remove("show"); toastTimer = null; }, 2000);
+      }
+
+      function buildWaText(visit) {
+        const B = "•⁠  ";
+        const d = new Date(new Date(visit.visited_at).getTime() + WIB_MS);
+        const p = n => n.toString().padStart(2, "0");
+        const timeStr = `${p(d.getUTCHours())}:${p(d.getUTCMinutes())} WIB`;
+        const actLabel = visit.activity_type === "telepon" ? "Telepon" : "Kunjungan";
+
+        const lines = [];
+        lines.push(`📋 Laporan ${actLabel} · ${visit.store_name}`);
+        lines.push("");
+        lines.push(`${B}Tipe: ${CUSTOMER_TYPE_LABELS[visit.customer_type] ?? visit.customer_type ?? "-"}`);
+        lines.push(`${B}Kategori: ${visit.category ?? "-"}`);
+        lines.push(`${B}Area: ${visit.area ?? "-"}`);
+        if (visit.pic_name) lines.push(`${B}PIC: ${visit.pic_name}`);
+
+        if (visit.notes) {
+          const rawLines = visit.notes.split(/\r?\n/).filter(l => l.trim());
+          const noteLines = rawLines.length > 1 ? rawLines : visit.notes.split(/\.\s+/).filter(l => l.trim());
+          lines.push(`${B}Catatan:`);
+          noteLines.forEach(nl => {
+            const t = nl.trim();
+            lines.push(`  ${B}${/[.!?]$/.test(t) ? t : t + "."}`);
+          });
+        }
+
+        lines.push("");
+        lines.push(`Sales: ${visit.salesperson_name} · ${timeStr}`);
+        return lines.join("\n");
+      }
+
+      window.copyWaFormat = async function() {
+        if (!lastSubmittedVisit) return;
+        const text = buildWaText(lastSubmittedVisit);
+        try {
+          await navigator.clipboard.writeText(text);
+          showToast("Format WA disalin ✓");
+        } catch {
+          const ta = document.createElement("textarea");
+          ta.value = text;
+          ta.style.cssText = "position:fixed;opacity:0;pointer-events:none";
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand("copy");
+          document.body.removeChild(ta);
+          showToast("Format WA disalin ✓");
+        }
+      };
+
       // ── Post-submit state ────────────────────────────────────────────────
       function showSuccess(payload) {
         $("vform").style.display = "none";
         const panel = $("success-panel");
         panel.style.display = "flex";
 
-        // Reset account link
+        // Reset WA + account link
+        const waBtn   = $("btn-wa");
         const acctLink = $("btn-acct-link");
+        if (waBtn)    waBtn.style.display    = "none";
         if (acctLink) acctLink.style.display = "none";
 
         if (activityType === "eskalasi") {
@@ -453,6 +525,8 @@
               acctLink.href = `/account?id=${payload.customer_id}`;
               acctLink.style.display = "";
             }
+            // Show WA copy button
+            if (waBtn) waBtn.style.display = "";
           }
         }
       }
@@ -470,6 +544,9 @@
         hideStageSection();
         const acctLink = $("btn-acct-link");
         if (acctLink) acctLink.style.display = "none";
+        const waBtn = $("btn-wa");
+        if (waBtn) waBtn.style.display = "none";
+        lastSubmittedVisit = null;
         checkRequired();
         updateBtnLabel();
       };
@@ -706,7 +783,13 @@
           return;
         }
 
-        // Normal visit — upload photos then show success panel
+        // Normal visit — capture for WA copy, upload photos, show success panel
+        const spOption = $("f-sales").selectedOptions[0];
+        const salesperson_name = spOption
+          ? spOption.textContent.replace(/\s*\([A-Z0-9]+\)\s*$/, "").trim()
+          : "";
+        lastSubmittedVisit = { ...res.visit, salesperson_name };
+
         const visitId = res.visit?.id;
         if (pendingPhotos.length && visitId) {
           await uploadPendingPhotos(visitId);
