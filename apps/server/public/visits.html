@@ -127,12 +127,19 @@
       }
       .btn-rackup:hover { background: rgba(255,255,255,.12); }
 
-      .btn-wa {
-        background: rgba(37,211,102,.1); border: 1px solid rgba(37,211,102,.35);
-        border-radius: 12px; padding: 14px 24px; color: #25d366;
-        font-family: var(--display); font-weight: 600; font-size: 16px; cursor: pointer;
+      .wa-preview {
+        width: 100%; background: rgba(37,211,102,.07); border: 1px solid rgba(37,211,102,.3);
+        border-radius: 14px; padding: 16px 18px; color: #d4f5e0;
+        font-family: var(--sans); font-size: 13px; line-height: 1.65;
+        white-space: pre-wrap; text-align: left; cursor: pointer;
+        transition: background .15s; position: relative;
       }
-      .btn-wa:hover { background: rgba(37,211,102,.18); }
+      .wa-preview:hover { background: rgba(37,211,102,.12); }
+      .wa-preview:active { background: rgba(37,211,102,.18); }
+      .wa-copy-hint {
+        display: block; margin-top: 10px; text-align: center; color: #25d366;
+        font-size: 12px; font-weight: 600; letter-spacing: .4px;
+      }
 
       /* ── Eskalasi callout ────────────────────────────────────────────── */
       .eskalasi-note {
@@ -201,9 +208,9 @@
         <div class="success-title" id="success-title">Kunjungan Tersimpan</div>
         <div class="success-sub" id="success-sub"></div>
         <div class="success-time" id="success-time"></div>
+        <div id="wa-preview" class="wa-preview" onclick="copyWaFormat()" style="display:none"></div>
         <div class="success-actions">
           <button class="btn-logagain" onclick="logAgain()">+ Log Lagi</button>
-          <button class="btn-wa" id="btn-wa" onclick="copyWaFormat()" style="display:none">📋 Copy Format WA</button>
           <a class="btn-rackup" id="btn-acct-link" href="#" style="display:none">Lihat Akun →</a>
           <a class="btn-rackup" href="/visits-rack">Lihat Rack-up →</a>
         </div>
@@ -481,7 +488,6 @@
         const text = buildWaText(lastSubmittedVisit);
         try {
           await navigator.clipboard.writeText(text);
-          showToast("Format WA disalin ✓");
         } catch {
           const ta = document.createElement("textarea");
           ta.value = text;
@@ -490,8 +496,8 @@
           ta.select();
           document.execCommand("copy");
           document.body.removeChild(ta);
-          showToast("Format WA disalin ✓");
         }
+        showToast("Pesan di copy ✓");
       };
 
       // ── Post-submit state ────────────────────────────────────────────────
@@ -500,11 +506,11 @@
         const panel = $("success-panel");
         panel.style.display = "flex";
 
-        // Reset WA + account link
-        const waBtn   = $("btn-wa");
-        const acctLink = $("btn-acct-link");
-        if (waBtn)    waBtn.style.display    = "none";
-        if (acctLink) acctLink.style.display = "none";
+        // Reset WA preview + account link
+        const waPreview = $("wa-preview");
+        const acctLink  = $("btn-acct-link");
+        if (waPreview) { waPreview.style.display = "none"; waPreview.textContent = ""; }
+        if (acctLink)  acctLink.style.display = "none";
 
         if (activityType === "eskalasi") {
           $("success-icon").textContent  = "📋";
@@ -527,8 +533,13 @@
             acctLink.href = `/account?id=${src.customer_id}`;
             acctLink.style.display = "";
           }
-          // Always show WA copy button for kunjungan/telepon
-          if (waBtn) waBtn.style.display = "";
+          // Show WA text preview — tap to copy
+          if (waPreview && lastSubmittedVisit) {
+            const previewText = buildWaText(lastSubmittedVisit);
+            waPreview.textContent = previewText;
+            waPreview.insertAdjacentHTML("beforeend", '<span class="wa-copy-hint">👆 Tap untuk copy pesan</span>');
+            waPreview.style.display = "";
+          }
         }
       }
 
@@ -545,8 +556,8 @@
         hideStageSection();
         const acctLink = $("btn-acct-link");
         if (acctLink) acctLink.style.display = "none";
-        const waBtn = $("btn-wa");
-        if (waBtn) waBtn.style.display = "none";
+        const waPreview2 = $("wa-preview");
+        if (waPreview2) { waPreview2.style.display = "none"; waPreview2.textContent = ""; }
         lastSubmittedVisit = null;
         checkRequired();
         updateBtnLabel();
