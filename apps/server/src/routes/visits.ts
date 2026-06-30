@@ -53,19 +53,37 @@ export async function visitsRoutes(app: FastifyInstance): Promise<void> {
 
     const salesperson_id = salesperson_id_raw;
 
-    // Derive account_type from category.
-    const account_type = ["Kontraktor", "Aplikator", "Project"].includes(category)
+    // Derive account_type and initial pipeline stage from category.
+    const account_type  = ["Kontraktor", "Aplikator", "Project"].includes(category)
       ? "project"
       : "repeating";
+    const initial_stage = account_type === "project" ? "prospek" : "aktif";
 
-    // Upsert customer master so New/Old auto-detection + pipeline work.
+    // Optional explicit stage update submitted from the visit form.
+    const new_stage_raw = b.new_stage ? String(b.new_stage).trim().toLowerCase() : null;
+    const VALID_PROJECT_STAGES   = new Set(["prospek","penawaran","negosiasi","won","gugur"]);
+    const VALID_REPEATING_STAGES = new Set(["aktif","perlu_followup","at_risk","hibernasi"]);
+    const valid_stages  = account_type === "project" ? VALID_PROJECT_STAGES : VALID_REPEATING_STAGES;
+    const new_stage     = new_stage_raw && valid_stages.has(new_stage_raw) ? new_stage_raw : null;
+
+    // Detect whether the customer already exists before upsert (to log initial stage).
     let customer_id: number | null = null;
+    let was_new  = false;
+    let prev_stage: string | null = null;
     try {
-      const [cust] = await db<{ id: number }[]>`
+      const [existing] = await db<{ id: number; stage: string }[]>`
+        select id, stage from customers
+        where lower(trim(store_name)) = lower(trim(${store_name}))
+          and coalesce(area,'') = coalesce(${area},'')
+      `;
+      was_new    = !existing;
+      prev_stage = existing?.stage ?? null;
+
+      const [cust] = await db<{ id: number; stage: string }[]>`
         insert into customers (store_name, category, area, address, postal_code,
-                               first_seen_at, created_by, account_type, last_contact_at, owner_id)
+                               first_seen_at, created_by, account_type, stage, last_contact_at, owner_id)
         values (${store_name}, ${category}, ${area}, ${address}, ${postal_code},
-                now(), ${salesperson_id}, ${account_type}, now(), ${salesperson_id})
+                now(), ${salesperson_id}, ${account_type}, ${initial_stage}, now(), ${salesperson_id})
         on conflict (lower(trim(store_name)), coalesce(area, ''))
         do update set
           category        = customers.category,
@@ -75,13 +93,15 @@ export async function visitsRoutes(app: FastifyInstance): Promise<void> {
           owner_id        = coalesce(customers.owner_id, excluded.owner_id),
           stage           = case
             when customers.stage = 'hibernasi' then customers.stage
-            else coalesce(customers.stage, 'aktif')
+            else coalesce(customers.stage, excluded.stage)
           end
-        returning id
+        returning id, stage
       `;
       customer_id = cust?.id ?? null;
+      if (was_new) prev_stage = null;
+      else         prev_stage = cust?.stage ?? prev_stage;
     } catch {
-      // non-fatal — visit is still saved without the customer link
+      // non-fatal — visit still saved without customer link
     }
 
     const [visit] = await db`
@@ -96,6 +116,31 @@ export async function visitsRoutes(app: FastifyInstance): Promise<void> {
       )
       returning *
     `;
+
+    // Side-effects (non-fatal): actions timeline + stage history.
+    if (customer_id) {
+      // Auto-record visit in the account's activity timeline.
+      db`
+        insert into actions (account_id, salesperson_id, action_type, notes, actioned_at)
+        values (${customer_id}, ${salesperson_id}, ${activity_type}, ${notes}, now())
+      `.catch(() => {});
+
+      if (was_new) {
+        // Record the initial pipeline stage for a newly created account.
+        db`
+          insert into stage_history (account_id, old_stage, new_stage, changed_by)
+          values (${customer_id}, null, ${initial_stage}, ${salesperson_id})
+        `.catch(() => {});
+      } else if (new_stage && new_stage !== prev_stage) {
+        // Apply explicit stage update from visit form.
+        db`update customers set stage = ${new_stage} where id = ${customer_id}`.catch(() => {});
+        db`
+          insert into stage_history (account_id, old_stage, new_stage, changed_by)
+          values (${customer_id}, ${prev_stage}, ${new_stage}, ${salesperson_id})
+        `.catch(() => {});
+      }
+    }
+
     return { ok: true, visit };
   });
 
@@ -582,11 +627,26 @@ Fokus pada insight yang actionable. Jangan ulangi daftar kunjungan.`;
     if (!db) return reply.code(503).send({ error: "Database not configured." });
 
     const q = request.query.q ? `%${request.query.q}%` : "%";
-    const rows = await db<{ store_name: string; category: string; area: string | null }[]>`
-      select store_name, category, area
-      from customers
-      where lower(store_name) like lower(${q})
-      order by store_name
+    const rows = await db<{
+      id: number; store_name: string; category: string; area: string | null;
+      account_type: string | null; stage: string | null;
+      address: string | null; postal_code: string | null; last_pic_name: string | null;
+    }[]>`
+      select
+        c.id, c.store_name, c.category, c.area,
+        c.account_type, c.stage,
+        c.address, c.postal_code,
+        (
+          select v.pic_name
+          from visits v
+          where v.customer_id = c.id
+            and v.pic_name is not null
+          order by v.visited_at desc
+          limit 1
+        ) as last_pic_name
+      from customers c
+      where lower(c.store_name) like lower(${q})
+      order by c.store_name
       limit 20
     `;
     return { suggestions: rows };

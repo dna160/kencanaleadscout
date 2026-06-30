@@ -135,6 +135,13 @@
       }
       .eskalasi-note b { display: block; margin-bottom: 4px; font-size: 13.5px; }
 
+      /* ── Inline stage update ──────────────────────────────────────────── */
+      .stage-current {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 4px 11px; border-radius: 99px; font-size: 12px; font-weight: 600;
+        background: rgba(187,148,87,.13); color: var(--gold); border: 1px solid rgba(187,148,87,.28);
+      }
+
       /* ── Photo section ───────────────────────────────────────────────── */
       .photo-grid { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 2px; }
       .photo-add {
@@ -274,6 +281,18 @@
           <textarea id="f-notes" rows="4" placeholder="Topik yang dibahas, kebutuhan, rencana follow-up..."></textarea>
         </div>
 
+        <!-- Inline stage update — visible only when an existing customer is matched -->
+        <div id="stage-section" style="display:none">
+          <div class="divider"></div>
+          <div class="field">
+            <label>Update Tahap <span class="opt">opsional</span></label>
+            <select id="f-stage">
+              <option value="">— Tidak ada perubahan tahap —</option>
+            </select>
+            <div id="stage-hint" style="font-size:12px;color:var(--muted);margin-top:6px"></div>
+          </div>
+        </div>
+
         <div class="divider"></div>
 
         <div class="field">
@@ -337,6 +356,40 @@
 
       // ── Prefill from ?prefill=accountId ─────────────────────────────────
       let prefillAccountId = null;
+      let matchedCustomer  = null;
+
+      // Stage label map (project + repeating)
+      function stageName(s) {
+        const m = {
+          prospek:'Prospek', penawaran:'Penawaran', negosiasi:'Negosiasi', won:'Won', gugur:'Gugur',
+          aktif:'Aktif', perlu_followup:'Perlu Follow-up', at_risk:'At Risk', hibernasi:'Hibernasi',
+        };
+        return m[s] || s;
+      }
+
+      function showStageSection(customer) {
+        const sel = $("f-stage");
+        sel.innerHTML = '<option value="">— Tidak ada perubahan tahap —</option>';
+        const isProject = customer.account_type === 'project';
+        const stages = isProject
+          ? [['prospek','Prospek'],['penawaran','Penawaran'],['negosiasi','Negosiasi'],['won','Won'],['gugur','Gugur']]
+          : [['aktif','Aktif'],['perlu_followup','Perlu Follow-up'],['at_risk','At Risk'],['hibernasi','Hibernasi']];
+        stages.forEach(([val, lbl]) => {
+          const o = document.createElement('option');
+          o.value = val; o.textContent = lbl;
+          if (val === customer.stage) o.selected = true;
+          sel.appendChild(o);
+        });
+        $("stage-hint").innerHTML = customer.stage
+          ? `Tahap saat ini: <span class="stage-current">${stageName(customer.stage)}</span>`
+          : '';
+        $("stage-section").style.display = '';
+      }
+
+      function hideStageSection() {
+        $("stage-section").style.display = 'none';
+        matchedCustomer = null;
+      }
 
       window.clearPrefill = function() {
         prefillAccountId = null;
@@ -345,6 +398,7 @@
         $("f-type").value  = "";
         $("f-cat").value   = "";
         $("f-area").value  = "";
+        hideStageSection();
         checkRequired();
       };
 
@@ -357,9 +411,15 @@
         $("f-type").value  = "old";
         $("f-cat").value   = a.category ?? "";
         $("f-area").value  = a.area ?? "";
+        if (a.address)     $("f-addr").value   = a.address;
+        if (a.postal_code) $("f-postal").value = a.postal_code;
         const banner = $("prefill-banner");
         $("prefill-text").textContent = `Melanjutkan dari akun: ${a.store_name}`;
         banner.style.display = "flex";
+        if (a.stage || a.account_type) {
+          matchedCustomer = { id: a.id, stage: a.stage, account_type: a.account_type };
+          showStageSection(matchedCustomer);
+        }
         checkRequired();
       }
 
@@ -397,6 +457,7 @@
         renderPhotoGrid();
         $("prefill-banner").style.display = "none";
         prefillAccountId = null;
+        hideStageSection();
         checkRequired();
         updateBtnLabel();
       };
@@ -447,7 +508,7 @@
         if (prefillId) applyPrefill(Number(prefillId));
       }
 
-      // Store-name autocomplete + auto-suggest Old + prefill area when matched
+      // Store-name autocomplete — fills all known fields when existing customer matched
       let acTimer;
       $("f-store").addEventListener("input", () => {
         clearTimeout(acTimer);
@@ -465,8 +526,18 @@
             s => s.store_name.toLowerCase() === q.toLowerCase()
           );
           if (match) {
-            if (!$("f-type").value) $("f-type").value = "old";
-            if (match.area && !$("f-area").value) $("f-area").value = match.area;
+            // Auto-set tipe to "lama" and fill all known fields
+            if (!$("f-type").value)  $("f-type").value  = "old";
+            if (match.category && !$("f-cat").value)   $("f-cat").value   = match.category;
+            if (match.area     && !$("f-area").value)  $("f-area").value  = match.area;
+            if (match.address  && !$("f-addr").value)  $("f-addr").value  = match.address;
+            if (match.postal_code && !$("f-postal").value) $("f-postal").value = match.postal_code;
+            if (match.last_pic_name && !$("f-pic").value)  $("f-pic").value    = match.last_pic_name;
+            matchedCustomer = match;
+            showStageSection(match);
+            checkRequired();
+          } else {
+            hideStageSection();
           }
         }, 280);
       });
@@ -576,7 +647,7 @@
         const missing = [];
         if (!salesperson_id) missing.push("Sales");
         if (!store_name)     missing.push("Nama Toko");
-        if (!customer_type)  missing.push("Tipe Customer");
+        if (activityType !== "eskalasi" && !customer_type) missing.push("Tipe Customer");
         if (!category)       missing.push("Kategori");
         if (!area)           missing.push("Area");
         if (missing.length) {
@@ -600,11 +671,13 @@
             body: JSON.stringify({ salesperson_id, store_name, category, area, address, notes }),
           }).then(r => r.json()).catch(() => ({ error: "Koneksi gagal." }));
         } else {
+          const new_stage = matchedCustomer ? ($("f-stage")?.value || null) : null;
           res = await fetch("/api/visits", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ salesperson_id, store_name, customer_type, category,
-              area, pic_name, address, postal_code, notes, activity_type: activityType }),
+              area, pic_name, address, postal_code, notes, activity_type: activityType,
+              ...(new_stage ? { new_stage } : {}) }),
           }).then(r => r.json()).catch(() => ({ error: "Koneksi gagal." }));
         }
 
