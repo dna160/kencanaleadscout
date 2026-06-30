@@ -463,15 +463,17 @@
         const lines = [];
         lines.push(`📋 Laporan ${actLabel} · ${visit.store_name}`);
         lines.push("");
-        lines.push(`${B}Tipe: ${CUSTOMER_TYPE_LABELS[visit.customer_type] ?? visit.customer_type ?? "-"}`);
+        lines.push(`${B}Jenis Customer: ${CUSTOMER_TYPE_LABELS[visit.customer_type] ?? visit.customer_type ?? "-"}`);
         lines.push(`${B}Kategori: ${visit.category ?? "-"}`);
         lines.push(`${B}Area: ${visit.area ?? "-"}`);
-        if (visit.pic_name) lines.push(`${B}PIC: ${visit.pic_name}`);
+        if (visit.address)     lines.push(`${B}Alamat: ${visit.address}`);
+        if (visit.postal_code) lines.push(`${B}Kode Pos: ${visit.postal_code}`);
+        if (visit.pic_name)    lines.push(`${B}PIC: ${visit.pic_name}`);
 
         if (visit.notes) {
           const rawLines = visit.notes.split(/\r?\n/).filter(l => l.trim());
           const noteLines = rawLines.length > 1 ? rawLines : visit.notes.split(/\.\s+/).filter(l => l.trim());
-          lines.push(`${B}Catatan:`);
+          lines.push(`${B}Hasil Kunjungan:`);
           noteLines.forEach(nl => {
             const t = nl.trim();
             lines.push(`  ${B}${/[.!?]$/.test(t) ? t : t + "."}`);
@@ -801,7 +803,7 @@
           ? spOption.textContent.replace(/\s*\([A-Z0-9]+\)\s*$/, "").trim()
           : "";
         lastSubmittedVisit = {
-          store_name, customer_type, category, area, pic_name, notes,
+          store_name, customer_type, category, area, pic_name, notes, address, postal_code,
           activity_type: activityType,
           visited_at: (res.visit?.visited_at) ?? new Date().toISOString(),
           customer_id: res.visit?.customer_id ?? null,
