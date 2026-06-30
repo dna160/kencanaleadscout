@@ -515,19 +515,20 @@
           $("success-icon").textContent = "✓";
           const label = activityType === "telepon" ? "Telepon" : "Kunjungan";
           $("success-title").textContent = `${label} Tersimpan ✓`;
-          if (payload) {
-            const d  = new Date(new Date(payload.visited_at).getTime() + WIB_MS);
-            const p  = n => n.toString().padStart(2,'0');
+          // Use API response for time/store-link if available; fall back to lastSubmittedVisit
+          const src = payload ?? lastSubmittedVisit ?? {};
+          if (src.visited_at) {
+            const d = new Date(new Date(src.visited_at).getTime() + WIB_MS);
+            const p = n => n.toString().padStart(2, '0');
             $("success-time").textContent = `Dicatat: ${p(d.getUTCHours())}:${p(d.getUTCMinutes())} WIB`;
-            $("success-sub").textContent  = payload.store_name ?? "";
-            // Show "Lihat Akun" link when customer is linked
-            if (payload.customer_id && acctLink) {
-              acctLink.href = `/account?id=${payload.customer_id}`;
-              acctLink.style.display = "";
-            }
-            // Show WA copy button
-            if (waBtn) waBtn.style.display = "";
           }
+          $("success-sub").textContent = src.store_name ?? "";
+          if (src.customer_id && acctLink) {
+            acctLink.href = `/account?id=${src.customer_id}`;
+            acctLink.style.display = "";
+          }
+          // Always show WA copy button for kunjungan/telepon
+          if (waBtn) waBtn.style.display = "";
         }
       }
 
@@ -783,12 +784,18 @@
           return;
         }
 
-        // Normal visit — capture for WA copy, upload photos, show success panel
+        // Capture visit data for WA copy from form fields (not relying on API response shape)
         const spOption = $("f-sales").selectedOptions[0];
         const salesperson_name = spOption
           ? spOption.textContent.replace(/\s*\([A-Z0-9]+\)\s*$/, "").trim()
           : "";
-        lastSubmittedVisit = { ...res.visit, salesperson_name };
+        lastSubmittedVisit = {
+          store_name, customer_type, category, area, pic_name, notes,
+          activity_type: activityType,
+          visited_at: (res.visit?.visited_at) ?? new Date().toISOString(),
+          customer_id: res.visit?.customer_id ?? null,
+          salesperson_name,
+        };
 
         const visitId = res.visit?.id;
         if (pendingPhotos.length && visitId) {
