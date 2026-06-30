@@ -196,6 +196,7 @@
         <div class="success-time" id="success-time"></div>
         <div class="success-actions">
           <button class="btn-logagain" onclick="logAgain()">+ Log Lagi</button>
+          <a class="btn-rackup" id="btn-acct-link" href="#" style="display:none">Lihat Akun →</a>
           <a class="btn-rackup" href="/visits-rack">Lihat Rack-up →</a>
         </div>
       </div>
@@ -429,6 +430,10 @@
         const panel = $("success-panel");
         panel.style.display = "flex";
 
+        // Reset account link
+        const acctLink = $("btn-acct-link");
+        if (acctLink) acctLink.style.display = "none";
+
         if (activityType === "eskalasi") {
           $("success-icon").textContent  = "📋";
           $("success-title").textContent = "Eskalasi Terkirim ✓";
@@ -443,6 +448,11 @@
             const p  = n => n.toString().padStart(2,'0');
             $("success-time").textContent = `Dicatat: ${p(d.getUTCHours())}:${p(d.getUTCMinutes())} WIB`;
             $("success-sub").textContent  = payload.store_name ?? "";
+            // Show "Lihat Akun" link when customer is linked
+            if (payload.customer_id && acctLink) {
+              acctLink.href = `/account?id=${payload.customer_id}`;
+              acctLink.style.display = "";
+            }
           }
         }
       }
@@ -458,6 +468,8 @@
         $("prefill-banner").style.display = "none";
         prefillAccountId = null;
         hideStageSection();
+        const acctLink = $("btn-acct-link");
+        if (acctLink) acctLink.style.display = "none";
         checkRequired();
         updateBtnLabel();
       };

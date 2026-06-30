@@ -273,7 +273,7 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
     const todayEndUTC   = new Date(todayStartUTC.getTime() + 24 * 3600 * 1000);
     const sevenDaysOut  = new Date(todayEndUTC.getTime()   + 6  * 24 * 3600 * 1000);
 
-    const [overdue, today, upcoming, atRisk, stats, portfolioRows, wonRows, resolvedEscalations] = await Promise.all([
+    const [overdue, today, upcoming, atRisk, stats, portfolioRows, wonRows, resolvedEscalations, todayVisits] = await Promise.all([
       // Overdue: past due, not completed, for this rep
       db`
         select sa.id, sa.account_id, sa.action_type, sa.scheduled_for, sa.notes,
@@ -374,6 +374,19 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
         order by resolved_at desc
         limit 20
       `,
+      // Visits logged today by this rep (for "Kunjungan Hari Ini" feed)
+      db`
+        select v.id, v.store_name, v.category, v.area, v.pic_name,
+               v.notes, v.activity_type, v.visited_at, v.customer_id,
+               c.stage, c.account_type
+        from visits v
+        left join customers c on c.id = v.customer_id
+        where v.salesperson_id = ${rep_id}
+          and v.visited_at >= ${todayStartUTC}
+          and v.visited_at <  ${todayEndUTC}
+        order by v.visited_at desc
+        limit 50
+      `,
     ]);
 
     const pc = portfolioRows[0] ?? {};
@@ -394,6 +407,7 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
         hibernasi:      pc.hibernasi      ?? 0,
       },
       resolved_escalations: resolvedEscalations,
+      today_visits:         todayVisits,
     };
   });
 }

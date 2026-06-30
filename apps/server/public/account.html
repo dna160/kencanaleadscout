@@ -299,6 +299,11 @@ const ACCT_ID = Number(params.get('id'));
 let salespeople = [];
 let pendingActionType = null;
 
+function esc(s) {
+  if (s == null) return "";
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function stageBadge(s) {
@@ -429,7 +434,10 @@ function renderPage({account, actions, stage_history, scheduled}) {
             <span>Terakhir kontak: ${fmtWib(account.last_contact_at)}</span>
           </div>
         </div>
-        <div>${stageBadge(account.stage)}</div>
+        <div style="text-align:right">
+          ${stageBadge(account.stage)}
+          ${account.owner_name ? `<div style="font-size:11px;color:var(--muted);margin-top:4px">oleh ${esc(account.owner_name)}</div>` : ''}
+        </div>
       </div>
       <div class="stage-row">
         <label>Ubah stage</label>

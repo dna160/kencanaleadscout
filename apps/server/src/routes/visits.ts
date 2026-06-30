@@ -119,10 +119,11 @@ export async function visitsRoutes(app: FastifyInstance): Promise<void> {
 
     // Side-effects (non-fatal): actions timeline + stage history.
     if (customer_id) {
-      // Auto-record visit in the account's activity timeline.
+      // Auto-record visit in the account's activity timeline, enriched with PIC name.
+      const actionNote = [pic_name ? `PIC: ${pic_name}` : null, notes].filter(Boolean).join("\n") || null;
       db`
         insert into actions (account_id, salesperson_id, action_type, notes, actioned_at)
-        values (${customer_id}, ${salesperson_id}, ${activity_type}, ${notes}, now())
+        values (${customer_id}, ${salesperson_id}, ${activity_type}, ${actionNote}, now())
       `.catch(() => {});
 
       if (was_new) {

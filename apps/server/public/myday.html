@@ -151,6 +151,33 @@
       border-radius: 8px; padding: 7px 16px; cursor: pointer; font-size: 12.5px; font-weight: 600;
       text-decoration: none; display: inline-block; }
 
+    /* ── Zone: Kunjungan Hari Ini ────────────────────────────────────── */
+    .zone-hari-ini { padding: 16px 0 0; display: none; }
+    .zone-hari-ini.has-items { display: block; }
+    .zhi-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+    .zhi-title { font-family: var(--display); font-size: 15px; font-weight: 700; }
+    .zhi-badge {
+      background: rgba(46,111,214,.2); color: #7eb8f7; border-radius: 99px;
+      font-size: 11px; font-weight: 700; padding: 2px 9px; letter-spacing: .3px;
+    }
+    .vlog-item {
+      border: 1px solid var(--line); border-radius: 12px; padding: 12px 15px;
+      background: rgba(255,255,255,.03); margin-bottom: 8px;
+      display: flex; align-items: flex-start; gap: 10px;
+    }
+    .vlog-dot {
+      width: 9px; height: 9px; border-radius: 50%; margin-top: 5px; flex-shrink: 0;
+      background: #7eb8f7;
+    }
+    .vlog-dot.telepon { background: #c4b5fd; }
+    .vlog-body { flex: 1; }
+    .vlog-store { font-weight: 600; font-size: 13.5px; }
+    .vlog-store a { color: inherit; text-decoration: none; }
+    .vlog-store a:hover { color: var(--gold); }
+    .vlog-meta { color: var(--muted); font-size: 12px; margin-top: 3px; }
+    .vlog-notes { font-size: 12.5px; color: #b8c4d8; margin-top: 4px; font-style: italic; }
+    .vlog-time { font-size: 11.5px; color: var(--muted); white-space: nowrap; padding-top: 2px; }
+
     /* ── Zone 3: Full Account List ───────────────────────────────────── */
     .zone3 { padding-top: 24px; }
     .zone3-header {
@@ -274,6 +301,15 @@
       <span class="zone2b-badge" id="z2b-count">0</span>
     </div>
     <div id="esk-resolved-list"></div>
+  </div>
+
+  <!-- Zone: Kunjungan Hari Ini (today's logged visits) -->
+  <div class="zone-hari-ini" id="zone-hari-ini">
+    <div class="zhi-header">
+      <div class="zhi-title">Kunjungan Hari Ini</div>
+      <span class="zhi-badge" id="zhi-count">0</span>
+    </div>
+    <div id="hari-ini-list"></div>
   </div>
 
   <!-- Zone 3: Full Account List -->
@@ -474,6 +510,33 @@
     }).join('');
   }
 
+  // ── Zone: Kunjungan Hari Ini ───────────────────────────────────────────────
+
+  function renderTodayVisits(visits) {
+    const zone = $("zone-hari-ini");
+    if (!visits || !visits.length) { zone.classList.remove("has-items"); return; }
+    zone.classList.add("has-items");
+    $("zhi-count").textContent = visits.length;
+    $("hari-ini-list").innerHTML = visits.map(v => {
+      const isTelepon = v.activity_type === "telepon";
+      const stagePart = v.stage ? ` ${stageBadge(v.stage)}` : "";
+      const metaParts = [esc(v.category ?? ""), esc(v.area ?? "")].filter(Boolean).join(" · ");
+      const picPart   = v.pic_name ? ` · PIC: ${esc(v.pic_name)}` : "";
+      return `
+        <div class="vlog-item">
+          <div class="vlog-dot${isTelepon ? " telepon" : ""}"></div>
+          <div class="vlog-body">
+            <div class="vlog-store">
+              ${v.customer_id ? `<a href="/account?id=${v.customer_id}">${esc(v.store_name)}</a>` : esc(v.store_name)}${stagePart}
+            </div>
+            <div class="vlog-meta">${isTelepon ? "📞 Telepon" : "🚶 Kunjungan"} · ${metaParts}${picPart}</div>
+            ${v.notes ? `<div class="vlog-notes">${esc(v.notes)}</div>` : ""}
+          </div>
+          <div class="vlog-time">${fmtWib(v.visited_at)} WIB</div>
+        </div>`;
+    }).join("");
+  }
+
   // ── Zone 2b: Resolved Escalations ─────────────────────────────────────────
 
   function renderResolvedEscalations(items) {
@@ -543,6 +606,7 @@
       renderScheduledList(myday.today   ?? [], 'today-list',   false);
       autoCollapseZone2(myday.overdue ?? [], myday.today ?? []);
       renderResolvedEscalations(myday.resolved_escalations ?? []);
+      renderTodayVisits(myday.today_visits ?? []);
     }
 
     allAccounts = accts.accounts ?? [];
