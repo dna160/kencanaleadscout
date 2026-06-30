@@ -72,19 +72,20 @@ async function main(): Promise<void> {
   app.get("/health", async () => ({ ok: true, db: await pingDatabase() }));
 
   // Surfaces.
-  app.get("/", (_req, reply) => reply.sendFile("index.html"));
-  app.get("/scraper", (_req, reply) => reply.sendFile("scraper.html"));
-  app.get("/calls", (_req, reply) => reply.sendFile("calls.html"));
-  app.get("/champion", (_req, reply) => reply.sendFile("champion.html"));
-  app.get("/handler", (_req, reply) => reply.sendFile("handler.html"));
-  app.get("/sales-lead", (_req, reply) => reply.sendFile("sales-lead.html"));
-  app.get("/visits", (_req, reply) => reply.sendFile("visits.html"));
-  app.get("/visits-rack", (_req, reply) => reply.sendFile("visits-rack.html"));
-  app.get("/visits-rep", (_req, reply) => reply.sendFile("visits-rep.html"));
-  app.get("/salespeople", (_req, reply) => reply.sendFile("salespeople.html"));
-  app.get("/visits-insights", (_req, reply) => reply.sendFile("visits-insights.html"));
-  app.get("/myday",           (_req, reply) => reply.sendFile("myday.html"));
-  app.get("/account",         (_req, reply) => reply.sendFile("account.html"));
+  const NC = "no-cache, no-store, must-revalidate";
+  app.get("/", (_req, reply) => reply.header("Cache-Control", NC).sendFile("index.html"));
+  app.get("/scraper", (_req, reply) => reply.header("Cache-Control", NC).sendFile("scraper.html"));
+  app.get("/calls", (_req, reply) => reply.header("Cache-Control", NC).sendFile("calls.html"));
+  app.get("/champion", (_req, reply) => reply.header("Cache-Control", NC).sendFile("champion.html"));
+  app.get("/handler", (_req, reply) => reply.header("Cache-Control", NC).sendFile("handler.html"));
+  app.get("/sales-lead", (_req, reply) => reply.header("Cache-Control", NC).sendFile("sales-lead.html"));
+  app.get("/visits", (_req, reply) => reply.header("Cache-Control", NC).sendFile("visits.html"));
+  app.get("/visits-rack", (_req, reply) => reply.header("Cache-Control", NC).sendFile("visits-rack.html"));
+  app.get("/visits-rep", (_req, reply) => reply.header("Cache-Control", NC).sendFile("visits-rep.html"));
+  app.get("/salespeople", (_req, reply) => reply.header("Cache-Control", NC).sendFile("salespeople.html"));
+  app.get("/visits-insights", (_req, reply) => reply.header("Cache-Control", NC).sendFile("visits-insights.html"));
+  app.get("/myday", (_req, reply) => reply.header("Cache-Control", NC).sendFile("myday.html"));
+  app.get("/account", (_req, reply) => reply.header("Cache-Control", NC).sendFile("account.html"));
 
   // [A] Scraper APIs.
   await app.register(enrichRoutes);
