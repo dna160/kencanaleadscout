@@ -32,7 +32,7 @@ export async function visitsRoutes(app: FastifyInstance): Promise<void> {
     const customer_type = String(b.customer_type ?? "").trim().toLowerCase();
     const category    = String(b.category    ?? "").trim();
     const address     = b.address     ? String(b.address).trim()     : null;
-    const area        = String(b.area        ?? "").trim();
+    const area        = String(b.area        ?? "").trim().replace(/\b\S+/g, w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
     const postal_code = b.postal_code ? String(b.postal_code).trim() : null;
     const notes       = b.notes       ? String(b.notes).trim()       : null;
     const activity_type_raw = b.activity_type ? String(b.activity_type).trim().toLowerCase() : "kunjungan";

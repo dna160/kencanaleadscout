@@ -284,6 +284,10 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
   await db`create index if not exists escalations_rep_idx    on escalations (salesperson_id, created_at desc)`;
   await db`create index if not exists escalations_status_idx on escalations (status, created_at desc)`;
 
+  // Normalize existing area values to Title Case (fixes "JAKARTA BARAT", "jakarta barat" → "Jakarta Barat")
+  await db`UPDATE visits    SET area = initcap(lower(area)) WHERE area IS NOT NULL AND area <> initcap(lower(area))`;
+  await db`UPDATE customers SET area = initcap(lower(area)) WHERE area IS NOT NULL AND area <> initcap(lower(area))`;
+
   // Seed categories + areas — wrapped so a missing visit_lists table never
   // prevents the salespeople seeding below from running.
   try {
