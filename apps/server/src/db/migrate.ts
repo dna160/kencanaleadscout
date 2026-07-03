@@ -284,9 +284,74 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
   await db`create index if not exists escalations_rep_idx    on escalations (salesperson_id, created_at desc)`;
   await db`create index if not exists escalations_status_idx on escalations (status, created_at desc)`;
 
-  // Normalize existing area values to Title Case (fixes "JAKARTA BARAT", "jakarta barat" → "Jakarta Barat")
+  // Normalize area to Title Case + upgrade unique index to be case-insensitive on area.
+  // Step 1: merge duplicate customers that differ only by area casing (keep lowest id, re-point FKs).
+  await db`
+    WITH ranked AS (
+      SELECT id,
+        FIRST_VALUE(id) OVER (
+          PARTITION BY lower(trim(store_name)), lower(coalesce(area,''))
+          ORDER BY id ASC
+        ) AS keep_id
+      FROM customers
+    ),
+    dupes AS (SELECT id, keep_id FROM ranked WHERE id <> keep_id)
+    UPDATE visits     SET customer_id = dupes.keep_id FROM dupes WHERE visits.customer_id     = dupes.id
+  `;
+  await db`
+    WITH ranked AS (
+      SELECT id,
+        FIRST_VALUE(id) OVER (
+          PARTITION BY lower(trim(store_name)), lower(coalesce(area,''))
+          ORDER BY id ASC
+        ) AS keep_id
+      FROM customers
+    ),
+    dupes AS (SELECT id, keep_id FROM ranked WHERE id <> keep_id)
+    UPDATE actions    SET account_id = dupes.keep_id FROM dupes WHERE actions.account_id    = dupes.id
+  `;
+  await db`
+    WITH ranked AS (
+      SELECT id,
+        FIRST_VALUE(id) OVER (
+          PARTITION BY lower(trim(store_name)), lower(coalesce(area,''))
+          ORDER BY id ASC
+        ) AS keep_id
+      FROM customers
+    ),
+    dupes AS (SELECT id, keep_id FROM ranked WHERE id <> keep_id)
+    UPDATE stage_history SET account_id = dupes.keep_id FROM dupes WHERE stage_history.account_id = dupes.id
+  `;
+  await db`
+    WITH ranked AS (
+      SELECT id,
+        FIRST_VALUE(id) OVER (
+          PARTITION BY lower(trim(store_name)), lower(coalesce(area,''))
+          ORDER BY id ASC
+        ) AS keep_id
+      FROM customers
+    ),
+    dupes AS (SELECT id, keep_id FROM ranked WHERE id <> keep_id)
+    UPDATE scheduled_actions SET account_id = dupes.keep_id FROM dupes WHERE scheduled_actions.account_id = dupes.id
+  `;
+  await db`
+    WITH ranked AS (
+      SELECT id,
+        FIRST_VALUE(id) OVER (
+          PARTITION BY lower(trim(store_name)), lower(coalesce(area,''))
+          ORDER BY id ASC
+        ) AS keep_id
+      FROM customers
+    ),
+    dupes AS (SELECT id, keep_id FROM ranked WHERE id <> keep_id)
+    DELETE FROM customers WHERE id IN (SELECT id FROM dupes)
+  `;
+  // Step 2: normalize area to Title Case on remaining rows.
   await db`UPDATE visits    SET area = initcap(lower(area)) WHERE area IS NOT NULL AND area <> initcap(lower(area))`;
   await db`UPDATE customers SET area = initcap(lower(area)) WHERE area IS NOT NULL AND area <> initcap(lower(area))`;
+  // Step 3: upgrade unique index to lower(coalesce(area,'')) so casing can never split again.
+  await db`DROP INDEX IF EXISTS customers_norm`;
+  await db`CREATE UNIQUE INDEX IF NOT EXISTS customers_norm ON customers (lower(trim(store_name)), lower(coalesce(area, '')))`;
 
   // Seed categories + areas — wrapped so a missing visit_lists table never
   // prevents the salespeople seeding below from running.

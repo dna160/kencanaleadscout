@@ -74,7 +74,7 @@ export async function visitsRoutes(app: FastifyInstance): Promise<void> {
       const [existing] = await db<{ id: number; stage: string }[]>`
         select id, stage from customers
         where lower(trim(store_name)) = lower(trim(${store_name}))
-          and coalesce(area,'') = coalesce(${area},'')
+          and lower(coalesce(area,'')) = lower(coalesce(${area},''))
       `;
       was_new    = !existing;
       prev_stage = existing?.stage ?? null;
@@ -84,7 +84,7 @@ export async function visitsRoutes(app: FastifyInstance): Promise<void> {
                                first_seen_at, created_by, account_type, stage, last_contact_at, owner_id)
         values (${store_name}, ${category}, ${area}, ${address}, ${postal_code},
                 now(), ${salesperson_id}, ${account_type}, ${initial_stage}, now(), ${salesperson_id})
-        on conflict (lower(trim(store_name)), coalesce(area, ''))
+        on conflict (lower(trim(store_name)), lower(coalesce(area, '')))
         do update set
           category        = customers.category,
           address         = coalesce(customers.address, excluded.address),
