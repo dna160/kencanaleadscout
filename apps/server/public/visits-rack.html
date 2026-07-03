@@ -418,7 +418,9 @@
       // ── 7-day spark ─────────────────────────────────────────────────────────
       function renderSpark(days) {
         const dayMap = {};
-        days.forEach(d => { dayMap[String(d.day)] = d; });
+        // postgres.js parses date OID as Date objects; JSON-serialized as ISO strings like
+        // "2026-06-27T00:00:00.000Z" — slice to "YYYY-MM-DD" so lookup matches client keys.
+        days.forEach(d => { dayMap[String(d.day).slice(0, 10)] = d; });
         const shifted  = new Date(Date.now() + WIB_MS);
         const todayWIB = new Date(Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate()));
         const sparks   = [];
