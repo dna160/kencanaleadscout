@@ -177,6 +177,29 @@
     .vlog-meta { color: var(--muted); font-size: 12px; margin-top: 3px; }
     .vlog-notes { font-size: 12.5px; color: #b8c4d8; margin-top: 4px; font-style: italic; }
     .vlog-time { font-size: 11.5px; color: var(--muted); white-space: nowrap; padding-top: 2px; }
+    .vlog-item { cursor: pointer; }
+    .vlog-wa { display: none; margin-top: 10px; }
+    .vlog-wa.open { display: block; }
+    .vlog-wa-preview {
+      background: rgba(37,211,102,.07); border: 1px solid rgba(37,211,102,.3);
+      border-radius: 12px; padding: 14px 16px; color: #d4f5e0;
+      font-family: var(--sans); font-size: 12px; line-height: 1.65;
+      white-space: pre-wrap; text-align: left; cursor: pointer;
+      transition: background .15s;
+    }
+    .vlog-wa-preview:hover { background: rgba(37,211,102,.12); }
+    .vlog-wa-preview:active { background: rgba(37,211,102,.18); }
+    .vlog-wa-hint {
+      display: block; margin-top: 8px; text-align: center; color: #25d366;
+      font-size: 11px; font-weight: 600; letter-spacing: .4px;
+    }
+    .toast {
+      position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
+      background: #1e3a1e; color: #7ee87e; border: 1px solid #3e9b4f;
+      border-radius: 12px; padding: 12px 22px; font-weight: 600; font-size: 14px;
+      z-index: 99; opacity: 0; transition: opacity .3s; pointer-events: none; white-space: nowrap;
+    }
+    .toast.show { opacity: 1; }
 
     /* ── Zone 3: Full Account List ───────────────────────────────────── */
     .zone3 { padding-top: 24px; }
@@ -323,6 +346,8 @@
 
 </div>
 
+<div id="toast" class="toast"></div>
+
 <script>
 (() => {
   "use strict";
@@ -333,6 +358,7 @@
   let activeFilter = "semua";
   let zone2Visible = true;
   let currentRepId = null;
+  let visitDataMap = {};
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -340,6 +366,70 @@
     if (s == null) return "";
     return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
   }
+
+  function showToast(msg) {
+    const t = $("toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    setTimeout(() => t.classList.remove("show"), 2500);
+  }
+
+  function buildWaText(v) {
+    const B = "•⁠  ";
+    const CTYPE = { new: "Baru", old: "Lama" };
+    const wib = iso => {
+      if (!iso) return "";
+      const d = new Date(new Date(iso).getTime() + WIB_MS);
+      const p = n => n.toString().padStart(2, "0");
+      return `${p(d.getUTCDate())}/${p(d.getUTCMonth()+1)}/${d.getUTCFullYear()} ${p(d.getUTCHours())}.${p(d.getUTCMinutes())} WIB`;
+    };
+    const lines = [];
+    lines.push("*Laporan Kunjungan*");
+    lines.push(`${B}Toko: ${v.store_name ?? ""}`);
+    lines.push(`${B}Jenis Customer: ${CTYPE[v.customer_type] ?? v.customer_type ?? ""}`);
+    lines.push(`${B}Kategori: ${v.category ?? ""}`);
+    lines.push(`${B}Area: ${v.area ?? ""}`);
+    if (v.address)     lines.push(`${B}Alamat: ${v.address}`);
+    if (v.postal_code) lines.push(`${B}Kode Pos: ${v.postal_code}`);
+    if (v.pic_name)    lines.push(`${B}PIC: ${v.pic_name}`);
+    if (v.notes) {
+      lines.push(`${B}Hasil Kunjungan:`);
+      v.notes.split("\n").forEach(l => lines.push(`    ${l}`));
+    }
+    lines.push(`Sales: ${v.salesperson_name ?? ""} · ${wib(v.visited_at)}`);
+    return lines.join("\n");
+  }
+
+  window.toggleWaCard = function(event, item) {
+    if (event.target.tagName === "A") return;
+    const waDiv = item.querySelector(".vlog-wa");
+    if (!waDiv) return;
+    const isOpen = waDiv.classList.toggle("open");
+    if (isOpen) {
+      const v = visitDataMap[item.dataset.id];
+      if (!v) return;
+      waDiv.querySelector(".vlog-wa-preview").textContent = buildWaText(v);
+    }
+  };
+
+  window.copyWaCard = async function(event, el) {
+    event.stopPropagation();
+    const v = visitDataMap[el.closest(".vlog-item").dataset.id];
+    if (!v) return;
+    const text = buildWaText(v);
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (_) {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.cssText = "position:fixed;opacity:0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
+    showToast("Pesan di copy ✓");
+  };
 
   function fmtWib(iso) {
     if (!iso) return null;
@@ -514,16 +604,18 @@
 
   function renderTodayVisits(visits) {
     const zone = $("zone-hari-ini");
+    visitDataMap = {};
     if (!visits || !visits.length) { zone.classList.remove("has-items"); return; }
     zone.classList.add("has-items");
     $("zhi-count").textContent = visits.length;
     $("hari-ini-list").innerHTML = visits.map(v => {
+      visitDataMap[v.id] = v;
       const isTelepon = v.activity_type === "telepon";
       const stagePart = v.stage ? ` ${stageBadge(v.stage)}` : "";
       const metaParts = [esc(v.category ?? ""), esc(v.area ?? "")].filter(Boolean).join(" · ");
       const picPart   = v.pic_name ? ` · PIC: ${esc(v.pic_name)}` : "";
       return `
-        <div class="vlog-item">
+        <div class="vlog-item" data-id="${v.id}" onclick="toggleWaCard(event, this)">
           <div class="vlog-dot${isTelepon ? " telepon" : ""}"></div>
           <div class="vlog-body">
             <div class="vlog-store">
@@ -531,6 +623,10 @@
             </div>
             <div class="vlog-meta">${isTelepon ? "📞 Telepon" : "🚶 Kunjungan"} · ${metaParts}${picPart}</div>
             ${v.notes ? `<div class="vlog-notes">${esc(v.notes)}</div>` : ""}
+            <div class="vlog-wa">
+              <div class="vlog-wa-preview" onclick="copyWaCard(event, this)"></div>
+              <span class="vlog-wa-hint">Ketuk untuk copy pesan WA</span>
+            </div>
           </div>
           <div class="vlog-time">${fmtWib(v.visited_at)} WIB</div>
         </div>`;
