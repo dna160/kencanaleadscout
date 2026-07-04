@@ -378,8 +378,11 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
       db`
         select v.id, v.store_name, v.category, v.area, v.pic_name,
                v.notes, v.activity_type, v.visited_at, v.customer_id,
+               v.customer_type, v.address, v.postal_code,
+               s.full_name as salesperson_name,
                c.stage, c.account_type
         from visits v
+        join salespeople s on s.id = v.salesperson_id
         left join customers c on c.id = v.customer_id
         where v.salesperson_id = ${rep_id}
           and v.visited_at >= ${todayStartUTC}
