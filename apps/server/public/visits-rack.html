@@ -600,7 +600,9 @@
       async function loadEskCount() {
         const data = await fetch("/api/escalations?status=pending").then(r => r.json()).catch(() => ({ count: 0 }));
         $("kEsk").textContent = data.count ?? 0;
-        if (eskPanelOpen) loadEskPanel();
+        // Do NOT call loadEskPanel() here — rebuilding the list on every 8s poll
+        // blanks the panel mid-view and destroys any open "Temukan Kontak" resolve
+        // form the user is filling in. The panel refreshes fresh on each manual open.
       }
 
       // ── Count bar (today + month summary) ──────────────────────────────────
