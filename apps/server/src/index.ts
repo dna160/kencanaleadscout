@@ -32,6 +32,7 @@ import { listsRoutes } from "./routes/lists.js";
 import { insightsRoutes } from "./routes/insights.js";
 import { accountsRoutes, startCadenceEngine } from "./routes/accounts.js";
 import { escalationsRoutes } from "./routes/escalations.js";
+import { miraeRoutes } from "./routes/mirae.js";
 
 const PUBLIC_DIR = fileURLToPath(new URL("../public", import.meta.url));
 
@@ -86,6 +87,9 @@ async function main(): Promise<void> {
   app.get("/visits-insights", (_req, reply) => reply.header("Cache-Control", NC).sendFile("visits-insights.html"));
   app.get("/myday", (_req, reply) => reply.header("Cache-Control", NC).sendFile("myday.html"));
   app.get("/account", (_req, reply) => reply.header("Cache-Control", NC).sendFile("account.html"));
+  app.get("/mirae-visits", (_req, reply) => reply.header("Cache-Control", NC).sendFile("mirae-visits.html"));
+  app.get("/mirae-rack", (_req, reply) => reply.header("Cache-Control", NC).sendFile("mirae-rack.html"));
+  app.get("/mirae-insights", (_req, reply) => reply.header("Cache-Control", NC).sendFile("mirae-insights.html"));
 
   // [A] Scraper APIs.
   await app.register(enrichRoutes);
@@ -107,6 +111,9 @@ async function main(): Promise<void> {
   await app.register(insightsRoutes);
   await app.register(accountsRoutes);
   await app.register(escalationsRoutes);
+
+  // [M] Mirae Visitation Log APIs.
+  await app.register(miraeRoutes);
 
   await bootDatabase(app);
   startCadenceEngine();

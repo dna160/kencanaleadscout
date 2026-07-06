@@ -390,6 +390,120 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
   } catch (seedErr) {
     console.error("[migrate] salespeople seeding failed (non-fatal):", seedErr);
   }
+
+  // ── Mirae Module — isolated visitation log ──────────────────────────────────
+  try {
+    await db`
+      create table if not exists mirae_salespeople (
+        id           bigserial primary key,
+        full_name    text not null,
+        code         text unique,
+        active       boolean not null default true,
+        created_at   timestamptz not null default now()
+      )
+    `;
+    await db`
+      create table if not exists mirae_visit_lists (
+        id     bigserial primary key,
+        type   text not null,
+        value  text not null,
+        active boolean not null default true
+      )
+    `;
+    await db`
+      create unique index if not exists mirae_visit_lists_type_value_idx
+        on mirae_visit_lists (type, lower(value))
+    `;
+    await db`
+      create table if not exists mirae_customers (
+        id            bigserial primary key,
+        store_name    text not null,
+        category      text not null,
+        area          text,
+        address       text,
+        postal_code   text,
+        first_seen_at timestamptz,
+        created_by    bigint references mirae_salespeople(id)
+      )
+    `;
+    await db`
+      create unique index if not exists mirae_customers_norm
+        on mirae_customers (lower(trim(store_name)), lower(coalesce(area, '')))
+    `;
+    await db`
+      create table if not exists mirae_visits (
+        id             bigserial primary key,
+        salesperson_id bigint not null references mirae_salespeople(id),
+        customer_id    bigint references mirae_customers(id),
+        pic_name       text,
+        store_name     text not null,
+        customer_type  text not null check (customer_type in ('new','old')),
+        category       text not null,
+        address        text,
+        area           text not null,
+        postal_code    text check (postal_code is null or postal_code ~ '^\\d{5}$'),
+        notes          text,
+        visited_at     timestamptz not null default now(),
+        created_at     timestamptz not null default now(),
+        activity_type  text not null default 'kunjungan',
+        source         text not null default 'app'
+      )
+    `;
+    await db`create index if not exists mirae_visits_rep_time on mirae_visits (salesperson_id, visited_at desc)`;
+    await db`create index if not exists mirae_visits_area     on mirae_visits (area)`;
+    await db`create index if not exists mirae_visits_type     on mirae_visits (customer_type)`;
+    await db`
+      create table if not exists mirae_visit_photos (
+        id         bigserial primary key,
+        visit_id   bigint not null references mirae_visits(id) on delete cascade,
+        file_data  bytea not null,
+        mime_type  text not null default 'image/jpeg',
+        filename   text,
+        file_size  int not null,
+        created_at timestamptz not null default now()
+      )
+    `;
+    await db`create index if not exists mirae_visit_photos_visit_idx on mirae_visit_photos (visit_id)`;
+    await db`
+      create table if not exists mirae_visit_audits (
+        id         bigserial primary key,
+        visit_id   bigint not null references mirae_visits(id),
+        field      text not null,
+        old_value  text,
+        new_value  text,
+        changed_by text,
+        changed_at timestamptz not null default now()
+      )
+    `;
+
+    // Seed categories + areas
+    for (const v of ["Toko", "Workshop", "Aplikator", "Kontraktor", "Distributor", "Advertising/Signage", "Project", "Other"]) {
+      await db`insert into mirae_visit_lists (type, value) values ('category', ${v}) on conflict do nothing`;
+    }
+    for (const v of [
+      "Bekasi Barat", "Bekasi Timur", "Bekasi Utara", "Bekasi Selatan", "Bekasi Kota",
+      "Cikarang", "Karawang", "Depok", "Tangerang Selatan",
+      "Jakarta Timur", "Jakarta Selatan", "Jakarta Pusat", "Jakarta Barat", "Jakarta Utara",
+      "Bogor",
+    ]) {
+      await db`insert into mirae_visit_lists (type, value) values ('area', ${v}) on conflict do nothing`;
+    }
+
+    // Seed Mirae salespeople
+    for (const r of [
+      { full_name: "Brilliano", code: "BRL" },
+      { full_name: "Bayu",      code: "BYU" },
+      { full_name: "Sarah",     code: "SRH" },
+    ]) {
+      await db`
+        insert into mirae_salespeople (full_name, code)
+        values (${r.full_name}, ${r.code})
+        on conflict (code) do nothing
+      `;
+    }
+  } catch (miraeErr) {
+    console.error("[migrate] Mirae module migration failed (non-fatal):", miraeErr);
+  }
 }
 
 // Allow `tsx src/db/migrate.ts` as a one-off.
