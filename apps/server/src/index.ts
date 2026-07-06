@@ -87,6 +87,7 @@ async function main(): Promise<void> {
   app.get("/visits-insights", (_req, reply) => reply.header("Cache-Control", NC).sendFile("visits-insights.html"));
   app.get("/myday", (_req, reply) => reply.header("Cache-Control", NC).sendFile("myday.html"));
   app.get("/account", (_req, reply) => reply.header("Cache-Control", NC).sendFile("account.html"));
+  app.get("/mirae-myday", (_req, reply) => reply.header("Cache-Control", NC).sendFile("mirae-myday.html"));
   app.get("/mirae-visits", (_req, reply) => reply.header("Cache-Control", NC).sendFile("mirae-visits.html"));
   app.get("/mirae-rack", (_req, reply) => reply.header("Cache-Control", NC).sendFile("mirae-rack.html"));
   app.get("/mirae-insights", (_req, reply) => reply.header("Cache-Control", NC).sendFile("mirae-insights.html"));
