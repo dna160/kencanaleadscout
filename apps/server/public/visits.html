@@ -386,10 +386,7 @@
       function showStageSection(customer) {
         const sel = $("f-stage");
         sel.innerHTML = '<option value="">— Tidak ada perubahan tahap —</option>';
-        const isProject = customer.account_type === 'project';
-        const stages = isProject
-          ? [['prospek','Prospek'],['penawaran','Penawaran'],['negosiasi','Negosiasi'],['won','Won'],['gugur','Gugur']]
-          : [['aktif','Aktif'],['perlu_followup','Perlu Follow-up'],['at_risk','At Risk'],['hibernasi','Hibernasi']];
+        const stages = [['prospek','Prospek'],['penawaran','Penawaran'],['negosiasi','Negosiasi'],['won','Won'],['gugur','Gugur']];
         stages.forEach(([val, lbl]) => {
           const o = document.createElement('option');
           o.value = val; o.textContent = lbl;

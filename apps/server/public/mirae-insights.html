@@ -222,13 +222,6 @@
         </div>
       </div>
 
-      <div class="section">
-        <div class="section-title">Akuisisi Customer Baru (Mingguan)</div>
-        <table class="trend-table">
-          <thead><tr><th>Minggu</th><th>Sales</th><th>Customer Baru</th></tr></thead>
-          <tbody id="trend-body"><tr><td colspan="3" class="spinner">Memuat…</td></tr></tbody>
-        </table>
-      </div>
     </div>
 
     <script>
@@ -269,7 +262,6 @@
         renderKPIs(teamRes);
         renderLeaderboard(teamRes, lbMode);
         renderHeatmap(teamRes);
-        renderTrend(teamRes);
 
         const spRes = await fetch("/api/mirae/salespeople").then(r => r.json()).catch(() => ({ salespeople: [] }));
         const salespeople = spRes.salespeople ?? [];
@@ -446,20 +438,6 @@
           }).join("");
           return `<tr><td class="area-label">${esc(area)}</td>${cells}</tr>`;
         }).join("");
-      }
-
-      function renderTrend(data) {
-        if (!data || data.weekly_trend.length === 0) {
-          $("trend-body").innerHTML = '<tr><td colspan="3" class="no-data">Belum ada data.</td></tr>';
-          return;
-        }
-        $("trend-body").innerHTML = data.weekly_trend.map(r => `
-          <tr>
-            <td class="trend-week">${r.week}</td>
-            <td class="trend-rep">${esc(r.full_name)}</td>
-            <td class="trend-val">${r.new_stores}</td>
-          </tr>
-        `).join("");
       }
 
       function esc(s) {

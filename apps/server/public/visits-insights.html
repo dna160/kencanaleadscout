@@ -176,14 +176,6 @@
       .hm-mid { color: #7ee87e; background: rgba(44,110,73,.35); }
       .hm-high { color: #fff; background: rgba(44,110,73,.6); }
 
-      /* ── Weekly trend ────────────────────────────────────────────── */
-      .trend-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-      .trend-table th { padding: 7px 10px; font-size: 11px; font-weight: 600; color: var(--muted); text-align: left; border-bottom: 1px solid var(--line); letter-spacing: .5px; text-transform: uppercase; }
-      .trend-table td { padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,.04); }
-      .trend-week { font-family: var(--display); font-weight: 600; color: var(--muted); white-space: nowrap; }
-      .trend-rep  { color: var(--paper); }
-      .trend-val  { font-family: var(--display); font-weight: 700; color: #6ea8f5; }
-
       .spinner { text-align: center; padding: 40px; color: var(--muted); font-size: 14px; }
     </style>
   </head>
@@ -269,14 +261,6 @@
         </div>
       </div>
 
-      <!-- Weekly trend -->
-      <div class="section">
-        <div class="section-title">Akuisisi Customer Baru (Mingguan)</div>
-        <table class="trend-table">
-          <thead><tr><th>Minggu</th><th>Sales</th><th>Customer Baru</th></tr></thead>
-          <tbody id="trend-body"><tr><td colspan="3" class="spinner">Memuat…</td></tr></tbody>
-        </table>
-      </div>
     </div>
 
     <script>
@@ -321,7 +305,6 @@
         renderTeamPipeline(teamRes);
         renderLeaderboard(teamRes, lbMode);
         renderHeatmap(teamRes);
-        renderTrend(teamRes);
 
         // Per-rep scorecards
         const spRes = await fetch("/api/salespeople?active=true").then(r => r.json()).catch(() => ({ salespeople: [] }));
@@ -556,21 +539,6 @@
           }).join("");
           return `<tr><td class="area-label">${esc(area)}</td>${cells}</tr>`;
         }).join("");
-      }
-
-      // ── Weekly trend ─────────────────────────────────────────────────────
-      function renderTrend(data) {
-        if (!data || data.weekly_trend.length === 0) {
-          $("trend-body").innerHTML = '<tr><td colspan="3" class="no-data">Belum ada data.</td></tr>';
-          return;
-        }
-        $("trend-body").innerHTML = data.weekly_trend.map(r => `
-          <tr>
-            <td class="trend-week">${r.week}</td>
-            <td class="trend-rep">${esc(r.full_name)}</td>
-            <td class="trend-val">${r.new_stores}</td>
-          </tr>
-        `).join("");
       }
 
       function esc(s) {

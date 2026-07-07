@@ -107,7 +107,9 @@ export async function insightsRoutes(app: FastifyInstance): Promise<void> {
       order by hour
     `;
 
-    // Pipeline stage counts for owned accounts
+    // Pipeline stage counts for owned project accounts
+    // Repeating health computed dynamically from visit recency (decay):
+    //   <10 days = aktif, 10–13 = perlu_followup, 14–16 = at_risk, 17+ = hibernasi
     const [projectStages, repeatingStages] = await Promise.all([
       db<{ stage: string; cnt: number }[]>`
         select stage, count(*)::int as cnt
@@ -115,11 +117,23 @@ export async function insightsRoutes(app: FastifyInstance): Promise<void> {
         where owner_id = ${rep_id} and account_type = 'project'
         group by stage
       `,
-      db<{ stage: string; cnt: number }[]>`
-        select stage, count(*)::int as cnt
-        from customers
-        where owner_id = ${rep_id} and account_type = 'repeating'
-        group by stage
+      db<{ health: string; cnt: number }[]>`
+        with customer_last_visit as (
+          select customer_id, max(visited_at) as last_visit
+          from visits
+          where salesperson_id = ${rep_id} and customer_id is not null
+          group by customer_id
+        )
+        select
+          case
+            when extract(epoch from (now() - last_visit)) / 86400 < 10 then 'aktif'
+            when extract(epoch from (now() - last_visit)) / 86400 < 14 then 'perlu_followup'
+            when extract(epoch from (now() - last_visit)) / 86400 < 17 then 'at_risk'
+            else 'hibernasi'
+          end as health,
+          count(*)::int as cnt
+        from customer_last_visit
+        group by 1
       `,
     ]);
 
@@ -160,7 +174,7 @@ export async function insightsRoutes(app: FastifyInstance): Promise<void> {
       })),
       hourly_histogram: hourly.map((r) => ({ hour: Number(r.hour), count: Number(r.cnt) })),
       project_stage_counts:   Object.fromEntries(projectStages.map((r) => [r.stage, r.cnt])),
-      repeating_stage_counts: Object.fromEntries(repeatingStages.map((r) => [r.stage, r.cnt])),
+      repeating_stage_counts: Object.fromEntries(repeatingStages.map((r) => [r.health, r.cnt])),
     };
   });
 
@@ -203,22 +217,8 @@ export async function insightsRoutes(app: FastifyInstance): Promise<void> {
       order by area, count(*) desc
     `;
 
-    // Weekly new-customer acquisition trend
-    const weeklyTrend = await db<{ week: string; rep_id: string; full_name: string; new_stores: string }[]>`
-      select
-        to_char(date_trunc('week', v.visited_at at time zone 'Asia/Jakarta'), 'YYYY-MM-DD') as week,
-        s.id::text as rep_id,
-        s.full_name,
-        count(*) filter (where v.customer_type = 'new')::text as new_stores
-      from visits v
-      join salespeople s on s.id = v.salesperson_id
-      where v.visited_at >= ${from} and v.visited_at <= ${to}
-      group by week, s.id, s.full_name
-      order by week, s.full_name
-    `;
-
-    // Team totals
-    const [[totals], teamStageRows] = await Promise.all([
+    // Team totals + pipeline + decay-based repeating health
+    const [[totals], projectStageRows, repeatingHealthRows] = await Promise.all([
       db<{
         total_visits: string; new_visits: string; unique_stores: string; active_reps: string;
       }[]>`
@@ -230,19 +230,34 @@ export async function insightsRoutes(app: FastifyInstance): Promise<void> {
         from visits v
         where v.visited_at >= ${from} and v.visited_at <= ${to}
       `,
-      db<{ account_type: string; stage: string; cnt: number }[]>`
-        select account_type, stage, count(*)::int as cnt
+      db<{ stage: string; cnt: number }[]>`
+        select stage, count(*)::int as cnt
         from customers
-        group by account_type, stage
+        where account_type = 'project'
+        group by stage
+      `,
+      db<{ health: string; cnt: number }[]>`
+        with customer_last_visit as (
+          select customer_id, max(visited_at) as last_visit
+          from visits
+          where customer_id is not null
+          group by customer_id
+        )
+        select
+          case
+            when extract(epoch from (now() - last_visit)) / 86400 < 10 then 'aktif'
+            when extract(epoch from (now() - last_visit)) / 86400 < 14 then 'perlu_followup'
+            when extract(epoch from (now() - last_visit)) / 86400 < 17 then 'at_risk'
+            else 'hibernasi'
+          end as health,
+          count(*)::int as cnt
+        from customer_last_visit
+        group by 1
       `,
     ]);
 
-    const projectStageCounts: Record<string, number>   = {};
-    const repeatingStageCounts: Record<string, number> = {};
-    for (const r of teamStageRows) {
-      if (r.account_type === "project")   projectStageCounts[r.stage]   = r.cnt;
-      else                                repeatingStageCounts[r.stage] = (repeatingStageCounts[r.stage] ?? 0) + r.cnt;
-    }
+    const projectStageCounts:   Record<string, number> = Object.fromEntries(projectStageRows.map((r) => [r.stage, r.cnt]));
+    const repeatingStageCounts: Record<string, number> = Object.fromEntries(repeatingHealthRows.map((r) => [r.health, r.cnt]));
 
     return {
       period: { from, to },
@@ -262,12 +277,6 @@ export async function insightsRoutes(app: FastifyInstance): Promise<void> {
         hunter_index:  Number(r.hunter_index ?? 0),
       })),
       heatmap: heatmap.map((r) => ({ area: r.area, category: r.category, count: Number(r.cnt) })),
-      weekly_trend: weeklyTrend.map((r) => ({
-        week:       r.week,
-        rep_id:     Number(r.rep_id),
-        full_name:  r.full_name,
-        new_stores: Number(r.new_stores),
-      })),
       project_stage_counts:   projectStageCounts,
       repeating_stage_counts: repeatingStageCounts,
     };
