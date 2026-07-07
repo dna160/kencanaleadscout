@@ -107,14 +107,14 @@ export async function colorGatewayRoutes(app: FastifyInstance): Promise<void> {
     try {
       const created = await db.begin(async (sql) => {
         const year = new Date().getFullYear();
-        const [counter] = await sql<{ last_no: number }[]>`
+        const [counter] = await sql<[{ last_no: number }]>`
           insert into color_request_counters (year, last_no) values (${year}, 1)
           on conflict (year) do update set last_no = color_request_counters.last_no + 1
           returning last_no
         `;
         const request_no = `CCR-${year}-${String(counter.last_no).padStart(4, "0")}`;
 
-        const [row] = await sql`
+        const [row] = await sql<[{ id: number }]>`
           insert into color_requests (
             request_no, sales_rep_id, customer_name, project_name,
             product_line, coating_type, color_name, color_code, color_reference,
