@@ -1,0 +1,1279 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Color Gateway · Kencana LeadScout</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --ink: #14213d; --ink-2: #1b2949; --red: #9b2226; --gold: #bb9457; --green: #2c6e49;
+      --paper: #f5f2ec; --muted: #8a96ad; --line: rgba(255,255,255,.09);
+      --blue: #2E6FD6; --amber: #d97706; --purple: #7c3aed;
+      --display: "Space Grotesk","Inter",system-ui,sans-serif;
+      --sans: "Inter",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      font-family: var(--sans); color: var(--paper);
+      background: radial-gradient(1100px 500px at 85% -5%, rgba(187,148,87,.12), transparent 60%), var(--ink);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── Nav ─────────────────────────────────────────────────────────────── */
+    nav {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: 10px 22px; border-bottom: 1px solid var(--line);
+      background: rgba(20,33,61,.94); position: sticky; top: 0; z-index: 100;
+      backdrop-filter: blur(10px); flex-wrap: wrap;
+    }
+    .brand { display: flex; align-items: center; gap: 11px; }
+    .mark {
+      width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center;
+      background: linear-gradient(135deg, var(--red), #7a1a1d);
+      font-family: var(--display); font-weight: 700; color: #fff; font-size: 16px;
+    }
+    .brand b { font-family: var(--display); font-size: 15px; }
+    .brand span { color: var(--muted); font-size: 11.5px; display: block; }
+    .nav-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .nav-right a { color: var(--muted); text-decoration: none; font-size: 12.5px; }
+    .nav-right a:hover { color: var(--paper); }
+
+    /* Role toggle */
+    .role-toggle { display: flex; background: rgba(255,255,255,.07); border-radius: 9px; padding: 3px; gap: 3px; }
+    .role-btn {
+      border: none; border-radius: 7px; padding: 5px 14px; font-size: 12.5px; font-weight: 600;
+      font-family: var(--display); cursor: pointer; transition: background .15s, color .15s;
+      background: transparent; color: var(--muted);
+    }
+    .role-btn.active { background: rgba(255,255,255,.12); color: var(--paper); }
+    .role-btn.ppic-active { background: rgba(187,148,87,.25); color: var(--gold); }
+
+    /* SIAP badge */
+    .siap-badge {
+      display: none; background: var(--red); color: #fff; border-radius: 99px;
+      padding: 1px 7px; font-size: 11px; font-weight: 700; margin-left: 4px;
+    }
+    .siap-badge.show { display: inline; }
+
+    /* ── Wrap ────────────────────────────────────────────────────────────── */
+    .wrap { max-width: 1280px; margin: 0 auto; padding: 0 22px 80px; }
+
+    /* ── Form fields ─────────────────────────────────────────────────────── */
+    .field { display: flex; flex-direction: column; gap: 6px; }
+    .field label {
+      font-size: 11px; font-weight: 600; letter-spacing: .7px; text-transform: uppercase;
+      color: var(--muted);
+    }
+    .field label .opt { font-weight: 400; text-transform: none; letter-spacing: 0; font-size: 11px; }
+    .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .three { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+    input, select, textarea {
+      background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12);
+      border-radius: 10px; padding: 11px 13px; color: var(--paper); font-family: var(--sans);
+      font-size: 14px; width: 100%; appearance: none; -webkit-appearance: none;
+      outline: none; transition: border-color .15s; color-scheme: dark;
+    }
+    input:focus, select:focus, textarea:focus { border-color: var(--gold); }
+    input.bad, select.bad, textarea.bad { border-color: #e05252 !important; }
+    textarea { resize: vertical; min-height: 80px; }
+    select option { background: #1e2d50; }
+    input::placeholder, textarea::placeholder { color: var(--muted); }
+
+    /* ── Buttons ─────────────────────────────────────────────────────────── */
+    .btn {
+      border: none; border-radius: 10px; padding: 10px 18px; font-family: var(--display);
+      font-weight: 600; font-size: 13.5px; cursor: pointer; transition: opacity .15s, background .15s;
+    }
+    .btn:disabled { opacity: .45; cursor: not-allowed; }
+    .btn-primary { background: linear-gradient(135deg, var(--red), #7a1a1d); color: #fff; }
+    .btn-primary:hover:not(:disabled) { opacity: .88; }
+    .btn-gold { background: linear-gradient(135deg, var(--gold), #9a7a44); color: #fff; }
+    .btn-gold:hover:not(:disabled) { opacity: .88; }
+    .btn-ghost {
+      background: rgba(255,255,255,.06); border: 1px solid var(--line); color: var(--muted);
+    }
+    .btn-ghost:hover:not(:disabled) { background: rgba(255,255,255,.1); color: var(--paper); }
+    .btn-sm { padding: 6px 13px; font-size: 12px; border-radius: 8px; }
+    .btn-danger { background: rgba(155,34,38,.25); border: 1px solid rgba(155,34,38,.4); color: #f8a0a0; }
+    .btn-danger:hover:not(:disabled) { background: rgba(155,34,38,.35); }
+    .btn-blue { background: rgba(46,111,214,.25); border: 1px solid rgba(46,111,214,.4); color: #7eb8f7; }
+    .btn-blue:hover:not(:disabled) { background: rgba(46,111,214,.35); }
+    .btn-green { background: rgba(44,110,73,.25); border: 1px solid rgba(44,110,73,.4); color: #9fe0b9; }
+    .btn-green:hover:not(:disabled) { background: rgba(44,110,73,.35); }
+
+    /* ── Status chips ────────────────────────────────────────────────────── */
+    .chip {
+      display: inline-flex; align-items: center; border-radius: 99px; padding: 3px 10px;
+      font-size: 11px; font-weight: 700; letter-spacing: .5px; white-space: nowrap;
+    }
+    .chip-DIAJUKAN    { background: rgba(255,255,255,.1);  color: #c7cfde; border: 1px solid rgba(255,255,255,.18); }
+    .chip-DIPROSES    { background: rgba(46,111,214,.18);  color: #7eb8f7; border: 1px solid rgba(46,111,214,.3); }
+    .chip-SIAP        { background: rgba(44,110,73,.22);   color: #9fe0b9; border: 1px solid rgba(44,110,73,.38); }
+    .chip-SELESAI     { background: rgba(22,83,50,.3);     color: #6ee4a8; border: 1px solid rgba(22,83,50,.45); }
+    .chip-DIBATALKAN  { background: rgba(155,34,38,.18);   color: #f8a0a0; border: 1px solid rgba(155,34,38,.3); }
+    .chip-DITOLAK     { background: rgba(155,34,38,.18);   color: #f8a0a0; border: 1px solid rgba(155,34,38,.3); }
+
+    /* ── Section headers ─────────────────────────────────────────────────── */
+    .sec-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 20px 0 12px; gap: 12px; flex-wrap: wrap;
+    }
+    .sec-title { font-family: var(--display); font-size: 15px; font-weight: 700; }
+    .sec-sub { color: var(--muted); font-size: 12.5px; }
+
+    /* ── Collapsible new-request panel ───────────────────────────────────── */
+    .form-panel {
+      border: 1px solid var(--line); border-radius: 16px; overflow: hidden;
+      margin-bottom: 24px;
+    }
+    .form-panel-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 16px 20px; cursor: pointer; background: rgba(255,255,255,.03);
+      user-select: none;
+    }
+    .form-panel-header:hover { background: rgba(255,255,255,.055); }
+    .form-panel-title { font-family: var(--display); font-weight: 600; font-size: 14px; }
+    .form-panel-caret { color: var(--muted); font-size: 18px; transition: transform .2s; }
+    .form-panel.open .form-panel-caret { transform: rotate(180deg); }
+    .form-panel-body { padding: 20px; display: none; flex-direction: column; gap: 16px; border-top: 1px solid var(--line); }
+    .form-panel.open .form-panel-body { display: flex; }
+
+    /* ── Sales request table ─────────────────────────────────────────────── */
+    .tbl-wrap { overflow-x: auto; border-radius: 14px; border: 1px solid var(--line); }
+    table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+    th {
+      text-align: left; padding: 11px 14px; font-size: 11px; font-weight: 600;
+      letter-spacing: .6px; text-transform: uppercase; color: var(--muted);
+      border-bottom: 1px solid var(--line); background: rgba(255,255,255,.02);
+      white-space: nowrap;
+    }
+    td { padding: 12px 14px; border-bottom: 1px solid rgba(255,255,255,.05); vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    tr.clickable:hover td { background: rgba(255,255,255,.03); cursor: pointer; }
+    .td-no { font-family: var(--display); font-size: 12px; color: var(--gold); font-weight: 600; }
+    .td-main { font-weight: 600; font-size: 13.5px; }
+    .td-sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+    .td-actions { display: flex; gap: 6px; align-items: center; }
+    .empty-row td { text-align: center; color: var(--muted); padding: 36px 14px; }
+
+    /* ── KPI strip ───────────────────────────────────────────────────────── */
+    .kpi-strip {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
+      padding: 20px 0 16px;
+    }
+    @media (max-width: 700px) { .kpi-strip { grid-template-columns: repeat(2, 1fr); } }
+    .kpi-tile {
+      background: rgba(255,255,255,.04); border: 1px solid var(--line);
+      border-radius: 14px; padding: 16px 18px;
+    }
+    .kpi-label { font-size: 11px; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+    .kpi-val { font-family: var(--display); font-size: 28px; font-weight: 700; line-height: 1; }
+    .kpi-sub { color: var(--muted); font-size: 12px; margin-top: 4px; }
+    .kpi-tile.danger .kpi-val { color: #f8a0a0; }
+    .kpi-tile.warn .kpi-val { color: #fbbf24; }
+
+    /* ── Filter bar ──────────────────────────────────────────────────────── */
+    .filter-bar {
+      display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+      padding: 12px 0 16px; border-bottom: 1px solid var(--line);
+    }
+    .filter-bar select { width: auto; padding: 7px 12px; font-size: 13px; border-radius: 9px; }
+    .filter-bar label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); cursor: pointer; }
+    .filter-bar input[type="checkbox"] { width: auto; accent-color: var(--red); cursor: pointer; }
+
+    /* ── Kanban board ────────────────────────────────────────────────────── */
+    .board {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px;
+      align-items: start; padding-top: 16px;
+    }
+    @media (max-width: 900px)  { .board { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 520px)  { .board { grid-template-columns: 1fr; } }
+    .col-header {
+      font-size: 11px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase;
+      padding: 7px 12px; border-radius: 8px; margin-bottom: 12px; display: flex;
+      align-items: center; justify-content: space-between;
+    }
+    .col-diajukan { background: rgba(255,255,255,.07); color: #c7cfde; }
+    .col-diproses { background: rgba(46,111,214,.15); color: #7eb8f7; }
+    .col-siap     { background: rgba(44,110,73,.18); color: #9fe0b9; }
+    .col-selesai  { background: rgba(22,83,50,.22); color: #6ee4a8; }
+    .col-cnt { font-variant-numeric: tabular-nums; }
+    .kanban-empty { color: var(--muted); font-size: 12.5px; text-align: center; padding: 20px 0; }
+
+    .kcard {
+      background: rgba(255,255,255,.04); border: 1px solid var(--line);
+      border-radius: 12px; padding: 13px 14px; margin-bottom: 10px;
+      transition: border-color .15s; cursor: pointer;
+    }
+    .kcard:hover { border-color: rgba(255,255,255,.18); }
+    .kcard.overdue { border-color: rgba(155,34,38,.5); border-left: 3px solid #9b2226; }
+    .kcard-no { font-family: var(--display); font-size: 11.5px; font-weight: 600; color: var(--gold); margin-bottom: 5px; display: flex; align-items: center; gap: 6px; }
+    .badge-overdue { background: var(--red); color: #fff; border-radius: 4px; padding: 1px 6px; font-size: 10px; font-weight: 700; }
+    .kcard-customer { font-weight: 600; font-size: 13.5px; margin-bottom: 3px; }
+    .kcard-color { color: #d4c5a0; font-size: 13px; margin-bottom: 4px; }
+    .kcard-meta { color: var(--muted); font-size: 11.5px; line-height: 1.5; }
+    .kcard-fulfillment {
+      margin-top: 8px; padding: 7px 10px; border-radius: 8px; font-size: 12px;
+      background: rgba(44,110,73,.15); border: 1px solid rgba(44,110,73,.3); color: #9fe0b9;
+    }
+    .kcard-waiting {
+      margin-top: 8px; padding: 7px 10px; border-radius: 8px; font-size: 12px;
+      background: rgba(217,119,6,.12); border: 1px solid rgba(217,119,6,.3); color: #fbbf24;
+    }
+    .kcard-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+
+    /* ── Detail drawer ───────────────────────────────────────────────────── */
+    .drawer-overlay {
+      display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5);
+      z-index: 200; backdrop-filter: blur(3px);
+    }
+    .drawer-overlay.open { display: block; }
+    .drawer {
+      position: fixed; top: 0; right: -480px; bottom: 0; width: 460px; max-width: 95vw;
+      background: #1b2949; border-left: 1px solid var(--line);
+      overflow-y: auto; z-index: 201; transition: right .25s ease;
+      padding: 0 0 40px;
+    }
+    .drawer.open { right: 0; }
+    .drawer-head {
+      position: sticky; top: 0; background: rgba(27,41,73,.97); backdrop-filter: blur(8px);
+      padding: 16px 20px; border-bottom: 1px solid var(--line);
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+    }
+    .drawer-no { font-family: var(--display); font-size: 18px; font-weight: 700; color: var(--gold); }
+    .drawer-close { background: none; border: none; color: var(--muted); font-size: 22px; cursor: pointer; line-height: 1; padding: 0; }
+    .drawer-close:hover { color: var(--paper); }
+    .drawer-body { padding: 20px; }
+    .detail-row { display: flex; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+    .detail-field { flex: 1; min-width: 140px; }
+    .detail-label { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin-bottom: 3px; }
+    .detail-val { font-size: 13.5px; }
+    .detail-section { border-top: 1px solid var(--line); margin-top: 18px; padding-top: 14px; }
+    .detail-section-title { font-family: var(--display); font-size: 12px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
+
+    /* Event timeline */
+    .timeline { display: flex; flex-direction: column; gap: 12px; }
+    .ev-item { display: flex; gap: 12px; }
+    .ev-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--gold); flex-shrink: 0; margin-top: 5px; }
+    .ev-body { flex: 1; }
+    .ev-transition { font-size: 13px; font-weight: 600; }
+    .ev-actor { color: var(--muted); font-size: 12px; }
+    .ev-note { color: #c7cfde; font-size: 12.5px; margin-top: 3px; font-style: italic; }
+    .ev-time { color: var(--muted); font-size: 11.5px; margin-top: 2px; }
+
+    /* ── Modal ───────────────────────────────────────────────────────────── */
+    .modal-overlay {
+      display: none; position: fixed; inset: 0; background: rgba(0,0,0,.6);
+      z-index: 300; backdrop-filter: blur(4px);
+      align-items: center; justify-content: center; padding: 20px;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal {
+      background: #1b2949; border: 1px solid var(--line); border-radius: 18px;
+      padding: 24px; width: 100%; max-width: 460px; max-height: 90vh; overflow-y: auto;
+    }
+    .modal-title { font-family: var(--display); font-size: 17px; font-weight: 700; margin-bottom: 20px; }
+    .modal-footer { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+    .form-gap { display: flex; flex-direction: column; gap: 14px; }
+
+    /* ── Toast ───────────────────────────────────────────────────────────── */
+    .toast {
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(80px);
+      background: #1e3a1e; color: #7ee87e; border: 1px solid #3e9b4f;
+      border-radius: 10px; padding: 11px 20px; font-weight: 600; font-size: 13.5px;
+      z-index: 999; transition: transform .3s ease, opacity .3s ease; opacity: 0; white-space: nowrap;
+    }
+    .toast.err { background: #3a1e1e; color: #f8a0a0; border-color: #9b2226; }
+    .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+
+    /* ── Misc ────────────────────────────────────────────────────────────── */
+    .divider { height: 1px; background: var(--line); }
+    .spinner { color: var(--muted); text-align: center; padding: 30px; font-size: 13.5px; }
+    .err-msg { color: #f8a0a0; font-size: 12.5px; margin-top: 6px; display: none; }
+    .delivery-fields { display: none; }
+    .delivery-fields.show { display: flex; flex-direction: column; gap: 12px; }
+    @media (max-width: 600px) { .two, .three { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+
+<nav>
+  <div class="brand">
+    <div class="mark">K</div>
+    <div>
+      <b>Color Gateway</b>
+      <span>Permintaan Sampel Warna · Kencana</span>
+    </div>
+  </div>
+  <div class="nav-right">
+    <div class="role-toggle">
+      <button class="role-btn active" id="btn-role-sales" onclick="setRole('sales')">Sales</button>
+      <button class="role-btn" id="btn-role-ppic" onclick="setRole('ppic')">PPIC<span class="siap-badge" id="siap-badge"></span></button>
+    </div>
+    <a href="/">← Beranda</a>
+  </div>
+</nav>
+
+<div class="wrap">
+
+  <!-- ═══════════════════════════════ SALES TAB ══════════════════════════════ -->
+  <div id="tab-sales">
+    <div class="sec-header">
+      <div>
+        <div class="sec-title">Permintaan Saya</div>
+        <div class="sec-sub" id="sales-sync-label">Memuat…</div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select id="sales-rep-sel" style="width:auto;padding:7px 12px;font-size:13px;border-radius:9px">
+          <option value="">Pilih Sales…</option>
+        </select>
+        <button class="btn btn-ghost btn-sm" onclick="loadSales()">↻</button>
+      </div>
+    </div>
+
+    <!-- New request form -->
+    <div class="form-panel" id="form-panel">
+      <div class="form-panel-header" onclick="toggleFormPanel()">
+        <span class="form-panel-title">+ Buat Permintaan Baru</span>
+        <span class="form-panel-caret">▾</span>
+      </div>
+      <div class="form-panel-body" id="form-body">
+        <div class="two">
+          <div class="field">
+            <label>Customer / Toko</label>
+            <input id="f-customer" type="text" placeholder="Nama customer atau toko" />
+          </div>
+          <div class="field">
+            <label>Nama Proyek <span class="opt">(opsional)</span></label>
+            <input id="f-project" type="text" placeholder="e.g. Gedung XYZ" />
+          </div>
+        </div>
+        <div class="three">
+          <div class="field">
+            <label>Lini Produk</label>
+            <select id="f-product-line">
+              <option value="">Pilih…</option>
+              <option>MACO</option><option>ALCOPAN</option>
+              <option>TAJIMA</option><option>SAKURA</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Coating</label>
+            <select id="f-coating">
+              <option value="">Pilih…</option>
+              <option>PVDF</option><option>PE</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Referensi Warna</label>
+            <select id="f-color-ref">
+              <option value="">Pilih…</option>
+              <option value="KODE_RAL">Kode RAL</option>
+              <option value="SAMPEL_FISIK">Sampel Fisik</option>
+              <option value="FOTO">Foto</option>
+            </select>
+          </div>
+        </div>
+        <div class="two">
+          <div class="field">
+            <label>Nama Warna</label>
+            <input id="f-color-name" type="text" placeholder="e.g. Champagne Gold" />
+          </div>
+          <div class="field">
+            <label>Kode Warna <span class="opt">(opsional)</span></label>
+            <input id="f-color-code" type="text" placeholder="e.g. RAL 1001" />
+          </div>
+        </div>
+        <div class="two">
+          <div class="field">
+            <label>Jumlah Panel</label>
+            <input id="f-qty" type="number" min="1" max="10" value="1" />
+          </div>
+          <div class="field">
+            <label>Dibutuhkan Sebelum <span class="opt">(opsional)</span></label>
+            <input id="f-needed-by" type="date" />
+          </div>
+        </div>
+        <div class="field">
+          <label>Catatan <span class="opt">(opsional)</span></label>
+          <textarea id="f-notes" placeholder="Referensi tambahan, spesifikasi khusus…"></textarea>
+        </div>
+        <div class="err-msg" id="form-err"></div>
+        <button class="btn btn-primary" id="btn-submit" onclick="submitRequest()" style="margin-top:4px">
+          Ajukan Permintaan
+        </button>
+      </div>
+    </div>
+
+    <!-- Request table -->
+    <div class="tbl-wrap" id="sales-table-wrap">
+      <table id="sales-table">
+        <thead>
+          <tr>
+            <th>No</th>
+            <th>Customer</th>
+            <th>Warna</th>
+            <th>Lini</th>
+            <th>Status</th>
+            <th>ETA</th>
+            <th>Aksi</th>
+          </tr>
+        </thead>
+        <tbody id="sales-tbody">
+          <tr class="empty-row"><td colspan="7">Pilih sales untuk melihat permintaan.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════ PPIC TAB ═══════════════════════════════ -->
+  <div id="tab-ppic" style="display:none">
+
+    <!-- KPI strip -->
+    <div class="kpi-strip" id="kpi-strip">
+      <div class="kpi-tile">
+        <div class="kpi-label">Antrian Aktif</div>
+        <div class="kpi-val" id="kpi-active">—</div>
+        <div class="kpi-sub">Diajukan + Diproses + Siap</div>
+      </div>
+      <div class="kpi-tile danger">
+        <div class="kpi-label">Terlambat</div>
+        <div class="kpi-val" id="kpi-overdue">—</div>
+        <div class="kpi-sub">Melewati ETA</div>
+      </div>
+      <div class="kpi-tile">
+        <div class="kpi-label">Avg Turnaround Lokal</div>
+        <div class="kpi-val" id="kpi-ta-lokal">—</div>
+        <div class="kpi-sub" id="kpi-ta-lokal-sub">90 hari terakhir</div>
+      </div>
+      <div class="kpi-tile">
+        <div class="kpi-label">Avg Turnaround Internasional</div>
+        <div class="kpi-val" id="kpi-ta-intl">—</div>
+        <div class="kpi-sub" id="kpi-ta-intl-sub">90 hari terakhir</div>
+      </div>
+    </div>
+
+    <div class="sec-header">
+      <div>
+        <div class="sec-title">Antrian PPIC</div>
+        <div class="sec-sub" id="ppic-sync-label">Memuat…</div>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="loadPPIC()">↻ Refresh</button>
+    </div>
+
+    <!-- Filter bar -->
+    <div class="filter-bar">
+      <select id="ppic-filter-rep" onchange="renderBoard()">
+        <option value="">Semua Sales</option>
+      </select>
+      <select id="ppic-filter-line" onchange="renderBoard()">
+        <option value="">Semua Lini</option>
+        <option>MACO</option><option>ALCOPAN</option>
+        <option>TAJIMA</option><option>SAKURA</option>
+      </select>
+      <select id="ppic-filter-route" onchange="renderBoard()">
+        <option value="">Semua Rute</option>
+        <option value="LOKAL">Lokal</option>
+        <option value="INTERNASIONAL">Internasional</option>
+      </select>
+      <label>
+        <input type="checkbox" id="ppic-filter-overdue" onchange="renderBoard()" />
+        Hanya Terlambat
+      </label>
+    </div>
+
+    <!-- Kanban board -->
+    <div class="board">
+      <div>
+        <div class="col-header col-diajukan">
+          <span>Masuk</span><span class="col-cnt" id="cnt-masuk">0</span>
+        </div>
+        <div id="col-masuk"></div>
+      </div>
+      <div>
+        <div class="col-header col-diproses">
+          <span>Diproses</span><span class="col-cnt" id="cnt-diproses">0</span>
+        </div>
+        <div id="col-diproses"></div>
+      </div>
+      <div>
+        <div class="col-header col-siap">
+          <span>Siap</span><span class="col-cnt" id="cnt-siap">0</span>
+        </div>
+        <div id="col-siap"></div>
+      </div>
+      <div>
+        <div class="col-header col-selesai">
+          <span>Selesai</span><span class="col-cnt" id="cnt-selesai">0</span>
+        </div>
+        <div id="col-selesai"></div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /.wrap -->
+
+<!-- ═══════════════════════════════ DETAIL DRAWER ═══════════════════════════ -->
+<div class="drawer-overlay" id="drawer-overlay" onclick="closeDrawer()"></div>
+<div class="drawer" id="drawer">
+  <div class="drawer-head">
+    <div>
+      <div class="drawer-no" id="drw-no">—</div>
+      <div id="drw-chip" style="margin-top:4px"></div>
+    </div>
+    <button class="drawer-close" onclick="closeDrawer()">×</button>
+  </div>
+  <div class="drawer-body" id="drw-body">
+    <div class="spinner">Memuat…</div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════ MODALS ══════════════════════════════════ -->
+
+<!-- Route modal -->
+<div class="modal-overlay" id="modal-route">
+  <div class="modal">
+    <div class="modal-title">Proses Permintaan</div>
+    <div class="form-gap">
+      <div class="field">
+        <label>Rute</label>
+        <select id="m-route-route" onchange="autoFillEta()">
+          <option value="">Pilih…</option>
+          <option value="LOKAL">Lokal (+3 hari kerja)</option>
+          <option value="INTERNASIONAL">Internasional (+21 hari)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Tanggal ETA</label>
+        <input id="m-route-eta" type="date" />
+      </div>
+      <div class="field">
+        <label>Vendor / Pabrik <span class="opt">(opsional)</span></label>
+        <input id="m-route-vendor" type="text" placeholder="Nama vendor cat" />
+      </div>
+      <div class="field">
+        <label>Catatan Routing <span class="opt">(opsional)</span></label>
+        <textarea id="m-route-note" placeholder="Instruksi khusus, kode batch…" style="min-height:64px"></textarea>
+      </div>
+      <div class="field">
+        <label>PPIC (nama Anda)</label>
+        <input id="m-route-actor" type="text" placeholder="PPIC" value="PPIC" />
+      </div>
+      <div class="err-msg" id="m-route-err"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-route')">Batal</button>
+      <button class="btn btn-gold" onclick="submitRoute()">Proses →</button>
+    </div>
+  </div>
+</div>
+
+<!-- Reject modal -->
+<div class="modal-overlay" id="modal-reject">
+  <div class="modal">
+    <div class="modal-title">Tolak Permintaan</div>
+    <div class="form-gap">
+      <div class="field">
+        <label>Alasan Penolakan</label>
+        <textarea id="m-reject-reason" placeholder="Jelaskan alasan penolakan…" style="min-height:100px"></textarea>
+      </div>
+      <div class="field">
+        <label>PPIC (nama Anda)</label>
+        <input id="m-reject-actor" type="text" placeholder="PPIC" value="PPIC" />
+      </div>
+      <div class="err-msg" id="m-reject-err"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-reject')">Batal</button>
+      <button class="btn btn-danger" onclick="submitReject()">Tolak</button>
+    </div>
+  </div>
+</div>
+
+<!-- Ready modal -->
+<div class="modal-overlay" id="modal-ready">
+  <div class="modal">
+    <div class="modal-title">Tandai Sampel Siap</div>
+    <div class="form-gap">
+      <div class="field">
+        <label>Lokasi Penyimpanan <span class="opt">(opsional)</span></label>
+        <input id="m-ready-loc" type="text" placeholder="e.g. Rak B-3, Gudang PPIC" />
+      </div>
+      <div class="field">
+        <label>PPIC (nama Anda)</label>
+        <input id="m-ready-actor" type="text" placeholder="PPIC" value="PPIC" />
+      </div>
+      <div class="err-msg" id="m-ready-err"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-ready')">Batal</button>
+      <button class="btn btn-green" onclick="submitReady()">Sampel Siap ✓</button>
+    </div>
+  </div>
+</div>
+
+<!-- Fulfillment modal (Sales) -->
+<div class="modal-overlay" id="modal-fulfill">
+  <div class="modal">
+    <div class="modal-title">Pilih Cara Pengambilan</div>
+    <div class="form-gap">
+      <div class="field">
+        <label>Mode Pengambilan</label>
+        <select id="m-fulfill-mode" onchange="toggleDeliveryFields()">
+          <option value="">Pilih…</option>
+          <option value="AMBIL">AMBIL — Ambil sendiri ke PPIC</option>
+          <option value="KIRIM">KIRIM — Dikirim ke alamat</option>
+        </select>
+      </div>
+      <div class="delivery-fields" id="delivery-fields">
+        <div class="field">
+          <label>Nama Penerima</label>
+          <input id="m-fulfill-recipient" type="text" placeholder="Nama lengkap penerima" />
+        </div>
+        <div class="field">
+          <label>No HP Penerima</label>
+          <input id="m-fulfill-phone" type="tel" placeholder="+62…" />
+        </div>
+        <div class="field">
+          <label>Alamat Pengiriman</label>
+          <textarea id="m-fulfill-address" placeholder="Alamat lengkap termasuk kode pos" style="min-height:80px"></textarea>
+        </div>
+      </div>
+      <div class="err-msg" id="m-fulfill-err"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-fulfill')">Batal</button>
+      <button class="btn btn-primary" onclick="submitFulfillment()">Simpan Pilihan</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+(function() {
+  // ── State ─────────────────────────────────────────────────────────────────
+  let currentRole    = localStorage.getItem('cg_role') || 'sales';
+  let currentRepId   = Number(localStorage.getItem('cg_rep_id')) || null;
+  let allReps        = [];
+  let allRequests    = [];   // PPIC: all fetched requests
+  let modalTargetId  = null; // which request the current modal acts on
+  let pollTimer      = null;
+  let ppicLastLoad   = 0;
+
+  const COATING_DEFAULTS = { MACO: 'PVDF', ALCOPAN: 'PE', TAJIMA: 'PVDF', SAKURA: 'PE' };
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  function $(id) { return document.getElementById(id); }
+  function esc(s) {
+    if (s == null) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+  function fmtDate(iso) {
+    if (!iso) return '—';
+    return new Date(iso).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
+  }
+  function fmtDateTime(iso) {
+    if (!iso) return '—';
+    return new Date(iso).toLocaleString('id-ID', {
+      day: '2-digit', month: 'short', year: 'numeric',
+      hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta'
+    }) + ' WIB';
+  }
+  function statusChip(status) {
+    const labels = { DIAJUKAN:'Diajukan', DIPROSES:'Diproses', SIAP:'Siap',
+      SELESAI:'Selesai', DIBATALKAN:'Dibatalkan', DITOLAK:'Ditolak' };
+    return `<span class="chip chip-${esc(status)}">${labels[status] ?? status}</span>`;
+  }
+  function addWorkingDays(date, days) {
+    const d = new Date(date); let added = 0;
+    while (added < days) {
+      d.setDate(d.getDate() + 1);
+      const dow = d.getDay();
+      if (dow !== 0 && dow !== 6) added++;
+    }
+    return d;
+  }
+  function toISODate(d) { return d.toISOString().slice(0, 10); }
+
+  function showToast(msg, isErr = false) {
+    const t = $('toast');
+    t.textContent = msg;
+    t.className = 'toast' + (isErr ? ' err' : '') + ' show';
+    clearTimeout(t._timer);
+    t._timer = setTimeout(() => { t.className = 'toast' + (isErr ? ' err' : ''); }, 3000);
+  }
+
+  // ── Role switching ────────────────────────────────────────────────────────
+  window.setRole = function(role, save = true) {
+    currentRole = role;
+    if (save) localStorage.setItem('cg_role', role);
+    $('tab-sales').style.display = role === 'sales' ? '' : 'none';
+    $('tab-ppic').style.display  = role === 'ppic'  ? '' : 'none';
+    $('btn-role-sales').className = 'role-btn' + (role === 'sales' ? ' active' : '');
+    $('btn-role-ppic').className  = 'role-btn' + (role === 'ppic'  ? ' ppic-active' : '');
+    if (role === 'sales') loadSales();
+    if (role === 'ppic')  loadPPIC();
+  };
+
+  // ── Form panel toggle ─────────────────────────────────────────────────────
+  window.toggleFormPanel = function() {
+    $('form-panel').classList.toggle('open');
+  };
+
+  // ── Coating auto-default ──────────────────────────────────────────────────
+  $('f-product-line').addEventListener('change', function() {
+    const def = COATING_DEFAULTS[this.value];
+    if (def) $('f-coating').value = def;
+  });
+
+  // ── ETA auto-fill in route modal ──────────────────────────────────────────
+  window.autoFillEta = function() {
+    const route = $('m-route-route').value;
+    if (!route) return;
+    const eta = route === 'LOKAL'
+      ? toISODate(addWorkingDays(new Date(), 3))
+      : toISODate(new Date(Date.now() + 21 * 86400000));
+    $('m-route-eta').value = eta;
+  };
+
+  // ── Delivery fields toggle ────────────────────────────────────────────────
+  window.toggleDeliveryFields = function() {
+    const show = $('m-fulfill-mode').value === 'KIRIM';
+    $('delivery-fields').className = 'delivery-fields' + (show ? ' show' : '');
+  };
+
+  // ── Load reps ─────────────────────────────────────────────────────────────
+  async function loadReps() {
+    const res = await fetch('/api/sales-reps').then(r => r.json()).catch(() => ({ sales_reps: [] }));
+    allReps = res.sales_reps ?? [];
+
+    // Populate sales rep selector
+    const sel = $('sales-rep-sel');
+    allReps.forEach(r => {
+      const o = document.createElement('option');
+      o.value = r.id; o.textContent = r.full_name;
+      sel.appendChild(o);
+    });
+    if (currentRepId) sel.value = currentRepId;
+
+    // Populate PPIC filter rep selector
+    const psel = $('ppic-filter-rep');
+    allReps.forEach(r => {
+      const o = document.createElement('option');
+      o.value = r.id; o.textContent = r.full_name;
+      psel.appendChild(o);
+    });
+
+    // Populate new-request form rep (use nav selector, no separate form field)
+    sel.addEventListener('change', () => {
+      currentRepId = sel.value ? Number(sel.value) : null;
+      if (currentRepId) localStorage.setItem('cg_rep_id', String(currentRepId));
+      if (currentRole === 'sales') loadSales();
+    });
+  }
+
+  // ── Sales: load requests ──────────────────────────────────────────────────
+  window.loadSales = async function() {
+    $('sales-sync-label').textContent = 'Memuat…';
+    if (!currentRepId) {
+      $('sales-tbody').innerHTML = '<tr class="empty-row"><td colspan="7">Pilih sales untuk melihat permintaan.</td></tr>';
+      $('sales-sync-label').textContent = '';
+      updateSIAPBadge([]);
+      return;
+    }
+    const res = await fetch(`/api/color-requests?sales_rep_id=${currentRepId}&limit=200`).then(r => r.json()).catch(() => null);
+    if (!res) { $('sales-sync-label').textContent = 'Gagal memuat'; return; }
+    const reqs = res.requests ?? [];
+    renderSalesTable(reqs);
+    updateSIAPBadge(reqs);
+    $('sales-sync-label').textContent = `${reqs.length} permintaan · baru saja`;
+  };
+
+  function updateSIAPBadge(reqs) {
+    const siapSince = localStorage.getItem('cg_siap_since') || new Date(0).toISOString();
+    const newSiap = reqs.filter(r => r.status === 'SIAP' && r.updated_at > siapSince).length;
+    const badge = $('siap-badge');
+    if (newSiap > 0) { badge.textContent = newSiap; badge.className = 'siap-badge show'; }
+    else { badge.className = 'siap-badge'; }
+  }
+
+  function renderSalesTable(reqs) {
+    const tbody = $('sales-tbody');
+    if (!reqs.length) {
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="7">Belum ada permintaan.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = reqs.map(r => {
+      const isSiap      = r.status === 'SIAP';
+      const isDiajukan  = r.status === 'DIAJUKAN';
+      const isTerminal  = ['SELESAI','DIBATALKAN','DITOLAK'].includes(r.status);
+      const colorCode   = r.color_code ? ` <span style="color:var(--muted);font-size:12px">${esc(r.color_code)}</span>` : '';
+      return `<tr class="clickable" onclick="openDetail(${r.id})">
+        <td><div class="td-no">${esc(r.request_no)}</div></td>
+        <td>
+          <div class="td-main">${esc(r.customer_name)}</div>
+          ${r.project_name ? `<div class="td-sub">${esc(r.project_name)}</div>` : ''}
+        </td>
+        <td>
+          <div class="td-main">${esc(r.color_name)}${colorCode}</div>
+          <div class="td-sub">${esc(r.color_reference?.replace('_',' '))}</div>
+        </td>
+        <td><div class="td-main">${esc(r.product_line)}</div><div class="td-sub">${esc(r.coating_type)}</div></td>
+        <td>${statusChip(r.status)}</td>
+        <td>${r.eta_date ? `<span style="font-size:13px">${fmtDate(r.eta_date)}</span>` : '—'}</td>
+        <td onclick="event.stopPropagation()">
+          <div class="td-actions">
+            ${isDiajukan ? `<button class="btn btn-danger btn-sm" onclick="cancelRequest(${r.id},'${esc(allReps.find(x=>x.id==currentRepId)?.full_name)||'Sales'}')">Batalkan</button>` : ''}
+            ${isSiap && !r.fulfillment_mode ? `<button class="btn btn-green btn-sm" onclick="openFulfillModal(${r.id})">Pilih Pengambilan</button>` : ''}
+            ${isSiap && r.fulfillment_mode ? `<span style="font-size:12px;color:#9fe0b9">✓ ${r.fulfillment_mode}</span>` : ''}
+            ${isTerminal ? `<span style="font-size:12px;color:var(--muted)">${r.status === 'SELESAI' ? 'Selesai' : r.status === 'DIBATALKAN' ? 'Dibatalkan' : 'Ditolak'}</span>` : ''}
+          </div>
+        </td>
+      </tr>`;
+    }).join('');
+  }
+
+  // ── PPIC: load requests + stats ───────────────────────────────────────────
+  window.loadPPIC = async function() {
+    $('ppic-sync-label').textContent = 'Memuat…';
+    const [reqRes, statsRes] = await Promise.all([
+      fetch('/api/color-requests?limit=500').then(r => r.json()).catch(() => null),
+      fetch('/api/color-requests/stats').then(r => r.json()).catch(() => null),
+    ]);
+    if (reqRes) allRequests = reqRes.requests ?? [];
+    if (statsRes) renderKPIs(statsRes);
+    renderBoard();
+    ppicLastLoad = Date.now();
+    const d = Math.floor((Date.now() - ppicLastLoad) / 1000);
+    $('ppic-sync-label').textContent = `${allRequests.length} total · baru saja`;
+  };
+
+  function renderKPIs(stats) {
+    $('kpi-active').textContent  = stats.active ?? '—';
+    $('kpi-overdue').textContent = stats.overdue ?? '0';
+    const taL = stats.turnaround_lokal;
+    const taI = stats.turnaround_internasional;
+    $('kpi-ta-lokal').textContent      = taL ? `${taL.avg_days}h` : '—';
+    $('kpi-ta-lokal-sub').textContent  = taL ? `${taL.cnt} pesanan` : '90 hari terakhir';
+    $('kpi-ta-intl').textContent       = taI ? `${taI.avg_days}h` : '—';
+    $('kpi-ta-intl-sub').textContent   = taI ? `${taI.cnt} pesanan` : '90 hari terakhir';
+  }
+
+  window.renderBoard = function() {
+    const filterRep   = $('ppic-filter-rep').value;
+    const filterLine  = $('ppic-filter-line').value;
+    const filterRoute = $('ppic-filter-route').value;
+    const filterOD    = $('ppic-filter-overdue').checked;
+
+    const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString();
+
+    let filtered = allRequests.filter(r => {
+      if (filterRep   && String(r.sales_rep_id) !== filterRep)   return false;
+      if (filterLine  && r.product_line !== filterLine)           return false;
+      if (filterRoute && r.route !== filterRoute)                 return false;
+      if (filterOD    && !r.is_overdue)                           return false;
+      return true;
+    });
+
+    const columns = {
+      DIAJUKAN:  filtered.filter(r => r.status === 'DIAJUKAN'),
+      DIPROSES:  filtered.filter(r => r.status === 'DIPROSES'),
+      SIAP:      filtered.filter(r => r.status === 'SIAP'),
+      SELESAI:   filtered.filter(r => r.status === 'SELESAI' && r.updated_at >= sevenDaysAgo),
+    };
+
+    $('cnt-masuk').textContent    = columns.DIAJUKAN.length;
+    $('cnt-diproses').textContent = columns.DIPROSES.length;
+    $('cnt-siap').textContent     = columns.SIAP.length;
+    $('cnt-selesai').textContent  = columns.SELESAI.length;
+
+    $('col-masuk').innerHTML    = renderCards(columns.DIAJUKAN, 'DIAJUKAN');
+    $('col-diproses').innerHTML = renderCards(columns.DIPROSES, 'DIPROSES');
+    $('col-siap').innerHTML     = renderCards(columns.SIAP, 'SIAP');
+    $('col-selesai').innerHTML  = renderCards(columns.SELESAI, 'SELESAI');
+  };
+
+  function renderCards(reqs, col) {
+    if (!reqs.length) return `<div class="kanban-empty">Kosong</div>`;
+    return reqs.map(r => {
+      const overdueCls  = r.is_overdue ? ' overdue' : '';
+      const overdueBadge = r.is_overdue ? '<span class="badge-overdue">TERLAMBAT</span>' : '';
+      const colorCode   = r.color_code ? ` · ${esc(r.color_code)}` : '';
+      let extra = '';
+      if (col === 'DIPROSES' && r.eta_date)
+        extra = `<div class="kcard-meta">ETA: ${fmtDate(r.eta_date)}${r.route ? ` · ${r.route}` : ''}</div>`;
+      if (col === 'SIAP') {
+        if (r.fulfillment_mode) {
+          const finfo = r.fulfillment_mode === 'KIRIM'
+            ? `KIRIM → ${esc(r.delivery_recipient)}`
+            : 'AMBIL sendiri';
+          extra = `<div class="kcard-fulfillment">✓ ${finfo}</div>`;
+        } else {
+          extra = `<div class="kcard-waiting">Menunggu pilihan sales…</div>`;
+        }
+      }
+
+      let actions = '';
+      if (col === 'DIAJUKAN') actions = `
+        <button class="btn btn-blue btn-sm" onclick="event.stopPropagation();openRouteModal(${r.id})">Proses →</button>
+        <button class="btn btn-danger btn-sm" onclick="event.stopPropagation();openRejectModal(${r.id})">Tolak</button>`;
+      if (col === 'DIPROSES') actions = `
+        <button class="btn btn-green btn-sm" onclick="event.stopPropagation();openReadyModal(${r.id})">Sampel Siap</button>
+        <button class="btn btn-danger btn-sm" onclick="event.stopPropagation();openRejectModal(${r.id})">Tolak</button>`;
+      if (col === 'SIAP') {
+        const canComplete = !!r.fulfillment_mode;
+        actions = `<button class="btn btn-gold btn-sm" ${canComplete ? '' : 'disabled title="Menunggu pilihan pengambilan dari Sales"'}
+          onclick="event.stopPropagation();completeRequest(${r.id})">Selesai ✓</button>`;
+      }
+
+      return `<div class="kcard${overdueCls}" onclick="openDetail(${r.id})">
+        <div class="kcard-no">${esc(r.request_no)} ${overdueBadge}</div>
+        <div class="kcard-customer">${esc(r.customer_name)}</div>
+        <div class="kcard-color">${esc(r.color_name)}${colorCode}</div>
+        <div class="kcard-meta">
+          ${esc(r.product_line)} · ${esc(r.coating_type)}<br>
+          ${esc(r.sales_rep_name)}${r.needed_by ? ` · Butuh: ${fmtDate(r.needed_by)}` : ''}
+        </div>
+        ${extra}
+        ${actions ? `<div class="kcard-actions">${actions}</div>` : ''}
+      </div>`;
+    }).join('');
+  }
+
+  // ── Submit new request ────────────────────────────────────────────────────
+  window.submitRequest = async function() {
+    const err = $('form-err');
+    err.style.display = 'none';
+    if (!currentRepId) { err.textContent = 'Pilih sales terlebih dahulu.'; err.style.display = 'block'; return; }
+    const body = {
+      sales_rep_id:   currentRepId,
+      customer_name:  $('f-customer').value.trim(),
+      project_name:   $('f-project').value.trim(),
+      product_line:   $('f-product-line').value,
+      coating_type:   $('f-coating').value,
+      color_name:     $('f-color-name').value.trim(),
+      color_code:     $('f-color-code').value.trim(),
+      color_reference: $('f-color-ref').value,
+      qty_panels:     Number($('f-qty').value) || 1,
+      needed_by:      $('f-needed-by').value || null,
+      notes:          $('f-notes').value.trim(),
+      actor:          allReps.find(r => r.id == currentRepId)?.full_name ?? 'Sales',
+    };
+    const btn = $('btn-submit');
+    btn.disabled = true; btn.textContent = 'Mengajukan…';
+    const res = await fetch('/api/color-requests', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then(r => r.json()).catch(() => ({ error: 'Koneksi gagal.' }));
+    btn.disabled = false; btn.textContent = 'Ajukan Permintaan';
+    if (res.error) { err.textContent = res.error; err.style.display = 'block'; return; }
+    showToast(`✓ Permintaan ${res.request_no} diajukan!`);
+    // Reset form
+    ['f-customer','f-project','f-product-line','f-coating','f-color-name','f-color-code',
+     'f-color-ref','f-needed-by','f-notes'].forEach(id => { $(id).value = ''; });
+    $('f-qty').value = '1';
+    $('form-panel').classList.remove('open');
+    loadSales();
+  };
+
+  // ── Cancel request (Sales) ────────────────────────────────────────────────
+  window.cancelRequest = async function(id, actor) {
+    if (!confirm('Batalkan permintaan ini?')) return;
+    const res = await fetch(`/api/color-requests/${id}/cancel`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ actor }),
+    }).then(r => r.json()).catch(() => ({ error: 'Koneksi gagal.' }));
+    if (res.error) { showToast(res.error, true); return; }
+    showToast('Permintaan dibatalkan.');
+    loadSales();
+  };
+
+  // ── Fulfillment modal (Sales) ─────────────────────────────────────────────
+  window.openFulfillModal = function(id) {
+    modalTargetId = id;
+    $('m-fulfill-mode').value = '';
+    $('m-fulfill-recipient').value = '';
+    $('m-fulfill-phone').value = '';
+    $('m-fulfill-address').value = '';
+    $('m-fulfill-err').style.display = 'none';
+    $('delivery-fields').className = 'delivery-fields';
+    openModal('modal-fulfill');
+    // Mark SIAP as seen
+    localStorage.setItem('cg_siap_since', new Date().toISOString());
+    $('siap-badge').className = 'siap-badge';
+  };
+
+  window.submitFulfillment = async function() {
+    const err = $('m-fulfill-err');
+    err.style.display = 'none';
+    const mode = $('m-fulfill-mode').value;
+    if (!mode) { err.textContent = 'Pilih mode pengambilan.'; err.style.display = 'block'; return; }
+    const actor = allReps.find(r => r.id == currentRepId)?.full_name ?? 'Sales';
+    const body = {
+      fulfillment_mode:   mode,
+      delivery_recipient: $('m-fulfill-recipient').value.trim() || null,
+      delivery_phone:     $('m-fulfill-phone').value.trim() || null,
+      delivery_address:   $('m-fulfill-address').value.trim() || null,
+      actor,
+    };
+    const res = await fetch(`/api/color-requests/${modalTargetId}/fulfillment`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then(r => r.json()).catch(() => ({ error: 'Koneksi gagal.' }));
+    if (res.error) { err.textContent = res.error; err.style.display = 'block'; return; }
+    closeModal('modal-fulfill');
+    showToast(`✓ Pilihan ${mode} disimpan.`);
+    loadSales();
+  };
+
+  // ── Route modal (PPIC) ────────────────────────────────────────────────────
+  window.openRouteModal = function(id) {
+    modalTargetId = id;
+    $('m-route-route').value = '';
+    $('m-route-eta').value = '';
+    $('m-route-vendor').value = '';
+    $('m-route-note').value = '';
+    $('m-route-actor').value = 'PPIC';
+    $('m-route-err').style.display = 'none';
+    openModal('modal-route');
+  };
+
+  window.submitRoute = async function() {
+    const err = $('m-route-err');
+    err.style.display = 'none';
+    const route = $('m-route-route').value;
+    if (!route) { err.textContent = 'Pilih rute.'; err.style.display = 'block'; return; }
+    const body = {
+      route,
+      eta_date:     $('m-route-eta').value || null,
+      vendor_name:  $('m-route-vendor').value.trim() || null,
+      routing_note: $('m-route-note').value.trim() || null,
+      actor:        $('m-route-actor').value.trim() || 'PPIC',
+    };
+    const res = await fetch(`/api/color-requests/${modalTargetId}/route`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then(r => r.json()).catch(() => ({ error: 'Koneksi gagal.' }));
+    if (res.error) { err.textContent = res.error; err.style.display = 'block'; return; }
+    closeModal('modal-route');
+    showToast('✓ Permintaan diproses.');
+    loadPPIC();
+  };
+
+  // ── Reject modal (PPIC) ───────────────────────────────────────────────────
+  window.openRejectModal = function(id) {
+    modalTargetId = id;
+    $('m-reject-reason').value = '';
+    $('m-reject-actor').value = 'PPIC';
+    $('m-reject-err').style.display = 'none';
+    openModal('modal-reject');
+  };
+
+  window.submitReject = async function() {
+    const err = $('m-reject-err');
+    err.style.display = 'none';
+    const reason = $('m-reject-reason').value.trim();
+    if (!reason) { err.textContent = 'Alasan penolakan wajib diisi.'; err.style.display = 'block'; return; }
+    const res = await fetch(`/api/color-requests/${modalTargetId}/reject`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reject_reason: reason, actor: $('m-reject-actor').value.trim() || 'PPIC' }),
+    }).then(r => r.json()).catch(() => ({ error: 'Koneksi gagal.' }));
+    if (res.error) { err.textContent = res.error; err.style.display = 'block'; return; }
+    closeModal('modal-reject');
+    showToast('Permintaan ditolak.');
+    loadPPIC();
+  };
+
+  // ── Ready modal (PPIC) ────────────────────────────────────────────────────
+  window.openReadyModal = function(id) {
+    modalTargetId = id;
+    $('m-ready-loc').value = '';
+    $('m-ready-actor').value = 'PPIC';
+    $('m-ready-err').style.display = 'none';
+    openModal('modal-ready');
+  };
+
+  window.submitReady = async function() {
+    const err = $('m-ready-err');
+    err.style.display = 'none';
+    const res = await fetch(`/api/color-requests/${modalTargetId}/ready`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        storage_location: $('m-ready-loc').value.trim() || null,
+        actor: $('m-ready-actor').value.trim() || 'PPIC',
+      }),
+    }).then(r => r.json()).catch(() => ({ error: 'Koneksi gagal.' }));
+    if (res.error) { err.textContent = res.error; err.style.display = 'block'; return; }
+    closeModal('modal-ready');
+    showToast('✓ Sampel ditandai SIAP. Sales akan diberitahu.');
+    loadPPIC();
+  };
+
+  // ── Complete request (PPIC) ───────────────────────────────────────────────
+  window.completeRequest = async function(id) {
+    if (!confirm('Tandai permintaan ini SELESAI?')) return;
+    const res = await fetch(`/api/color-requests/${id}/complete`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ actor: 'PPIC' }),
+    }).then(r => r.json()).catch(() => ({ error: 'Koneksi gagal.' }));
+    if (res.error) { showToast(res.error, true); return; }
+    showToast('✓ Permintaan selesai!');
+    loadPPIC();
+  };
+
+  // ── Detail drawer ─────────────────────────────────────────────────────────
+  window.openDetail = async function(id) {
+    $('drawer-overlay').className = 'drawer-overlay open';
+    $('drawer').className = 'drawer open';
+    $('drw-no').textContent = '…';
+    $('drw-chip').innerHTML = '';
+    $('drw-body').innerHTML = '<div class="spinner">Memuat detail…</div>';
+
+    const r = await fetch(`/api/color-requests/${id}`).then(x => x.json()).catch(() => null);
+    if (!r || r.error) { $('drw-body').innerHTML = '<div class="spinner">Gagal memuat.</div>'; return; }
+
+    $('drw-no').textContent = r.request_no;
+    $('drw-chip').innerHTML = statusChip(r.status);
+    if (r.is_overdue) $('drw-chip').innerHTML += ' <span class="badge-overdue" style="vertical-align:middle">TERLAMBAT</span>';
+
+    const dv = (label, val) => `
+      <div class="detail-field">
+        <div class="detail-label">${label}</div>
+        <div class="detail-val">${val || '—'}</div>
+      </div>`;
+
+    let html = `
+      <div class="detail-row">
+        ${dv('Sales', esc(r.sales_rep_name))}
+        ${dv('Dibuat', fmtDateTime(r.created_at))}
+      </div>
+      <div class="detail-row">
+        ${dv('Customer', esc(r.customer_name))}
+        ${r.project_name ? dv('Proyek', esc(r.project_name)) : ''}
+      </div>
+      <div class="detail-row">
+        ${dv('Lini', esc(r.product_line))}
+        ${dv('Coating', esc(r.coating_type))}
+        ${dv('Qty Panel', r.qty_panels)}
+      </div>
+      <div class="detail-row">
+        ${dv('Nama Warna', esc(r.color_name))}
+        ${dv('Kode Warna', esc(r.color_code))}
+        ${dv('Referensi', esc(r.color_reference?.replace('_',' ')))}
+      </div>
+      ${r.needed_by ? `<div class="detail-row">${dv('Dibutuhkan Sebelum', fmtDate(r.needed_by))}</div>` : ''}
+      ${r.notes ? `<div class="detail-row">${dv('Catatan', esc(r.notes))}</div>` : ''}`;
+
+    if (r.route || r.eta_date) {
+      html += `<div class="detail-section">
+        <div class="detail-section-title">Routing PPIC</div>
+        <div class="detail-row">
+          ${dv('Rute', esc(r.route))}
+          ${dv('ETA', fmtDate(r.eta_date))}
+          ${r.vendor_name ? dv('Vendor', esc(r.vendor_name)) : ''}
+        </div>
+        ${r.routing_note ? `<div class="detail-row">${dv('Catatan Routing', esc(r.routing_note))}</div>` : ''}
+        ${r.ready_at ? `<div class="detail-row">
+          ${dv('Siap Pada', fmtDateTime(r.ready_at))}
+          ${r.storage_location ? dv('Lokasi', esc(r.storage_location)) : ''}
+        </div>` : ''}
+      </div>`;
+    }
+
+    if (r.fulfillment_mode) {
+      html += `<div class="detail-section">
+        <div class="detail-section-title">Pengambilan</div>
+        <div class="detail-row">
+          ${dv('Mode', esc(r.fulfillment_mode))}
+          ${r.fulfilled_at ? dv('Diselesaikan', fmtDateTime(r.fulfilled_at)) : ''}
+        </div>
+        ${r.fulfillment_mode === 'KIRIM' ? `<div class="detail-row">
+          ${dv('Penerima', esc(r.delivery_recipient))}
+          ${dv('HP', esc(r.delivery_phone))}
+        </div>
+        <div class="detail-row">${dv('Alamat', esc(r.delivery_address))}</div>` : ''}
+      </div>`;
+    }
+
+    if (r.reject_reason) {
+      html += `<div class="detail-section">
+        <div class="detail-section-title">Alasan Penolakan</div>
+        <div style="color:#f8a0a0;font-size:13.5px">${esc(r.reject_reason)}</div>
+      </div>`;
+    }
+
+    // Event timeline
+    const events = r.events ?? [];
+    if (events.length) {
+      html += `<div class="detail-section">
+        <div class="detail-section-title">Riwayat</div>
+        <div class="timeline">
+          ${events.map(ev => {
+            const trans = ev.from_status
+              ? `${ev.from_status} → ${ev.to_status}`
+              : `Dibuat (${ev.to_status})`;
+            return `<div class="ev-item">
+              <div class="ev-dot"></div>
+              <div class="ev-body">
+                <div class="ev-transition">${esc(trans)}</div>
+                <div class="ev-actor">${esc(ev.actor)}</div>
+                ${ev.note ? `<div class="ev-note">${esc(ev.note)}</div>` : ''}
+                <div class="ev-time">${fmtDateTime(ev.created_at)}</div>
+              </div>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>`;
+    }
+
+    $('drw-body').innerHTML = html;
+  };
+
+  window.closeDrawer = function() {
+    $('drawer-overlay').className = 'drawer-overlay';
+    $('drawer').className = 'drawer';
+    // Update SIAP last-seen when closing drawer from Sales tab
+    if (currentRole === 'sales') {
+      localStorage.setItem('cg_siap_since', new Date().toISOString());
+      $('siap-badge').className = 'siap-badge';
+    }
+  };
+
+  // ── Modal helpers ─────────────────────────────────────────────────────────
+  function openModal(id) {
+    $(id).className = 'modal-overlay open';
+  }
+  window.closeModal = function(id) {
+    $(id).className = 'modal-overlay';
+  };
+  // Close modals on overlay click
+  document.querySelectorAll('.modal-overlay').forEach(el => {
+    el.addEventListener('click', e => { if (e.target === el) el.className = 'modal-overlay'; });
+  });
+
+  // ── Polling ───────────────────────────────────────────────────────────────
+  function startPolling() {
+    pollTimer = setInterval(() => {
+      if (currentRole === 'sales') loadSales();
+      else loadPPIC();
+    }, 30000);
+  }
+
+  // ── Boot ──────────────────────────────────────────────────────────────────
+  async function boot() {
+    await loadReps();
+    setRole(currentRole, false);
+    startPolling();
+  }
+
+  boot();
+})();
+</script>
+</body>
+</html>

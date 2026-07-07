@@ -391,6 +391,84 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
     console.error("[migrate] salespeople seeding failed (non-fatal):", seedErr);
   }
 
+  // ── Module E — Custom Color Gateway ──────────────────────────────────────────
+  try {
+    await db`
+      create table if not exists color_requests (
+        id                  serial primary key,
+        request_no          text not null unique,
+        status              text not null default 'DIAJUKAN'
+                            check (status in ('DIAJUKAN','DIPROSES','SIAP','SELESAI','DIBATALKAN','DITOLAK')),
+        sales_rep_id        bigint not null references salespeople(id),
+        customer_name       text not null,
+        project_name        text,
+        product_line        text not null check (product_line in ('MACO','ALCOPAN','TAJIMA','SAKURA')),
+        coating_type        text not null check (coating_type in ('PVDF','PE')),
+        color_name          text not null,
+        color_code          text,
+        color_reference     text not null check (color_reference in ('KODE_RAL','SAMPEL_FISIK','FOTO')),
+        qty_panels          int not null default 1 check (qty_panels between 1 and 10),
+        needed_by           date,
+        notes               text,
+        route               text check (route in ('LOKAL','INTERNASIONAL')),
+        eta_date            date,
+        vendor_name         text,
+        routing_note        text,
+        routed_at           timestamptz,
+        routed_by           text,
+        ready_at            timestamptz,
+        storage_location    text,
+        fulfillment_mode    text check (fulfillment_mode in ('AMBIL','KIRIM')),
+        delivery_recipient  text,
+        delivery_phone      text,
+        delivery_address    text,
+        fulfilled_at        timestamptz,
+        reject_reason       text,
+        cancelled_at        timestamptz,
+        created_at          timestamptz not null default now(),
+        updated_at          timestamptz not null default now()
+      )
+    `;
+    await db`create index if not exists idx_color_requests_status on color_requests(status)`;
+    await db`create index if not exists idx_color_requests_rep    on color_requests(sales_rep_id)`;
+    await db`create index if not exists idx_color_requests_eta    on color_requests(eta_date) where status = 'DIPROSES'`;
+
+    await db`
+      create table if not exists color_request_events (
+        id           serial primary key,
+        request_id   int not null references color_requests(id),
+        from_status  text,
+        to_status    text not null,
+        actor        text not null,
+        note         text,
+        created_at   timestamptz not null default now()
+      )
+    `;
+    await db`create index if not exists idx_cre_request on color_request_events(request_id)`;
+
+    await db`
+      create table if not exists color_request_counters (
+        year    int primary key,
+        last_no int not null default 0
+      )
+    `;
+
+    // chk_kirim_fields: no "add constraint if not exists" in PG — swallow duplicate_object.
+    try {
+      await db`
+        alter table color_requests add constraint chk_kirim_fields
+        check (
+          fulfillment_mode is distinct from 'KIRIM'
+          or (delivery_recipient is not null and delivery_phone is not null and delivery_address is not null)
+        )
+      `;
+    } catch (constraintErr: unknown) {
+      if (!String((constraintErr as Error)?.message ?? "").includes("already exists")) throw constraintErr;
+    }
+  } catch (eErr) {
+    console.error("[migrate] Module E color gateway migration failed (non-fatal):", eErr);
+  }
+
   // ── Mirae Module — isolated visitation log ──────────────────────────────────
   try {
     await db`
