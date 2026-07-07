@@ -53,7 +53,7 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
         ${acct_type ? db`and c.account_type = ${acct_type}`                   : db``}
         ${search    ? db`and (lower(c.store_name) like lower(${search}) or lower(c.area) like lower(${search}))` : db``}
       order by ${sortUrgency
-        ? db`case c.stage when 'at_risk' then 1 when 'perlu_followup' then 2 when 'negosiasi' then 3 when 'penawaran' then 4 when 'prospek' then 5 when 'aktif' then 6 when 'won' then 7 when 'gugur' then 8 when 'hibernasi' then 9 else 10 end, c.last_contact_at asc nulls first`
+        ? db`case c.stage when 'at_risk' then 1 when 'perlu_followup' then 2 when 'negosiasi' then 3 when 'penawaran' then 4 when 'prospek' then 5 when 'aktif' then 6 when 'won' then 7 when 'gugur' then 8 when 'hibernasi' then 9 else 10 end, c.last_contact_at desc nulls last`
         : db`c.last_contact_at desc nulls last`},
       c.store_name
       limit ${limit} offset ${offset}
