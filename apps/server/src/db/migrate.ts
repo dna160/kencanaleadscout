@@ -414,7 +414,7 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
         coating_type        text not null check (coating_type in ('PVDF','PE')),
         color_name          text not null,
         color_code          text,
-        color_reference     text not null check (color_reference in ('KODE_RAL','SAMPEL_FISIK','FOTO')),
+        color_reference     text not null check (color_reference in ('KODE_RAL','NCS','PANTONE','SAMPEL_FISIK','FOTO')),
         qty_panels          int not null default 1 check (qty_panels between 1 and 10),
         needed_by           date,
         notes               text,

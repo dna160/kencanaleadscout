@@ -54,7 +54,7 @@ function optInt(v: unknown): number | null {
 
 const VALID_PRODUCT_LINES = new Set(["MACO", "ALCOPAN", "TAJIMA", "SAKURA"]);
 const VALID_COATING_TYPES = new Set(["PVDF", "PE"]);
-const VALID_COLOR_REFS    = new Set(["KODE_RAL", "SAMPEL_FISIK", "FOTO"]);
+const VALID_COLOR_REFS    = new Set(["KODE_RAL", "NCS", "PANTONE", "SAMPEL_FISIK", "FOTO"]);
 const VALID_ROUTES        = new Set(["LOKAL", "INTERNASIONAL"]);
 const VALID_FULFILLMENT   = new Set(["AMBIL", "KIRIM"]);
 
