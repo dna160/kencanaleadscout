@@ -674,10 +674,16 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
       )
     `;
 
-    // Seed categories + areas (same as main module)
-    for (const v of ["Toko", "Workshop", "Aplikator", "Kontraktor", "Distributor", "Advertising/Signage", "Project", "Other"]) {
+    // Seed categories + areas (Project-specific)
+    for (const v of ["Project", "HO", "Aplikator", "Kontraktor"]) {
       await db`insert into project_visit_lists (type, value) values ('category', ${v}) on conflict do nothing`;
     }
+    // Deactivate categories not in the project-team list
+    await db`
+      update project_visit_lists set active = false
+      where type = 'category'
+        and lower(value) not in ('project','ho','aplikator','kontraktor')
+    `;
     for (const v of [
       "Bekasi Barat", "Bekasi Timur", "Bekasi Utara", "Bekasi Selatan", "Bekasi Kota",
       "Cikarang", "Karawang", "Depok", "Tangerang Selatan",
@@ -697,6 +703,7 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
       { full_name: "Raafi", code: "RAF" },
       { full_name: "Yeni",  code: "YNI" },
       { full_name: "Yupi",  code: "YPI" },
+      { full_name: "Biya",  code: "BIY" },
     ]) {
       await db`
         insert into project_salespeople (full_name, code)
