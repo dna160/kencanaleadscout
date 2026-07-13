@@ -590,6 +590,125 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
   } catch (miraeErr) {
     console.error("[migrate] Mirae module migration failed (non-fatal):", miraeErr);
   }
+
+  // ── Project Module — isolated visitation log ──────────────────────────────
+  try {
+    await db`
+      create table if not exists project_salespeople (
+        id           bigserial primary key,
+        full_name    text not null,
+        code         text unique,
+        active       boolean not null default true,
+        created_at   timestamptz not null default now()
+      )
+    `;
+    await db`
+      create table if not exists project_visit_lists (
+        id     bigserial primary key,
+        type   text not null,
+        value  text not null,
+        active boolean not null default true
+      )
+    `;
+    await db`
+      create unique index if not exists project_visit_lists_type_value_idx
+        on project_visit_lists (type, lower(value))
+    `;
+    await db`
+      create table if not exists project_customers (
+        id            bigserial primary key,
+        store_name    text not null,
+        category      text not null,
+        area          text,
+        address       text,
+        postal_code   text,
+        first_seen_at timestamptz,
+        created_by    bigint references project_salespeople(id)
+      )
+    `;
+    await db`
+      create unique index if not exists project_customers_norm
+        on project_customers (lower(trim(store_name)), lower(coalesce(area, '')))
+    `;
+    await db`
+      create table if not exists project_visits (
+        id             bigserial primary key,
+        salesperson_id bigint not null references project_salespeople(id),
+        customer_id    bigint references project_customers(id),
+        pic_name       text,
+        store_name     text not null,
+        customer_type  text not null check (customer_type in ('new','old')),
+        category       text not null,
+        address        text,
+        area           text not null,
+        postal_code    text check (postal_code is null or postal_code ~ '^\\d{5}$'),
+        notes          text,
+        visited_at     timestamptz not null default now(),
+        created_at     timestamptz not null default now(),
+        activity_type  text not null default 'kunjungan',
+        source         text not null default 'app'
+      )
+    `;
+    await db`create index if not exists project_visits_rep_time on project_visits (salesperson_id, visited_at desc)`;
+    await db`create index if not exists project_visits_area     on project_visits (area)`;
+    await db`create index if not exists project_visits_type     on project_visits (customer_type)`;
+    await db`
+      create table if not exists project_visit_photos (
+        id         bigserial primary key,
+        visit_id   bigint not null references project_visits(id) on delete cascade,
+        file_data  bytea not null,
+        mime_type  text not null default 'image/jpeg',
+        filename   text,
+        file_size  int not null,
+        created_at timestamptz not null default now()
+      )
+    `;
+    await db`create index if not exists project_visit_photos_visit_idx on project_visit_photos (visit_id)`;
+    await db`
+      create table if not exists project_visit_audits (
+        id         bigserial primary key,
+        visit_id   bigint not null references project_visits(id),
+        field      text not null,
+        old_value  text,
+        new_value  text,
+        changed_by text,
+        changed_at timestamptz not null default now()
+      )
+    `;
+
+    // Seed categories + areas (same as main module)
+    for (const v of ["Toko", "Workshop", "Aplikator", "Kontraktor", "Distributor", "Advertising/Signage", "Project", "Other"]) {
+      await db`insert into project_visit_lists (type, value) values ('category', ${v}) on conflict do nothing`;
+    }
+    for (const v of [
+      "Bekasi Barat", "Bekasi Timur", "Bekasi Utara", "Bekasi Selatan", "Bekasi Kota",
+      "Cikarang", "Karawang", "Depok", "Tangerang Selatan",
+      "Jakarta Timur", "Jakarta Selatan", "Jakarta Pusat", "Jakarta Barat", "Jakarta Utara",
+      "Bogor",
+    ]) {
+      await db`insert into project_visit_lists (type, value) values ('area', ${v}) on conflict do nothing`;
+    }
+
+    // Seed Project salespeople
+    for (const r of [
+      { full_name: "Ali",   code: "ALI" },
+      { full_name: "Dava",  code: "DVA" },
+      { full_name: "Deasy", code: "DSY" },
+      { full_name: "Febi",  code: "FBI" },
+      { full_name: "Havi",  code: "HVI" },
+      { full_name: "Raafi", code: "RAF" },
+      { full_name: "Yeni",  code: "YNI" },
+      { full_name: "Yupi",  code: "YPI" },
+    ]) {
+      await db`
+        insert into project_salespeople (full_name, code)
+        values (${r.full_name}, ${r.code})
+        on conflict (code) do nothing
+      `;
+    }
+  } catch (projectErr) {
+    console.error("[migrate] Project module migration failed (non-fatal):", projectErr);
+  }
 }
 
 // Allow `tsx src/db/migrate.ts` as a one-off.

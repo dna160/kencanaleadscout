@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Insights · Project Visitation Log</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --ink: #14213d; --ink-2: #1b2949; --red: #9b2226; --gold: #bb9457; --green: #2c6e49;
+        --paper: #f5f2ec; --muted: #8a96ad; --line: rgba(255,255,255,.09);
+        --display: "Space Grotesk","Inter",system-ui,sans-serif;
+        --sans: "Inter",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; }
+      body {
+        font-family: var(--sans); color: var(--paper);
+        background: radial-gradient(1200px 600px at 80% -10%, rgba(6,122,111,.12), transparent 60%), var(--ink);
+        -webkit-font-smoothing: antialiased;
+      }
+      .wrap { max-width: 1100px; margin: 0 auto; padding: 0 20px 60px; }
+
+      .nav {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 14px 20px; border-bottom: 1px solid var(--line);
+        background: rgba(20,33,61,.92); position: sticky; top: 0; z-index: 10;
+        backdrop-filter: blur(10px);
+      }
+      .nav-brand { display: flex; align-items: center; gap: 10px; }
+      .mark {
+        width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center;
+        background: linear-gradient(135deg, #067a6f, #025f56);
+        font-family: var(--display); font-weight: 700; color: #fff; font-size: 16px;
+      }
+      .nav-brand b { font-family: var(--display); font-size: 15px; }
+      .nav-brand span { color: var(--muted); font-size: 12px; }
+      .nav a { color: var(--gold); font-size: 13px; font-weight: 600; text-decoration: none; }
+
+      .page-header { padding: 32px 0 24px; }
+      .page-header h1 { font-family: var(--display); font-size: clamp(26px, 5vw, 40px); margin: 0 0 6px; }
+      .page-header p { color: var(--muted); margin: 0; font-size: 14px; }
+      .disclaimer {
+        background: rgba(187,148,87,.08); border: 1px solid rgba(187,148,87,.25);
+        border-radius: 10px; padding: 10px 14px; font-size: 13px; color: #c8b07a; margin-bottom: 24px;
+      }
+
+      .range-bar {
+        display: flex; align-items: center; gap: 10px; margin-bottom: 28px;
+        flex-wrap: wrap;
+      }
+      .range-bar label { font-size: 13px; color: var(--muted); font-weight: 500; }
+      .range-bar input[type="date"] {
+        background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12);
+        border-radius: 9px; padding: 8px 12px; color: var(--paper); font-family: var(--sans);
+        font-size: 14px; outline: none;
+      }
+      .range-bar input[type="date"]:focus { border-color: var(--gold); }
+      .btn-range {
+        padding: 8px 18px; border-radius: 9px; border: none; cursor: pointer;
+        font-family: var(--sans); font-size: 13px; font-weight: 600;
+      }
+      .btn-apply  { background: var(--gold); color: #14213d; }
+      .btn-preset { background: rgba(255,255,255,.07); border: 1px solid var(--line); color: var(--muted); }
+      .btn-preset.active { background: rgba(255,255,255,.14); color: var(--paper); border-color: rgba(255,255,255,.2); }
+
+      .section { margin-bottom: 36px; }
+      .section-title { font-family: var(--display); font-size: 18px; font-weight: 600; margin: 0 0 14px; }
+      .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+      .kpi {
+        background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
+        border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px;
+      }
+      .kpi .kpi-label { font-size: 12px; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+      .kpi .kpi-val { font-family: var(--display); font-size: 32px; font-weight: 700; }
+      .kpi .kpi-sub { font-size: 13px; color: var(--muted); margin-top: 2px; }
+
+      .rep-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+      .rep-card {
+        background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
+        border: 1px solid var(--line); border-radius: 16px; padding: 18px; position: relative;
+        overflow: hidden;
+      }
+      .rep-card.loading { opacity: .5; }
+      .rc-head { display: flex; flex-direction: column; gap: 3px; margin-bottom: 14px; }
+      .rc-name { font-family: var(--display); font-size: 18px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .archetype-desc { font-size: 12px; color: var(--muted); font-style: italic; }
+      .rc-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 4px; }
+      .rc-code { font-size: 12px; color: var(--gold); font-weight: 700; letter-spacing: .8px; background: rgba(187,148,87,.15); padding: 2px 8px; border-radius: 5px; flex-shrink: 0; }
+      .archetype-tag {
+        font-size: 12px; font-weight: 600; color: #5eead4; background: rgba(46,111,214,.15);
+        border: 1px solid rgba(46,111,214,.3); border-radius: 6px; padding: 3px 9px;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      .rc-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+      .rc-metric { display: flex; flex-direction: column; gap: 2px; }
+      .rc-metric .m-label { font-size: 11px; color: var(--muted); font-weight: 500; text-transform: uppercase; letter-spacing: .5px; }
+      .rc-metric .m-val { font-family: var(--display); font-size: 20px; font-weight: 600; }
+      .rc-metric .m-sub { font-size: 11px; color: var(--muted); }
+      .hunter-bar { margin-top: 2px; }
+      .bar-track { height: 6px; background: rgba(255,255,255,.08); border-radius: 99px; overflow: hidden; margin-top: 6px; }
+      .bar-fill { height: 100%; border-radius: 99px; background: linear-gradient(90deg, #3b6ea5, #5eead4); }
+      .bar-fill.hunter { background: linear-gradient(90deg, var(--red), #d15555); }
+      .rc-cats { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
+      .cat-pill {
+        font-size: 11px; padding: 3px 9px; border-radius: 5px;
+        background: rgba(255,255,255,.07); border: 1px solid var(--line); color: #c0cadc;
+      }
+      .cat-pill span { color: var(--gold); font-weight: 600; }
+      .no-data { text-align: center; color: var(--muted); padding: 20px; font-size: 14px; }
+
+      .lb-tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+      .lb-tab {
+        padding: 6px 16px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer;
+        border: 1px solid var(--line); background: transparent; color: var(--muted); transition: .12s;
+      }
+      .lb-tab.active { background: rgba(255,255,255,.1); color: var(--paper); border-color: rgba(255,255,255,.2); }
+      .lb-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+      .lb-table th { text-align: left; padding: 8px 12px; font-size: 11px; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--line); }
+      .lb-table td { padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,.04); }
+      .lb-rank { font-family: var(--display); font-weight: 700; font-size: 18px; color: var(--muted); width: 36px; }
+      .lb-rank.top { color: var(--gold); }
+      .lb-name { font-weight: 600; }
+      .lb-code { font-size: 12px; color: var(--gold); font-weight: 700; }
+      .lb-bar-cell { width: 120px; }
+      .lb-mini-bar { height: 6px; background: rgba(255,255,255,.06); border-radius: 99px; margin-top: 4px; overflow: hidden; }
+      .lb-mini-fill { height: 100%; border-radius: 99px; background: var(--green); }
+      .lb-mini-fill.new-fill { background: #2E6FD6; }
+
+      .heatmap-wrap { overflow-x: auto; }
+      .heatmap { border-collapse: collapse; font-size: 12px; min-width: 500px; }
+      .heatmap th { padding: 6px 10px; text-align: left; font-size: 11px; font-weight: 600; color: var(--muted); border-bottom: 1px solid var(--line); white-space: nowrap; }
+      .heatmap td { padding: 6px 10px; border-bottom: 1px solid rgba(255,255,255,.03); text-align: center; }
+      .heatmap td.area-label { text-align: left; color: var(--paper); font-weight: 500; white-space: nowrap; }
+      .hm-cell { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 26px; border-radius: 5px; font-weight: 600; }
+      .hm-0 { color: var(--muted); background: rgba(255,255,255,.03); }
+      .hm-low { color: #7ee87e; background: rgba(44,110,73,.2); }
+      .hm-mid { color: #7ee87e; background: rgba(44,110,73,.35); }
+      .hm-high { color: #fff; background: rgba(44,110,73,.6); }
+
+      .trend-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+      .trend-table th { padding: 7px 10px; font-size: 11px; font-weight: 600; color: var(--muted); text-align: left; border-bottom: 1px solid var(--line); letter-spacing: .5px; text-transform: uppercase; }
+      .trend-table td { padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,.04); }
+      .trend-week { font-family: var(--display); font-weight: 600; color: var(--muted); white-space: nowrap; }
+      .trend-rep  { color: var(--paper); }
+      .trend-val  { font-family: var(--display); font-weight: 700; color: #5eead4; }
+
+      .spinner { text-align: center; padding: 40px; color: var(--muted); font-size: 14px; }
+    </style>
+  </head>
+  <body>
+    <div class="nav">
+      <div class="nav-brand">
+        <div class="mark">P</div>
+        <div>
+          <b>Project Insights</b>
+          <span style="display:block;">Project Visitation Log</span>
+        </div>
+      </div>
+      <a href="/project-rack">← Kembali ke Rack-up</a>
+    </div>
+
+    <div class="wrap">
+      <div class="page-header">
+        <h1>Insights Dashboard</h1>
+        <p>Profil per-rep, aktivitas lapangan, dan coverage tim.</p>
+      </div>
+
+      <div class="disclaimer">
+        ⚠️ Dashboard ini mengukur <strong>perilaku kunjungan</strong>, bukan hasil penjualan. Gunakan bersama data transaksi untuk penilaian yang lengkap.
+      </div>
+
+      <div class="range-bar">
+        <label>Periode:</label>
+        <button class="btn-preset active" data-days="30" onclick="setPreset(30, this)">30 hari</button>
+        <button class="btn-preset" data-days="7"  onclick="setPreset(7, this)">7 hari</button>
+        <button class="btn-preset" data-days="90" onclick="setPreset(90, this)">90 hari</button>
+        <input type="date" id="range-from" />
+        <span style="color:var(--muted);">–</span>
+        <input type="date" id="range-to" />
+        <button class="btn-apply" onclick="reload()">Terapkan</button>
+      </div>
+
+      <div class="section" id="team-totals">
+        <div class="section-title">Ringkasan Tim</div>
+        <div class="kpi-grid" id="kpi-grid">
+          <div class="spinner">Memuat data…</div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Leaderboard</div>
+        <div class="lb-tabs">
+          <button class="lb-tab active" onclick="showLB('visits', this)">Total Kunjungan</button>
+          <button class="lb-tab" onclick="showLB('new', this)">Customer Baru</button>
+        </div>
+        <table class="lb-table" id="lb-table">
+          <thead><tr><th>#</th><th>Sales</th><th>Kunjungan</th><th class="lb-bar-cell"></th></tr></thead>
+          <tbody id="lb-body"><tr><td colspan="4" class="spinner">Memuat…</td></tr></tbody>
+        </table>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Profil Per-Rep</div>
+        <div class="rep-grid" id="rep-grid">
+          <div class="spinner">Memuat data…</div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Coverage Heatmap (Area × Kategori)</div>
+        <div class="heatmap-wrap">
+          <table class="heatmap" id="heatmap-table">
+            <thead><tr><th>Area</th></tr></thead>
+            <tbody id="heatmap-body"><tr><td class="spinner">Memuat…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+
+    <script>
+    (() => {
+      "use strict";
+      const $ = (id) => document.getElementById(id);
+
+      let teamData = null;
+      let repScores = [];
+      let lbMode = "visits";
+
+      const now = new Date();
+      const toStr = now.toISOString().slice(0, 10);
+      const fromStr = new Date(now.getTime() - 30 * 86400_000).toISOString().slice(0, 10);
+      $("range-from").value = fromStr;
+      $("range-to").value   = toStr;
+
+      window.setPreset = function(days, btn) {
+        document.querySelectorAll(".btn-preset").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        const t = new Date();
+        $("range-to").value   = t.toISOString().slice(0, 10);
+        $("range-from").value = new Date(t.getTime() - days * 86400_000).toISOString().slice(0, 10);
+        reload();
+      };
+
+      window.reload = function() {
+        loadAll();
+      };
+
+      async function loadAll() {
+        const from = $("range-from").value;
+        const to   = $("range-to").value;
+        const qs   = `from=${from}&to=${to}T23:59:59`;
+
+        const teamRes = await fetch(`/api/project/insights/team?${qs}`).then(r => r.json()).catch(() => null);
+        teamData = teamRes;
+        renderKPIs(teamRes);
+        renderLeaderboard(teamRes, lbMode);
+        renderHeatmap(teamRes);
+
+        const spRes = await fetch("/api/project/salespeople").then(r => r.json()).catch(() => ({ salespeople: [] }));
+        const salespeople = spRes.salespeople ?? [];
+
+        $("rep-grid").innerHTML = '<div class="spinner">Memuat profil rep…</div>';
+        const scores = await Promise.all(
+          salespeople.map(sp =>
+            fetch(`/api/project/insights/rep/${sp.id}?${qs}`).then(r => r.json()).catch(() => null)
+          )
+        );
+        repScores = scores.filter(Boolean);
+        renderRepCards(repScores);
+      }
+
+      function renderKPIs(data) {
+        if (!data) { $("kpi-grid").innerHTML = '<div class="no-data">Data tidak tersedia.</div>'; return; }
+        const t = data.totals;
+        const hunterIdx = t.total_visits > 0 ? Math.round(t.new_visits / t.total_visits * 100) : 0;
+        $("kpi-grid").innerHTML = [
+          ["Total Kunjungan",   t.total_visits,   ""],
+          ["Customer Baru",     t.new_visits,     `Hunter Index: ${hunterIdx}%`],
+          ["Toko Unik",         t.unique_stores,  ""],
+          ["Rep Aktif",         t.active_reps,    "periode ini"],
+        ].map(([lbl, val, sub]) => `
+          <div class="kpi">
+            <div class="kpi-label">${lbl}</div>
+            <div class="kpi-val">${val ?? 0}</div>
+            ${sub ? `<div class="kpi-sub">${sub}</div>` : ""}
+          </div>
+        `).join("");
+      }
+
+      window.showLB = function(mode, btn) {
+        lbMode = mode;
+        document.querySelectorAll(".lb-tab").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        const thead = $("lb-table").querySelector("thead tr");
+        if (mode === "visits") {
+          thead.innerHTML = "<th>#</th><th>Sales</th><th>Kunjungan</th><th class='lb-bar-cell'></th>";
+        } else {
+          thead.innerHTML = "<th>#</th><th>Sales</th><th>Customer Baru</th><th class='lb-bar-cell'></th>";
+        }
+        renderLeaderboard(teamData, mode);
+      };
+
+      function renderLeaderboard(data, mode) {
+        if (!data) return;
+        const lb = [...data.leaderboard].sort((a, b) =>
+          mode === "visits" ? b.total_visits - a.total_visits : b.new_customers - a.new_customers
+        );
+        const max = lb[0] ? (mode === "visits" ? lb[0].total_visits : lb[0].new_customers) : 1;
+        $("lb-body").innerHTML = lb.length === 0
+          ? '<tr><td colspan="4" class="no-data">Belum ada data.</td></tr>'
+          : lb.map((r, i) => {
+              const val  = mode === "visits" ? r.total_visits : r.new_customers;
+              const pct  = max > 0 ? Math.round(val / max * 100) : 0;
+              const fillClass = mode === "new" ? "new-fill" : "";
+              return `
+                <tr>
+                  <td><span class="lb-rank ${i < 3 ? "top" : ""}">${i + 1}</span></td>
+                  <td>
+                    <div class="lb-name">${esc(r.full_name)}</div>
+                    <div class="lb-code">${esc(r.code)}</div>
+                  </td>
+                  <td>
+                    <div style="font-family:var(--display);font-size:18px;font-weight:700;">${val}</div>
+                    ${mode === "visits" ? `<div style="font-size:11px;color:var(--muted);">Hunter: ${r.hunter_index}%</div>` : `<div style="font-size:11px;color:var(--muted);">${r.total_visits} total</div>`}
+                  </td>
+                  <td class="lb-bar-cell">
+                    <div class="lb-mini-bar">
+                      <div class="lb-mini-fill ${fillClass}" style="width:${pct}%"></div>
+                    </div>
+                  </td>
+                </tr>`;
+            }).join("");
+      }
+
+      function renderRepCards(scores) {
+        if (scores.length === 0) {
+          $("rep-grid").innerHTML = '<div class="no-data">Belum ada data kunjungan.</div>';
+          return;
+        }
+        $("rep-grid").innerHTML = scores.map(s => {
+          const sc    = s.scorecard;
+          const cats  = (s.category_mix ?? []).slice(0, 4);
+          const topArea = (s.area_mix ?? [])[0]?.area ?? "–";
+          const hunterPct = sc.hunter_index;
+          const archetypeText = archetypeDescription(s, sc);
+
+          return `
+            <div class="rep-card">
+              <div class="rc-head">
+                <div class="rc-name">${esc(s.full_name)}</div>
+                <div class="archetype-desc">${esc(archetypeText)}</div>
+                <div class="rc-foot">
+                  <div class="rc-code">${esc(s.code)}</div>
+                  <div class="archetype-tag">${esc(s.archetype)}</div>
+                </div>
+              </div>
+              <div class="rc-metrics">
+                <div class="rc-metric">
+                  <div class="m-label">Total Kunjungan</div>
+                  <div class="m-val">${sc.total_visits}</div>
+                  <div class="m-sub">${sc.active_days} hari aktif</div>
+                </div>
+                <div class="rc-metric">
+                  <div class="m-label">Per Hari Aktif</div>
+                  <div class="m-val">${sc.visits_per_active_day.toFixed(1)}</div>
+                  <div class="m-sub">kunjungan/hari</div>
+                </div>
+                <div class="rc-metric">
+                  <div class="m-label">Hunter Index</div>
+                  <div class="m-val" style="color:${hunterPct >= 50 ? '#e05252' : '#5eead4'};">${hunterPct}%</div>
+                  <div class="hunter-bar bar-track">
+                    <div class="bar-fill hunter" style="width:${hunterPct}%;background:${hunterPct>=50?'linear-gradient(90deg,var(--red),#d15555)':'linear-gradient(90deg,#067a6f,#5eead4)'};"></div>
+                  </div>
+                </div>
+                <div class="rc-metric">
+                  <div class="m-label">Toko Unik</div>
+                  <div class="m-val">${sc.unique_stores}</div>
+                  <div class="m-sub">${sc.unique_areas} area</div>
+                </div>
+                <div class="rc-metric">
+                  <div class="m-label">Disiplin Catatan</div>
+                  <div class="m-val" style="color:${sc.notes_discipline>=60?'#7ee87e':'var(--muted)'};">${sc.notes_discipline}%</div>
+                  <div class="m-sub">≥ 40 karakter</div>
+                </div>
+                <div class="rc-metric">
+                  <div class="m-label">Area Utama</div>
+                  <div class="m-val" style="font-size:14px;font-weight:600;">${esc(topArea)}</div>
+                  <div class="m-sub">${sc.top_area_pct}% kunjungan</div>
+                </div>
+              </div>
+              ${cats.length ? `
+                <div class="rc-cats">
+                  ${cats.map(c => `<div class="cat-pill">${esc(c.category)} <span>${c.pct}%</span></div>`).join("")}
+                </div>` : ""}
+            </div>`;
+        }).join("");
+      }
+
+      function archetypeDescription(s, sc) {
+        const name  = s.full_name;
+        const arch  = s.archetype;
+        const topCat = (s.category_mix ?? [])[0];
+        const topArea = (s.area_mix ?? [])[0];
+        let desc = `${name} — ${arch}: `;
+        desc += `${sc.hunter_index}% customer ${sc.hunter_index >= 50 ? "baru" : "lama"}`;
+        if (topCat) desc += `, ${topCat.pct}% ${topCat.category}`;
+        if (topArea) desc += `, area utama ${topArea.area}`;
+        return desc + ".";
+      }
+
+      function renderHeatmap(data) {
+        if (!data || data.heatmap.length === 0) {
+          $("heatmap-body").innerHTML = '<tr><td class="no-data">Belum ada data.</td></tr>';
+          return;
+        }
+
+        const categories = [...new Set(data.heatmap.map(r => r.category))].sort();
+        const areas      = [...new Set(data.heatmap.map(r => r.area))].sort();
+        const cellMap    = new Map(data.heatmap.map(r => [`${r.area}||${r.category}`, r.count]));
+        const allCounts  = data.heatmap.map(r => r.count);
+        const maxCount   = Math.max(...allCounts, 1);
+
+        $("heatmap-table").querySelector("thead tr").innerHTML =
+          `<th>Area</th>` + categories.map(c => `<th>${esc(c)}</th>`).join("");
+
+        $("heatmap-body").innerHTML = areas.map(area => {
+          const cells = categories.map(cat => {
+            const cnt = cellMap.get(`${area}||${cat}`) ?? 0;
+            const cls = cnt === 0 ? "hm-0" : cnt <= maxCount * 0.33 ? "hm-low" : cnt <= maxCount * 0.66 ? "hm-mid" : "hm-high";
+            return `<td><div class="hm-cell ${cls}">${cnt > 0 ? cnt : ""}</div></td>`;
+          }).join("");
+          return `<tr><td class="area-label">${esc(area)}</td>${cells}</tr>`;
+        }).join("");
+      }
+
+      function esc(s) {
+        if (s == null) return "";
+        return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+      }
+
+      loadAll();
+    })();
+    </script>
+  </body>
+</html>

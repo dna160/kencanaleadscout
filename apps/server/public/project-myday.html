@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>My Day · Project Visitation Log</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --ink: #14213d; --ink-2: #1b2949; --gold: #bb9457; --green: #2c6e49;
+      --paper: #f5f2ec; --muted: #8a96ad; --line: rgba(255,255,255,.09);
+      --blue: #067a6f; --blue-light: #5eead4; --old: #3E9B4F;
+      --display: "Space Grotesk","Inter",system-ui,sans-serif;
+      --sans: "Inter",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      font-family: var(--sans); color: var(--paper);
+      background: radial-gradient(1200px 600px at 90% -10%, rgba(6,122,111,.14), transparent 60%), var(--ink);
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrap { max-width: 720px; margin: 0 auto; padding: 0 18px 70px; }
+
+    nav {
+      display: flex; align-items: center; justify-content: space-between; gap: 14px;
+      padding: 12px 18px; border-bottom: 1px solid var(--line);
+      background: rgba(20,33,61,.92); position: sticky; top: 0; z-index: 10;
+      backdrop-filter: blur(10px); flex-wrap: wrap;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .mark { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center;
+      background: linear-gradient(135deg, var(--blue), #025f56);
+      font-family: var(--display); font-weight: 700; color: #fff; font-size: 17px; }
+    .brand b { font-family: var(--display); font-size: 16px; }
+    .brand span { color: var(--muted); font-size: 12px; display: block; }
+    .nav-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .nav-right select {
+      background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.13); border-radius: 9px;
+      padding: 7px 12px; color: var(--paper); font-family: var(--sans); font-size: 13.5px;
+      outline: none; cursor: pointer; color-scheme: dark;
+    }
+    .nav-right select:focus { border-color: #5eead4; }
+    .nav-right select option { background: #1e2d50; }
+    .nav-right a { color: var(--muted); text-decoration: none; font-size: 13px; }
+    .nav-right a:hover { color: var(--paper); }
+    .btn-refresh {
+      border: 1px solid var(--line); background: rgba(255,255,255,.05); color: var(--paper);
+      border-radius: 9px; padding: 6px 12px; cursor: pointer; font-weight: 600; font-size: 12.5px;
+    }
+    .btn-refresh:hover { background: rgba(255,255,255,.09); }
+
+    /* ── Summary chips ──────────────────────────────────────────────────── */
+    .summary-bar {
+      display: flex; gap: 8px; padding: 16px 0 12px; flex-wrap: wrap;
+      border-bottom: 1px solid var(--line);
+    }
+    .chip {
+      display: inline-flex; align-items: center; gap: 7px;
+      border: 1px solid rgba(255,255,255,.13); background: rgba(255,255,255,.05);
+      border-radius: 99px; padding: 7px 14px; white-space: nowrap;
+      font-family: var(--display); font-weight: 600; font-size: 12px;
+      letter-spacing: .4px; color: var(--muted);
+    }
+    .chip .cnt {
+      background: rgba(255,255,255,.12); border-radius: 99px; padding: 1px 8px;
+      font-size: 11.5px; font-variant-numeric: tabular-nums;
+    }
+    .chip-blue  { background: rgba(6,122,111,.18); border-color: rgba(6,122,111,.4); color: #5eead4; }
+    .chip-blue .cnt { background: rgba(6,122,111,.25); }
+    .chip-new   { background: rgba(46,111,214,.16); border-color: rgba(6,122,111,.35); color: #5eead4; }
+    .chip-new .cnt { background: rgba(46,111,214,.22); }
+    .chip-old   { background: rgba(62,155,79,.16); border-color: rgba(62,155,79,.35); color: #9fe0b9; }
+    .chip-old .cnt { background: rgba(62,155,79,.22); }
+
+    /* ── Visit list ─────────────────────────────────────────────────────── */
+    .section { padding: 20px 0 0; }
+    .section-header { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+    .section-title { font-family: var(--display); font-size: 15px; font-weight: 700; }
+    .section-badge {
+      background: rgba(6,122,111,.2); color: #5eead4; border-radius: 99px;
+      font-size: 11px; font-weight: 700; padding: 2px 9px; letter-spacing: .3px;
+    }
+    .sync-label { color: var(--muted); font-size: 12px; margin-left: auto; }
+
+    .vlog-item {
+      border: 1px solid var(--line); border-radius: 12px; padding: 12px 15px;
+      background: rgba(255,255,255,.03); margin-bottom: 8px;
+      display: flex; align-items: flex-start; gap: 10px; cursor: pointer;
+    }
+    .vlog-item.fresh { animation: popIn 1.6s ease; }
+    @keyframes popIn { 0% { background: rgba(6,122,111,.22); } 100% { background: rgba(255,255,255,.03); } }
+    .vlog-dot {
+      width: 9px; height: 9px; border-radius: 50%; margin-top: 5px; flex-shrink: 0;
+      background: var(--blue-light);
+    }
+    .vlog-dot.telepon { background: #c4b5fd; }
+    .vlog-body { flex: 1; }
+    .vlog-store { font-weight: 600; font-size: 13.5px; }
+    .vlog-meta { color: var(--muted); font-size: 12px; margin-top: 3px; }
+    .vlog-notes { font-size: 12.5px; color: #b8c4d8; margin-top: 4px; font-style: italic; }
+    .vlog-time { font-size: 11.5px; color: var(--muted); white-space: nowrap; padding-top: 2px; }
+    .badge-new { display: inline-block; border-radius: 99px; padding: 1px 7px; font-size: 10.5px; font-weight: 700;
+      background: rgba(46,111,214,.18); color: #5eead4; margin-left: 5px; }
+    .badge-old { display: inline-block; border-radius: 99px; padding: 1px 7px; font-size: 10.5px; font-weight: 700;
+      background: rgba(62,155,79,.18); color: #9fe0b9; margin-left: 5px; }
+
+    /* ── WA expand panel ────────────────────────────────────────────────── */
+    .vlog-wa { display: none; margin-top: 10px; }
+    .vlog-wa.open { display: block; }
+    .vlog-wa-preview {
+      background: rgba(37,211,102,.07); border: 1px solid rgba(37,211,102,.3);
+      border-radius: 12px; padding: 14px 16px; color: #d4f5e0;
+      font-family: var(--sans); font-size: 12px; line-height: 1.65;
+      white-space: pre-wrap; text-align: left; cursor: pointer;
+      transition: background .15s;
+    }
+    .vlog-wa-preview:hover { background: rgba(37,211,102,.12); }
+    .vlog-wa-preview:active { background: rgba(37,211,102,.18); }
+    .vlog-wa-hint {
+      display: block; margin-top: 8px; text-align: center; color: #25d366;
+      font-size: 11px; font-weight: 600; letter-spacing: .4px;
+    }
+
+    .toast {
+      position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
+      background: #1e3a1e; color: #7ee87e; border: 1px solid #3e9b4f;
+      border-radius: 12px; padding: 12px 22px; font-weight: 600; font-size: 14px;
+      z-index: 99; opacity: 0; transition: opacity .3s; pointer-events: none; white-space: nowrap;
+    }
+    .toast.show { opacity: 1; }
+
+    .empty { color: var(--muted); font-size: 13px; text-align: center; padding: 36px 0; }
+    .spinner { color: var(--muted); font-size: 13px; text-align: center; padding: 36px 0; }
+  </style>
+</head>
+<body>
+
+<nav>
+  <div class="brand">
+    <div class="mark">P</div>
+    <div><b>My Day</b><span>Project Visitation Log</span></div>
+  </div>
+  <div class="nav-right">
+    <select id="rep-sel"><option value="">— Pilih Sales —</option></select>
+    <button class="btn-refresh" onclick="load()">↻ Refresh</button>
+    <a href="/project-visits">Catat ↗</a>
+    <a href="/project-rack">Rack-up ↗</a>
+  </div>
+</nav>
+
+<div class="wrap">
+
+  <div class="summary-bar" id="summary-bar">
+    <div class="chip chip-blue">HARI INI <span class="cnt" id="cnt-total">—</span></div>
+    <div class="chip chip-new">BARU <span class="cnt" id="cnt-new">—</span></div>
+    <div class="chip chip-old">LAMA <span class="cnt" id="cnt-old">—</span></div>
+  </div>
+
+  <div class="section">
+    <div class="section-header">
+      <div class="section-title">Kunjungan Hari Ini</div>
+      <span class="section-badge" id="visit-count">0</span>
+      <span class="sync-label" id="sync-label"></span>
+    </div>
+    <div id="visit-list"><div class="spinner">Pilih sales untuk memuat kunjungan hari ini…</div></div>
+  </div>
+
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+(() => {
+  "use strict";
+  const $ = id => document.getElementById(id);
+  const WIB_MS = 7 * 3600 * 1000;
+  const POLL_MS = 20000;
+
+  let currentRepId = null;
+  let visitDataMap = {};
+  let knownIds = new Set();
+  let firstLoad = true;
+  let syncTimer = null;
+  let lastSyncTime = null;
+
+  function esc(s) {
+    if (s == null) return "";
+    return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  }
+
+  function wibDateStr() {
+    return new Date(Date.now() + WIB_MS).toISOString().slice(0, 10);
+  }
+
+  function fmtWib(iso) {
+    if (!iso) return "";
+    const d = new Date(new Date(iso).getTime() + WIB_MS);
+    const p = n => n.toString().padStart(2, "0");
+    return `${p(d.getUTCDate())}/${p(d.getUTCMonth()+1)} ${p(d.getUTCHours())}.${p(d.getUTCMinutes())}`;
+  }
+
+  function showToast(msg) {
+    const t = $("toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    setTimeout(() => t.classList.remove("show"), 2500);
+  }
+
+  function buildWaText(v) {
+    const B = "•⁠  ";
+    const CTYPE = { new: "Baru", old: "Lama" };
+    const wib = iso => {
+      if (!iso) return "";
+      const d = new Date(new Date(iso).getTime() + WIB_MS);
+      const p = n => n.toString().padStart(2, "0");
+      return `${p(d.getUTCDate())}/${p(d.getUTCMonth()+1)}/${d.getUTCFullYear()} ${p(d.getUTCHours())}.${p(d.getUTCMinutes())} WIB`;
+    };
+    const lines = [];
+    lines.push("*Laporan Kunjungan*");
+    lines.push(`${B}Toko: ${v.store_name ?? ""}`);
+    lines.push(`${B}Jenis Customer: ${CTYPE[v.customer_type] ?? v.customer_type ?? ""}`);
+    lines.push(`${B}Kategori: ${v.category ?? ""}`);
+    lines.push(`${B}Area: ${v.area ?? ""}`);
+    if (v.address)     lines.push(`${B}Alamat: ${v.address}`);
+    if (v.postal_code) lines.push(`${B}Kode Pos: ${v.postal_code}`);
+    if (v.pic_name)    lines.push(`${B}PIC: ${v.pic_name}`);
+    if (v.notes) {
+      lines.push(`${B}Hasil Kunjungan:`);
+      v.notes.split("\n").forEach(l => lines.push(`    ${l}`));
+    }
+    lines.push(`Sales: ${v.salesperson_name ?? ""} · ${wib(v.visited_at)}`);
+    return lines.join("\n");
+  }
+
+  window.toggleWaCard = function(event, item) {
+    if (event.target.tagName === "A") return;
+    const waDiv = item.querySelector(".vlog-wa");
+    if (!waDiv) return;
+    const isOpen = waDiv.classList.toggle("open");
+    if (isOpen) {
+      const v = visitDataMap[item.dataset.id];
+      if (!v) return;
+      waDiv.querySelector(".vlog-wa-preview").textContent = buildWaText(v);
+    }
+  };
+
+  window.copyWaCard = async function(event, el) {
+    event.stopPropagation();
+    const v = visitDataMap[el.closest(".vlog-item").dataset.id];
+    if (!v) return;
+    const text = buildWaText(v);
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (_) {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.cssText = "position:fixed;opacity:0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
+    showToast("Pesan di copy ✓");
+  };
+
+  function renderVisits(visits) {
+    visitDataMap = {};
+    const el = $("visit-list");
+    $("visit-count").textContent = visits.length;
+    $("cnt-total").textContent = visits.length;
+    $("cnt-new").textContent = visits.filter(v => v.customer_type === "new").length;
+    $("cnt-old").textContent = visits.filter(v => v.customer_type === "old").length;
+
+    if (!visits.length) {
+      el.innerHTML = '<div class="empty">Belum ada kunjungan hari ini.<br>Tap "+ Catat" untuk mulai mencatat.</div>';
+      knownIds = new Set();
+      return;
+    }
+
+    el.innerHTML = visits.map(v => {
+      visitDataMap[v.id] = v;
+      const isNew  = !firstLoad && !knownIds.has(String(v.id));
+      const isTel  = v.activity_type === "telepon";
+      const badge  = v.customer_type === "new"
+        ? '<span class="badge-new">BARU</span>'
+        : '<span class="badge-old">LAMA</span>';
+      const actIcon = isTel ? "📞" : "🚶";
+      const metaParts = [esc(v.category ?? ""), esc(v.area ?? "")].filter(Boolean).join(" · ");
+      const picPart   = v.pic_name ? ` · PIC: ${esc(v.pic_name)}` : "";
+      return `
+        <div class="vlog-item${isNew ? " fresh" : ""}" data-id="${v.id}" onclick="toggleWaCard(event, this)">
+          <div class="vlog-dot${isTel ? " telepon" : ""}"></div>
+          <div class="vlog-body">
+            <div class="vlog-store">${esc(v.store_name)}${badge}</div>
+            <div class="vlog-meta">${actIcon} ${isTel ? "Telepon" : "Kunjungan"} · ${metaParts}${picPart}</div>
+            ${v.notes ? `<div class="vlog-notes">${esc(v.notes)}</div>` : ""}
+            <div class="vlog-wa">
+              <div class="vlog-wa-preview" onclick="copyWaCard(event, this)"></div>
+              <span class="vlog-wa-hint">Ketuk untuk copy pesan WA</span>
+            </div>
+          </div>
+          <div class="vlog-time">${fmtWib(v.visited_at)} WIB</div>
+        </div>`;
+    }).join("");
+
+    knownIds = new Set(visits.map(v => String(v.id)));
+  }
+
+  function tickSync() {
+    if (!lastSyncTime) return;
+    const s = Math.floor((Date.now() - lastSyncTime) / 1000);
+    $("sync-label").textContent = s < 3 ? "baru saja" : `${s}d lalu`;
+  }
+
+  window.load = async function() {
+    if (!currentRepId) {
+      $("visit-list").innerHTML = '<div class="spinner">Pilih sales untuk memuat kunjungan hari ini…</div>';
+      $("visit-count").textContent = "0";
+      $("cnt-total").textContent = "—";
+      $("cnt-new").textContent   = "—";
+      $("cnt-old").textContent   = "—";
+      return;
+    }
+
+    const today = wibDateStr();
+    const from  = encodeURIComponent(`${today}T00:00:00+07:00`);
+    const to    = encodeURIComponent(`${today}T23:59:59+07:00`);
+
+    try {
+      const res  = await fetch(`/api/project/visits?rep_id=${currentRepId}&from=${from}&to=${to}&limit=200`);
+      const data = await res.json();
+      renderVisits(data.visits ?? []);
+      lastSyncTime = Date.now();
+    } catch {
+      $("sync-label").textContent = "gagal memuat";
+    }
+    firstLoad = false;
+  };
+
+  async function boot() {
+    const res = await fetch("/api/project/salespeople").then(r => r.json()).catch(() => ({ salespeople: [] }));
+    const sel = $("rep-sel");
+    (res.salespeople ?? []).forEach(sp => {
+      const o = document.createElement("option");
+      o.value = sp.id;
+      o.textContent = `${sp.full_name}${sp.code ? " (" + sp.code + ")" : ""}`;
+      sel.appendChild(o);
+    });
+
+    const saved = localStorage.getItem("project_myday_rep_id");
+    if (saved && sel.querySelector(`option[value="${saved}"]`)) {
+      sel.value = saved;
+      currentRepId = Number(saved);
+      load();
+    }
+
+    sel.addEventListener("change", () => {
+      currentRepId = sel.value ? Number(sel.value) : null;
+      firstLoad = true;
+      if (currentRepId) localStorage.setItem("project_myday_rep_id", String(currentRepId));
+      load();
+    });
+
+    setInterval(load, POLL_MS);
+    setInterval(tickSync, 1000);
+  }
+
+  boot();
+})();
+</script>
+</body>
+</html>

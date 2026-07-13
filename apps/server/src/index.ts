@@ -33,6 +33,7 @@ import { insightsRoutes } from "./routes/insights.js";
 import { accountsRoutes, startCadenceEngine } from "./routes/accounts.js";
 import { escalationsRoutes } from "./routes/escalations.js";
 import { miraeRoutes } from "./routes/mirae.js";
+import { projectRoutes } from "./routes/project.js";
 import { colorGatewayRoutes } from "./routes/color-gateway.js";
 
 const PUBLIC_DIR = fileURLToPath(new URL("../public", import.meta.url));
@@ -92,6 +93,10 @@ async function main(): Promise<void> {
   app.get("/mirae-visits", (_req, reply) => reply.header("Cache-Control", NC).sendFile("mirae-visits.html"));
   app.get("/mirae-rack", (_req, reply) => reply.header("Cache-Control", NC).sendFile("mirae-rack.html"));
   app.get("/mirae-insights", (_req, reply) => reply.header("Cache-Control", NC).sendFile("mirae-insights.html"));
+  app.get("/project-visits", (_req, reply) => reply.header("Cache-Control", NC).sendFile("project-visits.html"));
+  app.get("/project-rack", (_req, reply) => reply.header("Cache-Control", NC).sendFile("project-rack.html"));
+  app.get("/project-myday", (_req, reply) => reply.header("Cache-Control", NC).sendFile("project-myday.html"));
+  app.get("/project-insights", (_req, reply) => reply.header("Cache-Control", NC).sendFile("project-insights.html"));
   app.get("/color-gateway", (_req, reply) => reply.header("Cache-Control", NC).sendFile("color-gateway.html"));
 
   // [A] Scraper APIs.
@@ -117,6 +122,9 @@ async function main(): Promise<void> {
 
   // [M] Mirae Visitation Log APIs.
   await app.register(miraeRoutes);
+
+  // [P] Project Visitation Log APIs.
+  await app.register(projectRoutes);
 
   // [E] Color Gateway APIs.
   await app.register(colorGatewayRoutes);
