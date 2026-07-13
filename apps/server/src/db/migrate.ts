@@ -380,14 +380,7 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
       { full_name: "Rahmanto", code: "RHM" },
       { full_name: "Burhan",   code: "BRH" },
       { full_name: "Anthony",  code: "ANT" },
-      { full_name: "Deasy",    code: "DSY" },
-      { full_name: "Febi",     code: "FBI" },
-      { full_name: "Yeni",     code: "YNI" },
-      { full_name: "Havi",     code: "HVI" },
-      { full_name: "Yupi",     code: "YPI" },
-      { full_name: "Ali",      code: "ALI" },
-      { full_name: "Raafi",    code: "RAF" },
-      { full_name: "Dava",     code: "DVA" },
+      { full_name: "Koni",     code: "KNI" },
     ]) {
       await db`
         insert into salespeople (full_name, code)
@@ -395,6 +388,11 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
         on conflict (code) do nothing
       `;
     }
+    // Deactivate project-team reps that were mistakenly seeded into the retail table
+    await db`
+      update salespeople set active = false
+      where code in ('DSY','FBI','YNI','HVI','YPI','ALI','RAF','DVA')
+    `;
   } catch (seedErr) {
     console.error("[migrate] salespeople seeding failed (non-fatal):", seedErr);
   }
