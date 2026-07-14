@@ -192,7 +192,7 @@ export async function syHunterRoutes(app: FastifyInstance) {
         c.project_name, c.province, c.town, c.timing,
         p.stage, p.pipe_note, p.meeting_at,
         p.called_at as captured_at, p.messaged_at, p.replied_at, p.updated_at,
-        o.status as outcome_status, o.note as outcome_note
+        o.status as outcome_status, o.wa_number, o.pic_name, o.note as outcome_note
       from sy_pipeline p
       join sy_contacts c on c.id = p.contact_id
       left join sy_outcomes o on o.contact_id = c.id

@@ -6,40 +6,47 @@
     <title>SY Handler · Kencana LeadScout</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
     <style>
       :root {
-        --ink: #14213d; --ink-2: #1b2949; --red: #9b2226; --gold: #bb9457; --green: #2c6e49;
-        --orange: #ea580c; --orange-2: #c2410c;
+        --ink: #14213d; --ink-2: #1b2949; --orange: #ea580c; --orange-2: #c2410c;
+        --gold: #bb9457; --green: #2c6e49;
         --paper: #f5f2ec; --muted: #8a96ad; --line: rgba(255,255,255,.09);
-        --p1: #ea580c; --p2: #d18a1e; --p3: #2c6e49;
+        --p1: #d18a1e; --p2: #3b6ea5; --p3: #2c6e49;
         --display: "Space Grotesk","Inter",system-ui,sans-serif;
         --sans: "Inter",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
       }
       * { box-sizing: border-box; }
       html, body { margin: 0; height: 100%; overflow: hidden; }
-      body { font-family: var(--sans); color: var(--paper);
-        background: radial-gradient(1200px 600px at 90% -10%, rgba(234,88,12,.1), transparent 60%), var(--ink);
-        -webkit-font-smoothing: antialiased; }
+      body {
+        font-family: var(--sans); color: var(--paper);
+        background: radial-gradient(1200px 600px at 90% -10%, rgba(234,88,12,.14), transparent 60%), var(--ink);
+        -webkit-font-smoothing: antialiased;
+      }
       .wrap { max-width: 880px; margin: 0 auto; height: 100%; display: flex; flex-direction: column; }
       .top-bar { flex-shrink: 0; padding: 22px 22px 0; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
       .cards-wrap { flex: 1; overflow-y: auto; padding: 16px 22px 60px; }
       header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
       .brand { display: flex; align-items: center; gap: 12px; }
       .mark { width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center;
-        background: linear-gradient(135deg, var(--orange), var(--orange-2)); font-family: var(--display); font-weight: 700; color: #fff; font-size: 15px; }
-      .brand b { font-family: var(--display); font-size: 17px; } .brand span { color: var(--muted); font-size: 12.5px; display: block; }
+        background: linear-gradient(135deg, var(--orange), var(--orange-2)); font-family: var(--display); font-weight: 700; color: #fff; font-size: 17px; }
+      .brand b { font-family: var(--display); font-size: 17px; }
+      .brand span { color: var(--muted); font-size: 12.5px; display: block; }
       .sync { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12.5px; }
       .sync .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px rgba(44,110,73,.25); }
       .sync button { border: 1px solid var(--line); background: rgba(255,255,255,.05); color: var(--paper); border-radius: 9px; padding: 7px 12px; cursor: pointer; font-weight: 600; font-size: 12.5px; }
       a.back { color: var(--muted); text-decoration: none; font-size: 13px; }
 
-      .strip { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 16px; }
+      .strip { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 16px; }
       .stat { border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; background: rgba(255,255,255,.04); }
       .stat .l { color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; }
       .stat .v { font-family: var(--display); font-size: 28px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
-      .stat.fresh { border-color: rgba(234,88,12,.45); background: rgba(234,88,12,.1); }
+      .stat.fresh { border-color: rgba(234,88,12,.5); background: rgba(234,88,12,.1); }
       .stat.fresh .v { color: #fdba74; }
+      .stat.clock1 .v { color: var(--gold); }
 
       .banner { display: none; border: 1px solid rgba(234,88,12,.5); background: rgba(234,88,12,.14); color: #fdba74;
         border-radius: 12px; padding: 11px 16px; margin-bottom: 14px; font-weight: 600; font-size: 13.5px; animation: pop 2.4s ease; }
@@ -52,7 +59,8 @@
       .filter.active { border-color: var(--orange); color: #fdba74; background: rgba(234,88,12,.12); }
 
       .section { margin-bottom: 4px; }
-      .section-header { display: flex; align-items: center; gap: 10px; padding: 9px 2px; cursor: pointer; user-select: none; border-bottom: 1px solid var(--line); margin-bottom: 12px; }
+      .section-header { display: flex; align-items: center; gap: 10px; padding: 9px 2px; cursor: pointer; user-select: none;
+        border-bottom: 1px solid var(--line); margin-bottom: 12px; }
       .section-title { font-family: var(--display); font-weight: 700; font-size: 11.5px; letter-spacing: .8px; text-transform: uppercase; }
       .section-count { border-radius: 99px; padding: 2px 9px; font-size: 11.5px; font-weight: 700; }
       .section-toggle { margin-left: auto; color: var(--muted); font-size: 12px; }
@@ -60,22 +68,22 @@
       .section-cards { display: flex; flex-direction: column; gap: 12px; margin-bottom: 24px; }
 
       .section-header.fresh      .section-title { color: #fdba74; }
-      .section-header.fresh      .section-count { background: rgba(234,88,12,.2); color: #fdba74; }
+      .section-header.fresh      .section-count { background: rgba(234,88,12,.2);   color: #fdba74; }
       .section-header.messaged   .section-title { color: #9fc4ec; }
-      .section-header.messaged   .section-count { background: rgba(59,110,165,.2); color: #9fc4ec; }
+      .section-header.messaged   .section-count { background: rgba(59,110,165,.2);  color: #9fc4ec; }
       .section-header.replied    .section-title { color: #9fe0b9; }
-      .section-header.replied    .section-count { background: rgba(44,110,73,.2); color: #9fe0b9; }
+      .section-header.replied    .section-count { background: rgba(44,110,73,.2);   color: #9fe0b9; }
       .section-header.meeting_set .section-title { color: #ecb44f; }
       .section-header.meeting_set .section-count { background: rgba(209,138,30,.2); color: #ecb44f; }
       .section-header.won        .section-title { color: #c6f3d6; }
-      .section-header.won        .section-count { background: rgba(44,110,73,.3); color: #c6f3d6; }
+      .section-header.won        .section-count { background: rgba(44,110,73,.3);   color: #c6f3d6; }
       .section-header.dead       .section-title { color: #ff9b9b; }
-      .section-header.dead       .section-count { background: rgba(155,34,38,.2); color: #ff9b9b; }
+      .section-header.dead       .section-count { background: rgba(155,34,38,.2);   color: #ff9b9b; }
 
       .cards { display: flex; flex-direction: column; gap: 12px; }
       .card { border: 1px solid var(--line); border-radius: 16px; padding: 16px 18px; background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02)); }
-      .card.fresh { border-color: rgba(234,88,12,.45); background: linear-gradient(180deg, rgba(234,88,12,.12), rgba(234,88,12,.04)); }
-      .card .top-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+      .card.fresh { border-color: rgba(234,88,12,.55); background: linear-gradient(180deg, rgba(234,88,12,.14), rgba(234,88,12,.04)); }
+      .card .top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
       .card .co { font-family: var(--display); font-weight: 700; font-size: 18px; }
       .card .meta { color: var(--muted); font-size: 13px; margin-top: 2px; }
       .card .project { color: #9fc4ec; font-size: 12px; margin-top: 3px; }
@@ -89,25 +97,25 @@
       .stagebadge.won        { background: rgba(44,110,73,.3);   color: #c6f3d6; }
       .stagebadge.dead       { background: rgba(155,34,38,.2);   color: #ff9b9b; }
       .timer { color: #fdba74; font-size: 12.5px; font-weight: 600; margin-top: 8px; font-variant-numeric: tabular-nums; }
-      .timer.t2 { color: #9fc4ec; }
-      .timer.t3 { color: #9fe0b9; }
 
       .row { display: flex; gap: 9px; margin-top: 13px; flex-wrap: wrap; }
       .btn { border: none; cursor: pointer; border-radius: 11px; padding: 10px 14px; font-weight: 700; font-size: 13px; font-family: var(--sans); }
-      .btn.contact { background: linear-gradient(135deg, var(--orange), var(--orange-2)); color: #fff; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
-      .btn.ghost   { background: rgba(255,255,255,.06); color: var(--paper); border: 1px solid var(--line); }
-      .btn.reply   { background: rgba(44,110,73,.18); color: #9fe0b9; border: 1px solid rgba(44,110,73,.5); }
-      .btn.meeting { background: rgba(209,138,30,.16); color: #ecb44f; border: 1px solid rgba(209,138,30,.5); }
-      .btn.won     { background: rgba(44,110,73,.3);   color: #c6f3d6; border: 1px solid rgba(44,110,73,.6); }
-      .btn.dead    { background: rgba(155,34,38,.16);  color: #ff9b9b; border: 1px solid rgba(155,34,38,.5); }
-      .btn.undo    { background: rgba(138,150,173,.1); color: var(--muted); border: 1px solid rgba(138,150,173,.25); font-size: 12px; padding: 9px 12px; }
-      .btn:disabled { opacity: .35; cursor: not-allowed; }
+      .btn.wa      { background: linear-gradient(135deg, var(--green), #245a3c); color: #fff; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
+      .btn.ghost   { background: rgba(255,255,255,.06); color: var(--paper); border: 1px solid var(--line); text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
+      .btn.reply   { background: rgba(44,110,73,.18);   color: #9fe0b9; border: 1px solid rgba(44,110,73,.5); }
+      .btn.meeting { background: rgba(209,138,30,.16);  color: #ecb44f; border: 1px solid rgba(209,138,30,.5); }
+      .btn.won     { background: rgba(44,110,73,.3);    color: #c6f3d6; border: 1px solid rgba(44,110,73,.6); }
+      .btn.dead    { background: rgba(155,34,38,.16);   color: #ff9b9b; border: 1px solid rgba(155,34,38,.5); }
+      .btn.undo    { background: rgba(138,150,173,.1);  color: var(--muted); border: 1px solid rgba(138,150,173,.25); font-size: 12px; padding: 9px 12px; }
+      .btn:disabled, .btn[aria-disabled="true"] { opacity: .35; cursor: not-allowed; pointer-events: none; }
 
       .meetingRow { display: none; gap: 8px; margin-top: 10px; align-items: center; }
       .meetingRow.show { display: flex; flex-wrap: wrap; }
-      .meetingRow input[type="datetime-local"] { background: rgba(255,255,255,.05); border: 1px solid var(--line); color: var(--paper); border-radius: 9px; padding: 8px 10px; font-family: var(--sans); font-size: 13px; }
+      .meetingRow input[type="datetime-local"] { background: rgba(255,255,255,.05); border: 1px solid var(--line); color: var(--paper);
+        border-radius: 9px; padding: 8px 10px; font-family: var(--sans); font-size: 13px; }
 
-      .note { width: 100%; margin-top: 11px; background: rgba(255,255,255,.04); border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; color: var(--paper); font-family: var(--sans); font-size: 13px; resize: vertical; min-height: 36px; }
+      .note { width: 100%; margin-top: 11px; background: rgba(255,255,255,.04); border: 1px solid var(--line); border-radius: 10px;
+        padding: 9px 11px; color: var(--paper); font-family: var(--sans); font-size: 13px; resize: vertical; min-height: 36px; }
       .note::placeholder { color: #5e6a82; }
       .empty { color: var(--muted); font-size: 14px; text-align: center; padding: 50px 0; }
     </style>
@@ -118,7 +126,7 @@
         <header>
           <div class="brand">
             <div class="mark">SY</div>
-            <div><b>SY Handler Cockpit</b><span>Kencana · connected leads → meeting → won</span></div>
+            <div><b>SY Handler Cockpit</b><span>message → reply → meeting → won</span></div>
           </div>
           <div class="sync">
             <span class="dot"></span>
@@ -133,16 +141,17 @@
 
         <div class="strip">
           <div class="stat fresh"><div class="l">Fresh</div><div class="v" id="cFresh">0</div></div>
-          <div class="stat"><div class="l">Contacted</div><div class="v" id="cMessaged">0</div></div>
+          <div class="stat"><div class="l">Awaiting reply</div><div class="v" id="cMessaged">0</div></div>
           <div class="stat"><div class="l">Replied</div><div class="v" id="cReplied">0</div></div>
           <div class="stat"><div class="l">Meeting</div><div class="v" id="cMeeting">0</div></div>
           <div class="stat"><div class="l">Won</div><div class="v" id="cWon">0</div></div>
+          <div class="stat clock1"><div class="l">Avg to message</div><div class="v" id="cAvgMsg">—</div></div>
         </div>
 
         <div class="filters" id="filters">
           <div class="filter active" data-stage="">All</div>
           <div class="filter" data-stage="fresh">Fresh</div>
-          <div class="filter" data-stage="messaged">Contacted</div>
+          <div class="filter" data-stage="messaged">Awaiting reply</div>
           <div class="filter" data-stage="replied">Replied</div>
           <div class="filter" data-stage="meeting_set">Meeting set</div>
           <div class="filter" data-stage="won">Won</div>
@@ -165,9 +174,9 @@
       let lastSync = Date.now();
       let collapsedSections = new Set(["won", "dead"]);
 
-      const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-      const STAGE_LABEL   = { fresh: "Fresh", messaged: "Contacted", replied: "Replied", meeting_set: "Meeting set", won: "Won", dead: "Dead" };
-      const SECTION_LABEL = { fresh: "Fresh — just connected", messaged: "Contacted — awaiting reply", replied: "Got a reply", meeting_set: "Meeting Set", won: "Won", dead: "Dead" };
+      const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+      const STAGE_LABEL   = { fresh: "Fresh", messaged: "Messaged", replied: "Replied", meeting_set: "Meeting set", won: "Won", dead: "Dead" };
+      const SECTION_LABEL = { fresh: "Fresh Leads", messaged: "Awaiting Reply", replied: "Got a Reply", meeting_set: "Meeting Set", won: "Won", dead: "Dead" };
       const SECTION_ORDER = ["fresh", "messaged", "replied", "meeting_set", "won", "dead"];
       const PREV_STAGE    = { messaged: "fresh", replied: "messaged", meeting_set: "replied", won: "meeting_set" };
 
@@ -179,20 +188,63 @@
         return `${s}s`;
       }
 
+      function fmtMs(ms) {
+        if (ms == null) return "—";
+        const sec = Math.round(ms / 1000);
+        if (sec < 60) return sec + "s";
+        const min = Math.round(sec / 60);
+        if (min < 60) return min + "m";
+        const hr = Math.round(min / 60);
+        if (hr < 48) return hr + "h";
+        return Math.round(hr / 24) + "d";
+      }
+
+      function greeting() {
+        const h = new Date().getHours();
+        if (h < 11) return "pagi";
+        if (h < 15) return "siang";
+        return "sore";
+      }
+
+      function waMessage(company, contactName, projectName) {
+        const who = contactName ? `Bpk/Ibu ${contactName}` : "Bpk/Ibu";
+        const proj = projectName ? ` untuk proyek ${projectName}` : "";
+        return `Selamat ${greeting()}, kami dari SY supplier panel sandwich${proj}. Kami menghubungi ${company} untuk ${who}. Boleh kami kirimkan katalog + spec sheet ke kantor bapak/ibu? Terima kasih`;
+      }
+
+      function sortSection(stageItems, stage) {
+        const copy = [...stageItems];
+        if (stage === "fresh") {
+          return copy.sort((a, b) => new Date(a.captured_at) - new Date(b.captured_at));
+        }
+        if (stage === "messaged") {
+          return copy.sort((a, b) => new Date(b.messaged_at || b.captured_at) - new Date(a.messaged_at || a.captured_at));
+        }
+        if (stage === "replied") {
+          return copy.sort((a, b) => new Date(b.replied_at || b.updated_at) - new Date(a.replied_at || a.updated_at));
+        }
+        if (stage === "meeting_set") {
+          return copy.sort((a, b) => new Date(a.meeting_at || a.updated_at) - new Date(b.meeting_at || b.updated_at));
+        }
+        return copy.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+      }
+
       function renderCard(item) {
-        const isFresh  = item.stage === "fresh";
-        const phone    = String(item.phone || "").split("/")[0].trim();
-        const telLink  = phone ? `tel:${phone.replace(/[^\d+]/g, "")}` : "#";
-        const emailLink = item.email ? `mailto:${item.email}` : "#";
+        const isFresh = item.stage === "fresh";
+        const waNum   = item.wa_number ? item.wa_number.replace("+", "") : "";
+        const waHref  = waNum
+          ? `https://wa.me/${waNum}?text=${encodeURIComponent(waMessage(item.company_name, item.contact_name || item.pic_name, item.project_name))}`
+          : "#";
+        const waBtnLabel = isFresh ? "Open WhatsApp" : "Reopen chat";
 
         const timer = isFresh && item.captured_at
-          ? `<div class="timer" data-cap="${item.captured_at}">connected ${fmtDuration(Date.now() - new Date(item.captured_at).getTime())} ago — reach out</div>`
+          ? `<div class="timer clock1" data-captured-at="${esc(item.captured_at)}">captured ${fmtDuration(Date.now() - new Date(item.captured_at).getTime())} ago — reach out</div>`
           : item.stage === "messaged" && item.messaged_at
-          ? `<div class="timer t2" data-msg="${item.messaged_at}">waiting ${fmtDuration(Date.now() - new Date(item.messaged_at).getTime())} for a reply</div>`
+          ? `<div class="timer clock2" data-messaged-at="${esc(item.messaged_at)}">waiting ${fmtDuration(Date.now() - new Date(item.messaged_at).getTime())} for a reply</div>`
           : item.stage === "replied" && item.replied_at
-          ? `<div class="timer t3" data-rep="${item.replied_at}">replied ${fmtDuration(Date.now() - new Date(item.replied_at).getTime())} ago — set a meeting</div>`
+          ? `<div class="timer clock3" data-replied-at="${esc(item.replied_at)}">replied ${fmtDuration(Date.now() - new Date(item.replied_at).getTime())} ago — set a meeting</div>`
           : item.stage === "meeting_set" && item.meeting_at
-          ? `<div class="timer" style="color:#ecb44f">📅 Meeting: ${new Date(item.meeting_at).toLocaleString("en-GB", {weekday:"short",day:"numeric",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"})}</div>`
+          ? `<div class="timer" style="color:#ecb44f">📅 Meeting: ${new Date(item.meeting_at).toLocaleString("en-GB", { weekday:"short", day:"numeric", month:"short", year:"numeric", hour:"2-digit", minute:"2-digit" })}</div>`
           : "";
 
         const canReply   = item.stage === "messaged";
@@ -202,10 +254,10 @@
         const canUndo    = item.stage in PREV_STAGE;
 
         return `<div class="card ${isFresh ? "fresh" : ""}" data-id="${esc(item.contact_id)}">
-          <div class="top-row">
+          <div class="top">
             <div>
               <div class="co">${esc(item.company_name)}</div>
-              <div class="meta">${esc(item.contact_name || "—")} · ${esc(item.position || item.role || "")}${phone ? " · " + esc(phone) : ""}</div>
+              <div class="meta">${esc(item.contact_name || "—")} · ${esc(item.town || "")}${item.wa_number ? " · " + esc(item.wa_number) : ""}</div>
               ${item.project_name ? `<div class="project">📋 ${esc(item.project_name)}${item.timing ? " · " + esc(item.timing) : ""}</div>` : ""}
               <span class="stagebadge ${esc(item.stage)}">${STAGE_LABEL[item.stage] || item.stage}</span>
             </div>
@@ -213,19 +265,18 @@
           </div>
           ${timer}
           <div class="row">
-            <a class="btn contact" href="${esc(telLink)}" ${phone ? "" : 'aria-disabled="true"'}>📞 Call${isFresh ? " (mark contacted)" : ""}</a>
-            <a class="btn ghost"   href="${esc(emailLink)}" ${item.email ? "" : 'aria-disabled="true"'}>✉ Email</a>
+            <a class="btn wa" target="_blank" rel="noopener" data-action="open-wa" href="${esc(waHref)}" ${waNum ? "" : 'aria-disabled="true"'}>💬 ${esc(waBtnLabel)}</a>
             <button class="btn reply"   data-action="advance" data-to="replied"     ${canReply   ? "" : "disabled"}>Got a reply</button>
             <button class="btn meeting" data-action="show-meeting"                  ${canMeeting ? "" : "disabled"}>Set meeting</button>
             <button class="btn won"     data-action="advance" data-to="won"         ${canWon     ? "" : "disabled"}>Won</button>
             <button class="btn dead"    data-action="advance" data-to="dead"        ${canDead    ? "" : "disabled"}>Dead</button>
-            ${canUndo ? `<button class="btn undo" data-action="revert" title="Undo">↩ Undo</button>` : ""}
+            ${canUndo ? `<button class="btn undo" data-action="revert" title="Undo: move back to ${PREV_STAGE[item.stage]}">↩ Undo</button>` : ""}
           </div>
-          <div class="meetingRow" id="meeting-${cssEsc(item.contact_id)}">
+          <div class="meetingRow" id="meeting-${cssEscape(item.contact_id)}">
             <input type="datetime-local" />
             <button class="btn ghost" data-action="confirm-meeting">Confirm meeting</button>
           </div>
-          <textarea class="note" placeholder="Note — key objection, decision timeline, follow-up action…" data-action="note">${esc(item.pipe_note || "")}</textarea>
+          <textarea class="note" placeholder="Note (e.g. asked for price list, follow up Tue)" data-action="note">${esc(item.pipe_note || "")}</textarea>
         </div>`;
       }
 
@@ -243,13 +294,25 @@
           const newOnes = [...freshNow].filter((id) => !knownFreshIds.has(id));
           if (newOnes.length) {
             const item = data.items.find((i) => i.contact_id === newOnes[0]);
-            showBanner(`New lead connected: ${item.company_name} — reach out.`);
+            showBanner(`New lead: ${item.company_name} — reach out.`);
           }
         }
         knownFreshIds = freshNow;
         items = data.items;
         firstLoad = false;
         render();
+        loadAvgToMessage();
+      }
+
+      async function loadAvgToMessage() {
+        try {
+          const res = await fetch("/api/sy/stats");
+          if (!res.ok) return;
+          const data = await res.json();
+          // Show capture rate as a proxy for pipeline health (no median_to_message in SY stats)
+          const rate = data.totals?.capture_rate;
+          $("cAvgMsg").textContent = rate != null ? Math.round(rate * 100) + "% cap." : "—";
+        } catch { /* leave previous value */ }
       }
 
       function showBanner(text) {
@@ -272,12 +335,12 @@
         const container = $("cards");
 
         if (activeFilter) {
-          const list = items.filter((i) => i.stage === activeFilter);
+          const list = sortSection(items.filter((i) => i.stage === activeFilter), activeFilter);
           if (!list.length) { container.innerHTML = '<div class="empty">Nothing here yet.</div>'; return; }
           container.innerHTML = list.map(renderCard).join("");
         } else {
           const sections = SECTION_ORDER
-            .map((stage) => ({ stage, list: items.filter((i) => i.stage === stage) }))
+            .map((stage) => ({ stage, list: sortSection(items.filter((i) => i.stage === stage), stage) }))
             .filter((s) => s.list.length > 0);
 
           if (!sections.length) { container.innerHTML = '<div class="empty">No connected leads yet — hunter will feed them here.</div>'; return; }
@@ -317,16 +380,13 @@
         document.querySelectorAll(".card").forEach((card) => {
           const contactId = Number(card.dataset.id);
 
-          // Phone "Call" button — mark as messaged when fresh
-          const callLink = card.querySelector(".btn.contact");
-          if (callLink) {
-            callLink.addEventListener("click", async () => {
-              const item = items.find((i) => i.contact_id === contactId);
-              if (item && item.stage === "fresh") {
-                await advance(contactId, "messaged");
-              }
-            });
-          }
+          const waLink = card.querySelector('[data-action="open-wa"]');
+          waLink.addEventListener("click", async () => {
+            const item = items.find((i) => i.contact_id === contactId);
+            if (item && item.stage === "fresh") {
+              await advance(contactId, "messaged");
+            }
+          });
 
           card.querySelectorAll('[data-action="advance"]').forEach((btn) =>
             btn.addEventListener("click", () => advance(contactId, btn.dataset.to))
@@ -335,7 +395,7 @@
           const showMtgBtn = card.querySelector('[data-action="show-meeting"]');
           if (showMtgBtn) {
             showMtgBtn.addEventListener("click", () => {
-              card.querySelector(`#meeting-${cssEsc(contactId)}`).classList.add("show");
+              card.querySelector(`#meeting-${cssEscape(contactId)}`).classList.add("show");
             });
           }
 
@@ -359,12 +419,13 @@
         });
       }
 
-      function cssEsc(s) { return String(s).replace(/[^a-zA-Z0-9_-]/g, "_"); }
+      function cssEscape(s) { return String(s).replace(/[^a-zA-Z0-9_-]/g, "_"); }
 
       async function advance(contact_id, to_stage, meeting_at, pipe_note) {
         try {
           const res = await fetch("/api/sy/pipeline/advance", {
-            method: "POST", headers: {"Content-Type":"application/json"},
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ contact_id, to_stage, meeting_at, pipe_note }),
           });
           const data = await res.json().catch(() => ({}));
@@ -376,7 +437,8 @@
       async function revert(contact_id) {
         try {
           const res = await fetch("/api/sy/pipeline/revert", {
-            method: "POST", headers: {"Content-Type":"application/json"},
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ contact_id }),
           });
           const data = await res.json().catch(() => ({}));
@@ -398,16 +460,16 @@
       $("refresh").addEventListener("click", load);
 
       function tickTimers() {
-        document.querySelectorAll(".timer[data-cap]").forEach((el) => {
-          const ms = Date.now() - new Date(el.dataset.cap).getTime();
-          el.textContent = `connected ${fmtDuration(ms)} ago — reach out`;
+        document.querySelectorAll(".timer.clock1[data-captured-at]").forEach((el) => {
+          const ms = Date.now() - new Date(el.dataset.capturedAt).getTime();
+          el.textContent = `captured ${fmtDuration(ms)} ago — reach out`;
         });
-        document.querySelectorAll(".timer[data-msg]").forEach((el) => {
-          const ms = Date.now() - new Date(el.dataset.msg).getTime();
+        document.querySelectorAll(".timer.clock2[data-messaged-at]").forEach((el) => {
+          const ms = Date.now() - new Date(el.dataset.messagedAt).getTime();
           el.textContent = `waiting ${fmtDuration(ms)} for a reply`;
         });
-        document.querySelectorAll(".timer[data-rep]").forEach((el) => {
-          const ms = Date.now() - new Date(el.dataset.rep).getTime();
+        document.querySelectorAll(".timer.clock3[data-replied-at]").forEach((el) => {
+          const ms = Date.now() - new Date(el.dataset.repliedAt).getTime();
           el.textContent = `replied ${fmtDuration(ms)} ago — set a meeting`;
         });
         const s = Math.floor((Date.now() - lastSync) / 1000);
