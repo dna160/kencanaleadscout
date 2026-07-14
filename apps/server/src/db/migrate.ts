@@ -805,6 +805,76 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
   } catch (syErr) {
     console.error("[migrate] SY Hunter migration failed (non-fatal):", syErr);
   }
+
+  // ── SY Hunter data repair: dedup + day assignment ─────────────────────────
+  // Runs when contacts exist but were seeded before the dedup/day rebuild.
+  try {
+    const repairCheck = await db`
+      select
+        count(*)::int                                    as total,
+        count(*) filter (where day is not null)::int    as with_day
+      from sy_contacts
+    `;
+    const { total, with_day } = repairCheck[0] ?? {};
+    if (Number(total) > 0 && Number(with_day) === 0) {
+      // 1. Normalize phone_clean for all rows
+      await db`
+        update sy_contacts
+        set phone_clean = regexp_replace(coalesce(phone, ''), '[^0-9]', '', 'g')
+        where phone_clean is null or phone_clean = ''
+      `;
+
+      // 2. Reset all to active, then mark lower-priority duplicate phones inactive
+      await db`update sy_contacts set active = true`;
+      await db`
+        with ranked as (
+          select id,
+                 row_number() over (
+                   partition by phone_clean
+                   order by
+                     case priority when 'P1' then 1 when 'P2' then 2 else 3 end,
+                     case band when 'A' then 1 when 'B' then 2 else 3 end,
+                     coalesce(score, 0) desc,
+                     id
+                 ) as rn
+          from sy_contacts
+          where phone_clean is not null and phone_clean <> ''
+        )
+        update sy_contacts set active = false
+        where id in (select id from ranked where rn > 1)
+      `;
+
+      // 3. Assign day 1–10 across active contacts in priority order
+      await db`
+        with active_ordered as (
+          select id,
+                 row_number() over (
+                   order by
+                     case priority when 'P1' then 1 when 'P2' then 2 else 3 end,
+                     case band when 'A' then 1 when 'B' then 2 else 3 end,
+                     case
+                       when timing like 'HOT%'  then 1
+                       when timing like 'WARM%' then 2
+                       when timing like 'COLD%' then 3
+                       else 4
+                     end,
+                     coalesce(score, 0) desc,
+                     id
+                 ) as rn,
+                 count(*) over () as total_active
+          from sy_contacts
+          where active = true
+        )
+        update sy_contacts c
+        set day = least(10, ceil(o.rn::float / ceil(o.total_active::float / 10))::int)
+        from active_ordered o
+        where c.id = o.id
+      `;
+      console.info("[migrate] SY Hunter data repaired: dedup + day assignment applied");
+    }
+  } catch (repairErr) {
+    console.error("[migrate] SY Hunter data repair failed (non-fatal):", repairErr);
+  }
 }
 
 // Allow `tsx src/db/migrate.ts` as a one-off.
