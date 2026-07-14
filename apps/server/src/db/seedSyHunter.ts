@@ -23,11 +23,26 @@ interface RawContact {
   source: string;
 }
 
+const PRIORITY_ORDER: Record<string, number> = { P1: 1, P2: 2, P3: 3 };
+const BAND_ORDER:     Record<string, number> = { A:  1, B:  2, C:  3 };
+
+function timingOrder(t: string | null): number {
+  if (!t) return 4;
+  if (t.startsWith("HOT"))  return 1;
+  if (t.startsWith("WARM")) return 2;
+  if (t.startsWith("COLD")) return 3;
+  return 4;
+}
+
+function cleanPhone(phone: string | null): string {
+  return phone ? phone.replace(/\D/g, "") : "";
+}
+
 export async function seedSyHunter(db: Sql): Promise<{ projects: number; contacts: number }> {
   const projects: RawProject[] = JSON.parse(readFileSync(resolve(DATA, "sy_projects.json"), "utf8"));
   const contacts: RawContact[] = JSON.parse(readFileSync(resolve(DATA, "sy_contacts.json"), "utf8"));
 
-  // Upsert projects (keyed on normalised project_name)
+  // Upsert projects
   for (const p of projects) {
     await db`
       insert into sy_projects
@@ -39,41 +54,72 @@ export async function seedSyHunter(db: Sql): Promise<{ projects: number; contact
          ${p.stage}, ${p.status}, ${p.start_date}, ${p.project_url},
          ${p.segment}, ${p.is_captive})
       on conflict (lower(trim(project_name))) do update set
-        rank          = excluded.rank,
-        score         = excluded.score,
-        band          = excluded.band,
-        timing        = excluded.timing,
-        status        = excluded.status,
-        project_url   = excluded.project_url
+        rank        = excluded.rank,
+        score       = excluded.score,
+        band        = excluded.band,
+        timing      = excluded.timing,
+        status      = excluded.status,
+        project_url = excluded.project_url
     `;
   }
 
-  // Build project-name → id map for FK linking
+  // Build project-name → id map
   const projRows = await db`select id, project_name from sy_projects`;
-  const projMap = new Map<string, number>(projRows.map((r) => [r.project_name as string, Number(r.id)]));
+  const projMap  = new Map<string, number>(projRows.map((r) => [r.project_name as string, Number(r.id)]));
 
-  // Upsert contacts — we treat (company_name, project_name, role) as a natural key.
-  // The table has no unique constraint, so skip already-seeded contacts by checking count.
-  const cntRows = await db`select count(*)::int as cnt from sy_contacts`;
-  const cnt = cntRows[0]?.cnt;
-  if (Number(cnt ?? 0) >= contacts.length) {
-    return { projects: projects.length, contacts: Number(cnt ?? 0) };
+  // Skip if already seeded with dedup applied (day column populated)
+  const cntRows = await db`select count(*)::int as cnt from sy_contacts where day is not null`;
+  if (Number(cntRows[0]?.cnt ?? 0) > 0) {
+    const totalRows = await db`select count(*)::int as cnt from sy_contacts where active = true`;
+    return { projects: projects.length, contacts: Number(totalRows[0]?.cnt ?? 0) };
   }
 
-  // Full re-seed when count is lower than expected (first boot or partial seed)
+  // Sort: P1→P2→P3, A→B→C, HOT→WARM→COLD, score desc
+  const sorted = [...contacts].sort((a, b) => {
+    const pa = PRIORITY_ORDER[a.priority] ?? 9, pb = PRIORITY_ORDER[b.priority] ?? 9;
+    if (pa !== pb) return pa - pb;
+    const ba = BAND_ORDER[a.band ?? ""] ?? 9, bb = BAND_ORDER[b.band ?? ""] ?? 9;
+    if (ba !== bb) return ba - bb;
+    const ta = timingOrder(a.timing), tb = timingOrder(b.timing);
+    if (ta !== tb) return ta - tb;
+    return (b.score ?? 0) - (a.score ?? 0);
+  });
+
+  // Deduplicate by normalized phone — keep highest-priority (first in sorted order)
+  const seenPhones = new Set<string>();
+  type Enriched = RawContact & { phone_clean: string | null; active: boolean; day: number | null };
+  const deduped: Enriched[] = sorted.map((c) => {
+    const pc = cleanPhone(c.phone);
+    const isActive = !pc || !seenPhones.has(pc);
+    if (pc) seenPhones.add(pc);
+    return { ...c, phone_clean: pc || null, active: isActive, day: null };
+  });
+
+  // Assign day 1–10 to active contacts in sorted order
+  const active = deduped.filter((c) => c.active);
+  const perDay = Math.ceil(active.length / 10);
+  let dayIdx = 0;
+  for (const c of active) {
+    c.day = Math.min(10, Math.floor(dayIdx / perDay) + 1);
+    dayIdx++;
+  }
+
+  // Full seed — clear first
   await db`delete from sy_contacts`;
-  for (const c of contacts) {
+
+  for (const c of deduped) {
     const resolvedProjId = c.project_name ? (projMap.get(c.project_name) ?? null) : null;
     await db`
       insert into sy_contacts
         (project_id, priority, band, score, company_name, role, contact_name, position,
-         phone, email, project_name, province, town, timing, source)
+         phone, phone_clean, email, project_name, province, town, timing, source, day, active)
       values
         (${resolvedProjId}, ${c.priority}, ${c.band}, ${c.score}, ${c.company_name},
-         ${c.role}, ${c.contact_name}, ${c.position}, ${c.phone}, ${c.email},
-         ${c.project_name}, ${c.province}, ${c.town}, ${c.timing}, ${c.source})
+         ${c.role}, ${c.contact_name}, ${c.position}, ${c.phone}, ${c.phone_clean},
+         ${c.email}, ${c.project_name}, ${c.province}, ${c.town}, ${c.timing},
+         ${c.source}, ${c.day}, ${c.active})
     `;
   }
 
-  return { projects: projects.length, contacts: contacts.length };
+  return { projects: projects.length, contacts: active.length };
 }

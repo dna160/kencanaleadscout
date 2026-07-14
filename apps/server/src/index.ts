@@ -100,6 +100,7 @@ async function main(): Promise<void> {
   app.get("/project-insights", (_req, reply) => reply.header("Cache-Control", NC).sendFile("project-insights.html"));
   app.get("/color-gateway", (_req, reply) => reply.header("Cache-Control", NC).sendFile("color-gateway.html"));
   app.get("/sy-hunter",    (_req, reply) => reply.header("Cache-Control", NC).sendFile("sy-hunter.html"));
+  app.get("/sy-handler",   (_req, reply) => reply.header("Cache-Control", NC).sendFile("sy-handler.html"));
   app.get("/sy-champion",  (_req, reply) => reply.header("Cache-Control", NC).sendFile("sy-champion.html"));
 
   // [A] Scraper APIs.

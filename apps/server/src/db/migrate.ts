@@ -781,6 +781,27 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
       )
     `;
     await db`create index if not exists sy_pipeline_stage_idx on sy_pipeline (stage)`;
+
+    // Rebuild — additive columns for 10-day dedup hunter/handler flow
+    await db`alter table sy_contacts add column if not exists day         int`;
+    await db`alter table sy_contacts add column if not exists phone_clean text`;
+    await db`create index if not exists sy_contacts_day_idx on sy_contacts (day)`;
+
+    await db`
+      create table if not exists sy_outcomes (
+        contact_id  bigint primary key references sy_contacts(id),
+        status      text not null,
+        note        text,
+        updated_by  text,
+        updated_at  timestamptz not null default now()
+      )
+    `;
+    await db`create index if not exists sy_outcomes_status_idx  on sy_outcomes (status)`;
+    await db`create index if not exists sy_outcomes_updated_idx on sy_outcomes (updated_at desc)`;
+
+    await db`alter table sy_pipeline add column if not exists messaged_at  timestamptz`;
+    await db`alter table sy_pipeline add column if not exists replied_at   timestamptz`;
+    await db`alter table sy_pipeline add column if not exists pipe_note    text`;
   } catch (syErr) {
     console.error("[migrate] SY Hunter migration failed (non-fatal):", syErr);
   }

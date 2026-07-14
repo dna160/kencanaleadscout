@@ -2,10 +2,13 @@ import type { FastifyInstance } from "fastify";
 import { getSql } from "../db/client.js";
 import { seedSyHunter } from "../db/seedSyHunter.js";
 
-const VALID_STAGES = new Set(["fresh", "called", "interested", "meeting_set", "won", "dead"]);
+const VALID_OUTCOME  = new Set(["connected", "warm", "not_interested", "no_answer", "dead"]);
+const VALID_PIPELINE = new Set(["fresh", "messaged", "replied", "meeting_set", "won", "dead"]);
+const PREV_STAGE: Record<string, string> = {
+  messaged: "fresh", replied: "messaged", meeting_set: "replied", won: "meeting_set",
+};
 
 export async function syHunterRoutes(app: FastifyInstance) {
-  // ── Seed on first request if tables are empty ──────────────────────────────
   let seeded = false;
   async function ensureSeeded() {
     if (seeded) return;
@@ -23,8 +26,237 @@ export async function syHunterRoutes(app: FastifyInstance) {
     seeded = true;
   }
 
+  // ── GET /api/sy/leads?day=N ────────────────────────────────────────────────
+  app.get<{ Querystring: { day?: string } }>("/api/sy/leads", async (request, reply) => {
+    const db = getSql();
+    if (!db) return reply.code(503).send({ error: "Database not configured." });
+    await ensureSeeded();
+
+    const day = Number(request.query.day ?? 0);
+    if (!day || day < 1 || day > 10) return reply.code(400).send({ error: "day must be 1–10" });
+
+    const rows = await db`
+      select
+        c.id, c.priority, c.band, c.score, c.company_name, c.role,
+        c.contact_name, c.position, c.phone, c.phone_clean, c.email,
+        c.project_name, c.province, c.town, c.timing, c.source, c.day,
+        row_to_json(o.*) as outcome
+      from sy_contacts c
+      left join sy_outcomes o on o.contact_id = c.id
+      where c.active = true and c.day = ${day}
+      order by
+        case c.priority when 'P1' then 1 when 'P2' then 2 else 3 end,
+        case c.band     when 'A'  then 1 when 'B'  then 2 else 3 end,
+        coalesce(c.score, 0) desc, c.id
+    `;
+    return { leads: rows };
+  });
+
+  // ── POST /api/sy/outcome ───────────────────────────────────────────────────
+  app.post<{
+    Body: { contact_id: number; status: string; note?: string; updated_by?: string };
+  }>("/api/sy/outcome", async (request, reply) => {
+    const db = getSql();
+    if (!db) return reply.code(503).send({ error: "Database not configured." });
+
+    const { contact_id, status, note, updated_by } = request.body ?? {};
+    if (!contact_id || !status) return reply.code(400).send({ error: "contact_id and status required." });
+    if (!VALID_OUTCOME.has(status)) return reply.code(400).send({ error: "Invalid status." });
+
+    const noteVal   = note?.trim() || null;
+    const updatedBy = updated_by || null;
+
+    await db`
+      insert into sy_outcomes (contact_id, status, note, updated_by, updated_at)
+      values (${contact_id}, ${status}, ${noteVal}, ${updatedBy}, now())
+      on conflict (contact_id) do update set
+        status     = ${status},
+        note       = coalesce(${noteVal}, sy_outcomes.note),
+        updated_by = ${updatedBy},
+        updated_at = now()
+    `;
+
+    if (status === "connected" || status === "warm") {
+      await db`
+        insert into sy_pipeline (contact_id, stage, called_at, updated_at)
+        values (${contact_id}, 'fresh', now(), now())
+        on conflict (contact_id) do nothing
+      `;
+    }
+
+    return { ok: true };
+  });
+
+  // ── GET /api/sy/stats ──────────────────────────────────────────────────────
+  app.get("/api/sy/stats", async (_request, reply) => {
+    const db = getSql();
+    if (!db) return reply.code(503).send({ error: "Database not configured." });
+    await ensureSeeded();
+
+    const totRows = await db`
+      select
+        count(*) filter (where o.status is not null)::int              as dialed,
+        (select count(*)::int from sy_contacts where active = true)    as assigned,
+        count(*) filter (where o.status in ('connected','warm'))::int  as connected,
+        count(*) filter (where o.status = 'warm')::int                 as interested
+      from sy_contacts c
+      left join sy_outcomes o on o.contact_id = c.id
+      where c.active = true
+    `;
+
+    const byDay = await db`
+      select
+        c.day,
+        count(*) filter (where o.status is not null)::int             as dialed,
+        count(*) filter (where o.status in ('connected','warm'))::int as connected
+      from sy_contacts c
+      left join sy_outcomes o on o.contact_id = c.id
+      where c.active = true
+      group by c.day
+      order by c.day
+    `;
+
+    const byPriority = await db`
+      select
+        c.priority,
+        count(*)::int                                                  as total,
+        count(*) filter (where o.status is not null)::int             as dialed,
+        count(*) filter (where o.status in ('connected','warm'))::int as connected
+      from sy_contacts c
+      left join sy_outcomes o on o.contact_id = c.id
+      where c.active = true
+      group by c.priority
+      order by c.priority
+    `;
+
+    const byBand = await db`
+      select
+        c.band,
+        count(*)::int                                                  as total,
+        count(*) filter (where o.status is not null)::int             as dialed,
+        count(*) filter (where o.status in ('connected','warm'))::int as connected
+      from sy_contacts c
+      left join sy_outcomes o on o.contact_id = c.id
+      where c.active = true
+      group by c.band
+      order by c.band
+    `;
+
+    const recent = await db`
+      select
+        c.company_name, c.contact_name, c.priority, c.band, c.timing, c.project_name,
+        o.status, o.note, o.updated_by, o.updated_at
+      from sy_outcomes o
+      join sy_contacts c on c.id = o.contact_id
+      where o.status in ('connected','warm')
+      order by o.updated_at desc
+      limit 15
+    `;
+
+    const t        = totRows[0];
+    const dialed    = Number(t?.dialed    ?? 0);
+    const connected = Number(t?.connected ?? 0);
+    return {
+      totals: {
+        dialed,
+        assigned:     Number(t?.assigned   ?? 0),
+        connected,
+        interested:   Number(t?.interested ?? 0),
+        connect_rate: dialed ? connected / dialed : 0,
+      },
+      by_day:      byDay,
+      by_priority: byPriority,
+      by_band:     byBand,
+      recent,
+    };
+  });
+
+  // ── GET /api/sy/pipeline ───────────────────────────────────────────────────
+  app.get("/api/sy/pipeline", async (_request, reply) => {
+    const db = getSql();
+    if (!db) return reply.code(503).send({ error: "Database not configured." });
+    await ensureSeeded();
+
+    const rows = await db`
+      select
+        c.id as contact_id, c.company_name, c.priority, c.band, c.score,
+        c.contact_name, c.position, c.phone, c.email,
+        c.project_name, c.province, c.town, c.timing,
+        p.stage, p.pipe_note, p.meeting_at,
+        p.called_at as captured_at, p.messaged_at, p.replied_at, p.updated_at,
+        o.status as outcome_status, o.note as outcome_note
+      from sy_pipeline p
+      join sy_contacts c on c.id = p.contact_id
+      left join sy_outcomes o on o.contact_id = c.id
+      where p.stage not in ('won','dead')
+         or p.updated_at > now() - interval '14 days'
+      order by
+        case p.stage
+          when 'fresh'       then 1
+          when 'messaged'    then 2
+          when 'replied'     then 3
+          when 'meeting_set' then 4
+          when 'won'         then 5
+          else 6
+        end,
+        p.updated_at desc nulls last
+      limit 300
+    `;
+    return { items: rows };
+  });
+
+  // ── POST /api/sy/pipeline/advance ─────────────────────────────────────────
+  app.post<{
+    Body: { contact_id: number; to_stage: string; meeting_at?: string | null; pipe_note?: string };
+  }>("/api/sy/pipeline/advance", async (request, reply) => {
+    const db = getSql();
+    if (!db) return reply.code(503).send({ error: "Database not configured." });
+
+    const { contact_id, to_stage, meeting_at, pipe_note } = request.body ?? {};
+    if (!contact_id || !to_stage)   return reply.code(400).send({ error: "contact_id and to_stage required." });
+    if (!VALID_PIPELINE.has(to_stage)) return reply.code(400).send({ error: "Invalid stage." });
+
+    const now        = new Date().toISOString();
+    const messagedAt = to_stage === "messaged" ? now : null;
+    const repliedAt  = to_stage === "replied"  ? now : null;
+    const meetingVal = meeting_at ?? null;
+    const noteVal    = pipe_note  ?? null;
+
+    await db`
+      insert into sy_pipeline
+        (contact_id, stage, messaged_at, replied_at, meeting_at, pipe_note, updated_at)
+      values
+        (${contact_id}, ${to_stage},
+         ${messagedAt}, ${repliedAt}, ${meetingVal}, ${noteVal}, now())
+      on conflict (contact_id) do update set
+        stage       = ${to_stage},
+        messaged_at = coalesce(${messagedAt}, sy_pipeline.messaged_at),
+        replied_at  = coalesce(${repliedAt},  sy_pipeline.replied_at),
+        meeting_at  = coalesce(${meetingVal}, sy_pipeline.meeting_at),
+        pipe_note   = case when ${noteVal} is not null then ${noteVal} else sy_pipeline.pipe_note end,
+        updated_at  = now()
+    `;
+    return { ok: true };
+  });
+
+  // ── POST /api/sy/pipeline/revert ──────────────────────────────────────────
+  app.post<{ Body: { contact_id: number } }>("/api/sy/pipeline/revert", async (request, reply) => {
+    const db = getSql();
+    if (!db) return reply.code(503).send({ error: "Database not configured." });
+
+    const { contact_id } = request.body ?? {};
+    if (!contact_id) return reply.code(400).send({ error: "contact_id required." });
+
+    const pRows = await db`select stage from sy_pipeline where contact_id = ${contact_id}`;
+    if (!pRows.length) return reply.code(404).send({ error: "Not found." });
+    const prev = PREV_STAGE[(pRows[0]?.stage ?? "") as string];
+    if (!prev) return reply.code(400).send({ error: "Cannot revert from this stage." });
+
+    await db`update sy_pipeline set stage = ${prev}, updated_at = now() where contact_id = ${contact_id}`;
+    return { ok: true };
+  });
+
   // ── GET /api/sy/contacts ───────────────────────────────────────────────────
-  // Returns contacts joined to their pipeline row, with optional filters.
   app.get<{
     Querystring: {
       priority?: string; band?: string; timing?: string;
@@ -43,34 +275,25 @@ export async function syHunterRoutes(app: FastifyInstance) {
       select
         c.id, c.priority, c.band, c.score, c.company_name, c.role,
         c.contact_name, c.position, c.phone, c.email,
-        c.project_name, c.province, c.town, c.timing, c.source,
-        coalesce(p.stage, 'fresh')  as stage,
-        p.note, p.meeting_at, p.called_at, p.interested_at, p.updated_at
+        c.project_name, c.province, c.town, c.timing, c.source, c.day,
+        coalesce(p.stage, 'fresh') as stage,
+        p.pipe_note as note, p.meeting_at, p.called_at, p.updated_at,
+        o.status as outcome_status
       from sy_contacts c
       left join sy_pipeline p on p.contact_id = c.id
+      left join sy_outcomes o on o.contact_id = c.id
       where c.active = true
         ${priority ? db`and c.priority = ${priority}` : db``}
         ${band     ? db`and c.band     = ${band}`     : db``}
         ${timing   ? db`and c.timing   = ${timing}`   : db``}
-        ${stage === "fresh"
-          ? db`and (p.stage = 'fresh' or p.stage is null)`
-          : stage
-          ? db`and p.stage = ${stage}`
-          : db``}
+        ${stage    ? db`and coalesce(p.stage,'fresh') = ${stage}` : db``}
         ${search   ? db`and (lower(c.company_name) like ${"%" + search.toLowerCase() + "%"}
                           or lower(c.contact_name) like ${"%" + search.toLowerCase() + "%"}
                           or lower(c.project_name) like ${"%" + search.toLowerCase() + "%"})` : db``}
       order by
         case c.priority when 'P1' then 1 when 'P2' then 2 else 3 end,
-        case c.band when 'A' then 1 when 'B' then 2 else 3 end,
-        case c.timing
-          when 'HOT-building now'      then 1
-          when 'HOT-buying envelope'   then 2
-          when 'WARM-spec-in window'   then 3
-          else 4
-        end,
-        coalesce(c.score, 0) desc,
-        c.id
+        case c.band     when 'A'  then 1 when 'B'  then 2 else 3 end,
+        coalesce(c.score, 0) desc, c.id
       limit ${limit} offset ${offset}
     `;
 
@@ -82,135 +305,61 @@ export async function syHunterRoutes(app: FastifyInstance) {
         ${priority ? db`and c.priority = ${priority}` : db``}
         ${band     ? db`and c.band     = ${band}`     : db``}
         ${timing   ? db`and c.timing   = ${timing}`   : db``}
-        ${stage === "fresh"
-          ? db`and (p.stage = 'fresh' or p.stage is null)`
-          : stage
-          ? db`and p.stage = ${stage}`
-          : db``}
+        ${stage    ? db`and coalesce(p.stage,'fresh') = ${stage}` : db``}
         ${search   ? db`and (lower(c.company_name) like ${"%" + search.toLowerCase() + "%"}
                           or lower(c.contact_name) like ${"%" + search.toLowerCase() + "%"}
                           or lower(c.project_name) like ${"%" + search.toLowerCase() + "%"})` : db``}
     `;
-    const total = Number(totalRows[0]?.total ?? 0);
-
-    return { contacts: rows, total, limit, offset };
-  });
-
-  // ── PATCH /api/sy/pipeline/:id ─────────────────────────────────────────────
-  // Upsert pipeline row for a contact. Body: { stage, note?, meeting_at? }
-  app.patch<{
-    Params: { id: string };
-    Body: { stage?: string; note?: string; meeting_at?: string | null };
-  }>("/api/sy/pipeline/:id", async (request, reply) => {
-    const db = getSql();
-    if (!db) return reply.code(503).send({ error: "Database not configured." });
-
-    const contactId = Number(request.params.id);
-    if (!contactId) return reply.code(400).send({ error: "Invalid contact id." });
-
-    const { stage, note, meeting_at } = request.body ?? {};
-    if (stage !== undefined && !VALID_STAGES.has(stage)) {
-      return reply.code(400).send({ error: "Invalid stage." });
-    }
-
-    const now = new Date().toISOString();
-    const calledAt     = stage === "called"      ? now : undefined;
-    const interestedAt = stage === "interested"  ? now : undefined;
-
-    const meetingVal  = meeting_at !== undefined ? (meeting_at ?? null) : null;
-    const noteVal     = note !== undefined ? (note ?? null) : null;
-
-    const rows2 = await db`
-      insert into sy_pipeline (contact_id, stage, note, meeting_at, called_at, interested_at, updated_at)
-      values (
-        ${contactId},
-        ${stage ?? "fresh"},
-        ${noteVal},
-        ${meetingVal},
-        ${calledAt ?? null},
-        ${interestedAt ?? null},
-        now()
-      )
-      on conflict (contact_id) do update set
-        stage         = coalesce(${stage ?? null},        sy_pipeline.stage),
-        note          = case when ${noteVal} is not null    then ${noteVal}    else sy_pipeline.note    end,
-        meeting_at    = case when ${meetingVal} is not null then ${meetingVal} else sy_pipeline.meeting_at end,
-        called_at     = coalesce(${calledAt ?? null},     sy_pipeline.called_at),
-        interested_at = coalesce(${interestedAt ?? null}, sy_pipeline.interested_at),
-        updated_at    = now()
-      returning *
-    `;
-
-    return { ok: true, pipeline: rows2[0] };
+    return { contacts: rows, total: Number(totalRows[0]?.total ?? 0), limit, offset };
   });
 
   // ── GET /api/sy/champion ───────────────────────────────────────────────────
-  // Aggregate stats for the champion dashboard.
   app.get("/api/sy/champion", async (_request, reply) => {
     const db = getSql();
     if (!db) return reply.code(503).send({ error: "Database not configured." });
     await ensureSeeded();
 
-    // Stage counts across all contacts
     const stageCounts = await db`
-      select
-        coalesce(p.stage, 'fresh') as stage,
-        count(*)::int as cnt
+      select coalesce(p.stage,'fresh') as stage, count(*)::int as cnt
       from sy_contacts c
       left join sy_pipeline p on p.contact_id = c.id
       where c.active = true
-      group by coalesce(p.stage, 'fresh')
+      group by coalesce(p.stage,'fresh')
     `;
-
-    // Per-priority breakdown
     const byPriority = await db`
-      select
-        c.priority,
-        coalesce(p.stage, 'fresh') as stage,
-        count(*)::int as cnt
+      select c.priority, coalesce(p.stage,'fresh') as stage, count(*)::int as cnt
       from sy_contacts c
       left join sy_pipeline p on p.contact_id = c.id
       where c.active = true
-      group by c.priority, coalesce(p.stage, 'fresh')
+      group by c.priority, coalesce(p.stage,'fresh')
       order by c.priority
     `;
-
-    // Per-band breakdown
     const byBand = await db`
-      select
-        c.band,
-        coalesce(p.stage, 'fresh') as stage,
-        count(*)::int as cnt
+      select c.band, coalesce(p.stage,'fresh') as stage, count(*)::int as cnt
       from sy_contacts c
       left join sy_pipeline p on p.contact_id = c.id
       where c.active = true
-      group by c.band, coalesce(p.stage, 'fresh')
+      group by c.band, coalesce(p.stage,'fresh')
       order by c.band
     `;
-
-    // Recent pipeline activity (last 50 updates)
     const recentActivity = await db`
-      select
-        c.company_name, c.contact_name, c.project_name, c.priority, c.timing,
-        p.stage, p.updated_at, p.note
+      select c.company_name, c.contact_name, c.project_name, c.priority, c.timing,
+             p.stage, p.updated_at, p.pipe_note as note
       from sy_pipeline p
       join sy_contacts c on c.id = p.contact_id
       where p.stage <> 'fresh'
       order by p.updated_at desc
       limit 50
     `;
-
-    // Top projects by active pipeline contacts
     const topProjects = await db`
-      select
-        c.project_name,
-        count(*)::int as total_contacts,
-        count(*) filter (where coalesce(p.stage,'fresh') not in ('fresh','dead'))::int as active_contacts
+      select c.project_name,
+             count(*)::int as total_contacts,
+             count(*) filter (where o.status in ('connected','warm'))::int as active_contacts
       from sy_contacts c
-      left join sy_pipeline p on p.contact_id = c.id
+      left join sy_outcomes o on o.contact_id = c.id
       where c.active = true and c.project_name is not null
       group by c.project_name
-      having count(*) filter (where coalesce(p.stage,'fresh') not in ('fresh','dead')) > 0
+      having count(*) filter (where o.status in ('connected','warm')) > 0
       order by active_contacts desc
       limit 10
     `;
