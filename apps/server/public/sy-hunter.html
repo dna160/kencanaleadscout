@@ -3,32 +3,38 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
-    <title>SY Hunter Cockpit · Kencana LeadScout</title>
+    <title>SY Hunter · Call Cockpit</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
     <style>
       :root {
-        --ink: #14213d; --ink-2: #1b2949; --red: #9b2226; --gold: #bb9457; --green: #2c6e49;
-        --orange: #ea580c; --orange-2: #c2410c;
+        --ink: #14213d; --ink-2: #1b2949; --orange: #ea580c; --orange-2: #c2410c;
+        --gold: #bb9457; --green: #2c6e49;
         --paper: #f5f2ec; --muted: #8a96ad; --line: rgba(255,255,255,.09);
-        --p1: #ea580c; --p2: #d18a1e; --p3: #2c6e49;
+        --p1: #d18a1e; --p2: #3b6ea5; --p3: #2c6e49;
         --display: "Space Grotesk","Inter",system-ui,sans-serif;
         --sans: "Inter",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
       }
       * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
       html, body { margin: 0; min-height: 100%; }
-      body { font-family: var(--sans); color: var(--paper); background: var(--ink); -webkit-font-smoothing: antialiased; overscroll-behavior-y: contain; }
+      body {
+        font-family: var(--sans); color: var(--paper); background: var(--ink);
+        -webkit-font-smoothing: antialiased; overscroll-behavior-y: contain;
+      }
       .app { max-width: 560px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; }
       .view { display: none; flex: 1; flex-direction: column; }
       .view.active { display: flex; }
 
-      /* Gate */
+      /* ---------- Gate ---------- */
       #gate { justify-content: center; padding: 30px 22px; gap: 14px;
-        background: radial-gradient(900px 500px at 80% -10%, rgba(234,88,12,.18), transparent 60%), var(--ink); }
+        background: radial-gradient(900px 500px at 80% -10%, rgba(234,88,12,.16), transparent 60%), var(--ink); }
       .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
       .mark { width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center;
-        background: linear-gradient(135deg, var(--orange), var(--orange-2)); font-family: var(--display); font-weight: 700; color: #fff; font-size: 15px; }
+        background: linear-gradient(135deg, var(--orange), var(--orange-2)); font-family: var(--display); font-weight: 700; color: #fff; font-size: 17px; }
       .brand b { font-family: var(--display); font-size: 17px; }
       .brand span { color: var(--muted); font-size: 12.5px; display: block; }
       #gate h2 { font-family: var(--display); font-size: 22px; margin: 0 0 4px; }
@@ -40,12 +46,12 @@
       }
       .role:active { transform: scale(.985); }
       .role .ava { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; font-size: 18px; color: #fff; }
-      .role.hunter  .ava { background: var(--orange); }
-      .role.handler .ava { background: var(--gold); color: #14213d; }
-      .role.champ   .ava { background: var(--green); }
       .role small { display: block; font-family: var(--sans); font-weight: 400; color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+      .role.a .ava { background: var(--orange); }
+      .role.b .ava { background: var(--p2); }
+      .role.c .ava { background: var(--gold); }
 
-      /* Top bar */
+      /* ---------- Top bar ---------- */
       .top { position: sticky; top: 0; z-index: 5; background: rgba(20,33,61,.92); backdrop-filter: blur(10px);
         border-bottom: 1px solid var(--line); padding: 10px 16px; }
       .top .row1 { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
@@ -56,33 +62,32 @@
       .pbar { height: 5px; background: rgba(255,255,255,.08); border-radius: 99px; margin-top: 9px; overflow: hidden; }
       .pbar > div { height: 100%; background: linear-gradient(90deg, var(--orange), #f97316); width: 0%; transition: width .35s ease; border-radius: 99px; }
 
-      /* Lead body */
+      /* ---------- Lead body ---------- */
       .lead { padding: 20px 18px 150px; flex: 1; }
       .tier { display: inline-flex; align-items: center; gap: 7px; font-family: var(--display); font-weight: 600;
         font-size: 12px; letter-spacing: .6px; padding: 5px 11px; border-radius: 99px; color: #fff; }
       .tier.P1 { background: var(--p1); } .tier.P2 { background: var(--p2); } .tier.P3 { background: var(--p3); }
       .done-flag { float: right; color: var(--green); font-weight: 600; font-size: 13px; display: none; }
       .done-flag.show { display: inline; }
-      .company { font-family: var(--display); font-weight: 700; font-size: clamp(24px, 6vw, 32px); line-height: 1.08; letter-spacing: -.4px; margin: 14px 0 4px; }
-      .meta { color: var(--muted); font-size: 14px; line-height: 1.5; }
+      .company { font-family: var(--display); font-weight: 700; font-size: clamp(26px, 7vw, 34px); line-height: 1.08;
+        letter-spacing: -.4px; margin: 14px 0 6px; }
+      .meta { color: var(--muted); font-size: 14.5px; }
       .meta b { color: #cfd6e4; font-weight: 500; }
-      .tag-timing { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .5px;
-        padding: 2px 8px; border-radius: 99px; margin-left: 6px;
-        background: rgba(234,88,12,.2); color: #fdba74; }
 
-      .askbox { margin: 16px 0; border: 1px solid rgba(187,148,87,.4); background: rgba(187,148,87,.08);
+      .askbox { margin: 18px 0; border: 1px solid rgba(234,88,12,.4); background: rgba(234,88,12,.08);
         border-radius: 14px; padding: 14px 16px; }
-      .askbox .l { color: var(--gold); font-size: 12px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; }
+      .askbox .l { color: var(--orange); font-size: 12px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; }
       .askbox .n { font-family: var(--display); font-size: 22px; font-weight: 600; margin-top: 2px; }
       .askbox .r { color: var(--muted); font-size: 13px; }
 
       .callbtn { display: flex; align-items: center; justify-content: center; gap: 12px; width: 100%; text-decoration: none;
         color: #fff; background: linear-gradient(135deg, var(--green), #245a3c); border-radius: 16px; padding: 18px;
-        font-family: var(--display); font-weight: 600; font-size: 20px; box-shadow: 0 12px 30px rgba(44,110,73,.4);
+        font-family: var(--display); font-weight: 600; font-size: 21px; box-shadow: 0 12px 30px rgba(44,110,73,.4);
         font-variant-numeric: tabular-nums; }
       .callbtn:active { transform: translateY(1px); }
+      .callbtn .ph { font-size: 22px; }
 
-      .xcheck { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+      .xcheck { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 12px; }
       .xbtn { display: flex; align-items: center; justify-content: center; gap: 6px; text-decoration: none; padding: 11px 8px;
         border-radius: 11px; font-size: 13px; font-weight: 600; border: 1px solid var(--line); color: var(--paper);
         background: rgba(255,255,255,.04); }
@@ -91,40 +96,49 @@
       .xhint { color: var(--muted); font-size: 11.5px; margin-top: 7px; text-align: center; }
 
       .script { margin-top: 18px; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: rgba(255,255,255,.03); }
-      .script summary { list-style: none; cursor: pointer; padding: 13px 16px; display: flex; align-items: center; justify-content: space-between; font-weight: 600; font-size: 14px; }
+      .script summary { list-style: none; cursor: pointer; padding: 13px 16px; display: flex; align-items: center; justify-content: space-between;
+        font-weight: 600; font-size: 14px; }
       .script summary::-webkit-details-marker { display: none; }
       .script .body { padding: 0 16px 16px; font-size: 15px; line-height: 1.6; color: #d7dde8; }
-      .script .body b { color: var(--gold); }
+      .script .body b { color: var(--orange); }
       .chev { color: var(--muted); transition: transform .2s; }
       details[open] .chev { transform: rotate(180deg); }
 
       .capture { margin-top: 18px; }
-      .label { font-size: 12px; font-weight: 600; letter-spacing: .8px; text-transform: uppercase; color: var(--muted); margin-bottom: 7px; }
-      .field { margin-bottom: 14px; }
-      textarea.note-input {
-        width: 100%; padding: 13px 16px; border-radius: 13px; border: 1px solid var(--line); background: rgba(255,255,255,.05);
-        color: var(--paper); font-size: 15px; font-family: var(--sans); outline: none; transition: .15s;
-        resize: vertical; min-height: 72px;
+      .label { font-size: 12px; font-weight: 600; letter-spacing: .8px; text-transform: uppercase; color: var(--muted); margin-bottom: 7px; display: flex; gap: 8px; align-items: center; }
+      input[type="tel"], input[type="text"] {
+        width: 100%; padding: 15px 16px; border-radius: 13px; border: 1px solid var(--line); background: rgba(255,255,255,.05);
+        color: var(--paper); font-size: 17px; font-family: var(--sans); outline: none; transition: .15s;
       }
-      textarea.note-input::placeholder { color: #5e6a82; }
-      textarea.note-input:focus { border-color: var(--orange); background: rgba(255,255,255,.08); }
+      input::placeholder { color: #5e6a82; }
+      input:focus { border-color: var(--orange); background: rgba(255,255,255,.08); }
+      input.bad { border-color: #9b2226; background: rgba(155,34,38,.12); }
+      .inline-err { color: #ffb4b4; font-size: 13px; margin-top: 6px; display: none; }
+      .inline-err.show { display: block; }
+      .field { margin-bottom: 14px; }
+      .toggle { display: flex; align-items: center; justify-content: space-between; padding: 13px 16px; border: 1px solid var(--line);
+        border-radius: 13px; background: rgba(255,255,255,.04); }
+      .toggle span { font-weight: 500; font-size: 15px; }
+      .sw { width: 50px; height: 30px; border-radius: 99px; background: rgba(255,255,255,.14); position: relative; cursor: pointer; transition: .18s; }
+      .sw::after { content: ""; position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 50%; background: #fff; transition: .18s; }
+      .sw.on { background: var(--green); } .sw.on::after { transform: translateX(20px); }
 
       .chips { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 18px; }
       .chip { display: flex; align-items: center; gap: 9px; padding: 14px 14px; border-radius: 13px; cursor: pointer;
         border: 1px solid var(--line); background: rgba(255,255,255,.04); font-weight: 600; font-size: 14.5px; transition: .14s; }
       .chip:active { transform: scale(.98); }
       .chip.sel { border-color: currentColor; box-shadow: inset 0 0 0 1px currentColor; }
-      .chip.connected { color: #7fdca3; } .chip.connected.sel { background: rgba(44,110,73,.18); }
-      .chip.warm      { color: #ecb44f; } .chip.warm.sel      { background: rgba(209,138,30,.16); }
-      .chip.ni        { color: #cdd5e3; } .chip.ni.sel        { background: rgba(255,255,255,.08); }
-      .chip.na        { color: #cdd5e3; } .chip.na.sel        { background: rgba(255,255,255,.08); }
-      .chip.dead      { color: #ff9b9b; } .chip.dead.sel      { background: rgba(155,34,38,.16); }
+      .chip.won  { color: #7fdca3; } .chip.won.sel  { background: rgba(44,110,73,.18); }
+      .chip.warm { color: #ecb44f; } .chip.warm.sel { background: rgba(209,138,30,.16); }
+      .chip.ni   { color: #cdd5e3; } .chip.ni.sel   { background: rgba(255,255,255,.08); }
+      .chip.na   { color: #cdd5e3; } .chip.na.sel   { background: rgba(255,255,255,.08); }
+      .chip.dead { color: #ff9b9b; } .chip.dead.sel { background: rgba(155,34,38,.16); }
       .chip.span2 { grid-column: span 2; }
 
-      /* Bottom action bar */
+      /* ---------- Bottom action bar ---------- */
       .actions { position: fixed; bottom: 0; left: 0; right: 0; z-index: 8;
-        background: linear-gradient(180deg, rgba(20,33,61,0), rgba(20,33,61,.96) 26%); padding: 14px 18px calc(16px + env(safe-area-inset-bottom));
-        max-width: 560px; margin: 0 auto; }
+        background: linear-gradient(180deg, rgba(20,33,61,0), rgba(20,33,61,.96) 26%);
+        padding: 14px 18px calc(16px + env(safe-area-inset-bottom)); max-width: 560px; margin: 0 auto; }
       .actions .save { width: 100%; border: none; cursor: pointer; border-radius: 14px; padding: 17px;
         font-family: var(--display); font-weight: 600; font-size: 18px; color: #fff;
         background: linear-gradient(135deg, var(--orange), var(--orange-2)); box-shadow: 0 12px 30px rgba(234,88,12,.4); transition: .15s; }
@@ -135,7 +149,7 @@
         border-radius: 11px; padding: 11px; font-weight: 600; font-size: 14px; cursor: pointer; }
       .actions .sub button:disabled { opacity: .4; cursor: not-allowed; }
 
-      /* Day picker & complete */
+      /* ---------- Day picker & complete ---------- */
       .pad { padding: 22px 18px 40px; }
       .pad h2 { font-family: var(--display); font-size: 24px; margin: 6px 0 4px; }
       .pad .sub { color: var(--muted); font-size: 14px; margin: 0 0 20px; }
@@ -149,7 +163,7 @@
       .day .mini > div { height: 100%; background: var(--orange); width: 0%; }
       .day .stat { font-size: 12px; color: var(--muted); margin-top: 7px; font-variant-numeric: tabular-nums; }
       .complete { text-align: center; padding: 60px 24px; }
-      .complete .big { font-family: var(--display); font-size: 64px; font-weight: 700; color: var(--orange); line-height: 1; }
+      .complete .big { font-family: var(--display); font-size: 64px; font-weight: 700; color: var(--green); line-height: 1; }
       .complete h2 { font-family: var(--display); margin: 10px 0 6px; }
       .complete .kpis { display: flex; justify-content: center; gap: 26px; margin: 24px 0 30px; }
       .complete .kpis .v { font-family: var(--display); font-size: 30px; }
@@ -162,37 +176,29 @@
   </head>
   <body>
     <div class="app">
+
       <!-- GATE -->
       <section id="gate" class="view">
         <div class="brand">
           <div class="mark">SY</div>
-          <div><b>SY Hunter Cockpit</b><span>Kencana · BCI Factory &amp; Warehouse Pipeline</span></div>
+          <div><b>SY Hunter</b><span>BCI Factory / Warehouse Pipeline</span></div>
         </div>
         <h2>Who's calling?</h2>
-        <p>Pick your role. We'll remember it on this device.</p>
-        <div class="role hunter" data-role="SY Hunter">
-          <div class="ava">🏭</div>
-          <div>SY Hunter<small>Call the BCI list — one contact at a time</small></div>
-        </div>
-        <div class="role handler" data-role="Handler">
-          <div class="ava">H</div>
-          <div>Handler<small>Follow up connected leads</small></div>
-        </div>
-        <div class="role champ" data-role="Champion">
-          <div class="ava">★</div>
-          <div>Champion<small>Live pipeline dashboard</small></div>
-        </div>
+        <p>Pick your seat. We'll remember it on this device.</p>
+        <div class="role a" data-role="SY Hunter"><div class="ava">H</div><div>Hunter<small>Call → capture WA</small></div></div>
+        <div class="role b" data-role="Handler"><div class="ava">H</div><div>Handler<small>Message → reply → meeting</small></div></div>
+        <div class="role c" data-role="Champion"><div class="ava">★</div><div>Champion<small>Live dashboard</small></div></div>
       </section>
 
       <!-- DAY PICKER -->
       <section id="days" class="view">
         <div class="top"><div class="row1">
-          <div class="who"><span id="dWho">SY Hunter</span> <span class="pill" id="switchRole">switch</span></div>
+          <div class="who"><span>SY Hunter</span> <span class="pill" id="switchRole">switch</span></div>
           <a class="back" href="/sy-champion">Champion ↗</a>
         </div></div>
         <div class="pad">
           <h2>Pick a day</h2>
-          <p class="sub">Ten days of BCI targets. Work one day at a time.</p>
+          <p class="sub">Ten days, ~35 contacts each. Work one day at a time.</p>
           <div class="days" id="dayGrid"></div>
         </div>
       </section>
@@ -206,7 +212,7 @@
           </div>
           <div class="pbar"><div id="cFill"></div></div>
         </div>
-        <div class="lead" id="leadBody"><div class="loading">Loading leads…</div></div>
+        <div class="lead" id="leadBody"><div class="loading">Loading contacts…</div></div>
         <div class="actions" id="actions" style="display:none">
           <button class="save" id="saveBtn" disabled>Save &amp; next →</button>
           <div class="sub">
@@ -222,17 +228,17 @@
         <div class="complete">
           <div class="big">✓</div>
           <h2>Day complete</h2>
-          <p class="sub" style="color:var(--muted)">Every lead worked. Nice run.</p>
+          <p class="sub" style="color:var(--muted)">Every contact worked. Nice run.</p>
           <div class="kpis">
             <div><div class="v" id="xDialed">0</div><div class="l">Dialed</div></div>
-            <div><div class="v" id="xConnected" style="color:var(--green)">0</div><div class="l">Connected</div></div>
-            <div><div class="v" id="xRate" style="color:var(--orange)">0%</div><div class="l">Connect rate</div></div>
+            <div><div class="v" id="xCaptured" style="color:var(--green)">0</div><div class="l">Captured</div></div>
+            <div><div class="v" id="xRate" style="color:var(--gold)">0%</div><div class="l">Capture rate</div></div>
           </div>
           <a class="btn-ghost" id="backToDays">Back to day list</a>
         </div>
       </section>
-    </div>
 
+    </div>
     <script>
     (() => {
       "use strict";
@@ -253,37 +259,33 @@
       };
 
       const STATUS_LABEL = {
-        connected:      "Connected",
-        warm:           "Warm / Interested",
-        not_interested: "Not interested",
-        no_answer:      "No answer",
-        dead:           "Dead number",
+        won_wa: "WA captured", warm: "Warm", not_interested: "Not interested",
+        no_answer: "No answer", dead: "Dead number",
       };
 
-      const state = { role: null, day: null, leads: [], idx: 0 };
+      const state = { day: null, leads: [], idx: 0 };
 
+      /* ---------- view switching ---------- */
       function show(id) {
         document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
         $(id).classList.add("active");
         window.scrollTo(0, 0);
       }
 
+      /* ---------- gate ---------- */
       document.querySelectorAll(".role").forEach((el) =>
         el.addEventListener("click", () => pickRole(el.dataset.role))
       );
-
       function pickRole(role) {
         if (role === "Champion") { location.href = "/sy-champion"; return; }
         if (role === "Handler")  { location.href = "/sy-handler";  return; }
         localStorage.setItem(ROLE_KEY, role);
-        state.role = role;
         enterDays();
       }
-
       $("switchRole").addEventListener("click", () => { localStorage.removeItem(ROLE_KEY); show("gate"); });
 
+      /* ---------- day picker ---------- */
       async function enterDays() {
-        $("dWho").textContent = state.role;
         show("days");
         const grid = $("dayGrid");
         grid.innerHTML = "";
@@ -299,30 +301,37 @@
           cards.push(card);
         }
         for (let d = 1; d <= 10; d++) {
-          fetchLeads(d).then((leads) => {
-            const total     = leads.length || 35;
-            const worked    = leads.filter((l) => l.outcome).length;
-            const connected = leads.filter((l) => l.outcome && ["connected","warm"].includes(l.outcome.status)).length;
-            cards[d - 1].querySelector(".mini > div").style.width = `${Math.round((worked / total) * 100)}%`;
-            cards[d - 1].querySelector(".stat").textContent =
-              worked === 0 ? `${total} leads` : `${worked}/${total} worked · ${connected} connected`;
-          }).catch(() => {});
+          fetchLeads(d)
+            .then((leads) => {
+              const total = leads.length || 35;
+              const worked = leads.filter((l) => l.outcome).length;
+              const won = leads.filter((l) => l.outcome && l.outcome.status === "won_wa").length;
+              cards[d - 1].querySelector(".mini > div").style.width = `${Math.round((worked / total) * 100)}%`;
+              cards[d - 1].querySelector(".stat").textContent =
+                worked === 0 ? `${total} contacts` : `${worked}/${total} worked · ${won} captured`;
+            })
+            .catch(() => {});
         }
       }
 
+      /* ---------- data ---------- */
       async function fetchLeads(day) {
         const res = await fetch(`/api/sy/leads?day=${day}`);
-        if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || "Failed"); }
+        if (!res.ok) {
+          const e = await res.json().catch(() => ({}));
+          throw new Error(e.error || "Failed to load contacts");
+        }
         return (await res.json()).leads;
       }
 
       async function enterCockpit(day) {
         state.day = day;
         show("cockpit");
-        $("leadBody").innerHTML = '<div class="loading">Loading leads…</div>';
+        $("leadBody").innerHTML = '<div class="loading">Loading contacts…</div>';
         $("actions").style.display = "none";
-        try { state.leads = await fetchLeads(day); }
-        catch (err) {
+        try {
+          state.leads = await fetchLeads(day);
+        } catch (err) {
           $("leadBody").innerHTML = `<div class="loading">${err.message}.<br/>Is the database configured?</div>`;
           return;
         }
@@ -333,78 +342,105 @@
         renderLead();
       }
 
-      function telHref(phone) { return String(phone || "").split("/")[0].trim().replace(/[^\d+]/g, ""); }
+      /* ---------- helpers ---------- */
+      function telHref(phone) {
+        return String(phone || "").split("/")[0].trim().replace(/[^\d+]/g, "");
+      }
       function linkedinUrl(company, name) {
-        const kw = [name, company].filter(Boolean).join(" ");
+        const kw = [name, company].filter(Boolean).join(" ").trim();
         return "https://www.linkedin.com/search/results/people/?keywords=" + encodeURIComponent(kw);
       }
-      const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+      function normalizeWa(raw) {
+        let c = String(raw || "").replace(/[^\d+]/g, "");
+        if (!c) return "";
+        if (c.startsWith("+")) return c;
+        if (c.startsWith("62")) return "+" + c;
+        if (c.startsWith("0")) return "+62" + c.slice(1);
+        if (c.startsWith("8")) return "+62" + c;
+        return "+" + c;
+      }
+      const WA_RE = /^\+628\d{7,11}$/;
+      const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
+        ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])
+      );
 
+      /* ---------- render one lead ---------- */
       function renderLead() {
-        const lead    = state.leads[state.idx];
-        const total   = state.leads.length;
-        const worked  = state.leads.filter((l) => l.outcome).length;
-        const existing = lead.outcome || null;
+        const lead  = state.leads[state.idx];
+        const total  = state.leads.length;
+        const worked = state.leads.filter((l) => l.outcome).length;
 
-        $("cWho").textContent   = `SY HUNTER · DAY ${state.day}`;
-        $("cIdx").textContent   = String(state.idx + 1).padStart(2, "0");
+        $("cWho").textContent = `SY HUNTER · DAY ${state.day}`;
+        $("cIdx").textContent  = String(state.idx + 1).padStart(2, "0");
         $("cTotal").textContent = total;
         $("cFill").style.width  = `${Math.round((worked / total) * 100)}%`;
 
-        const tel     = String(lead.phone || "").split("/")[0].trim();
-        const timing  = lead.timing ? `<span class="tag-timing">${esc(lead.timing)}</span>` : "";
+        const existing   = lead.outcome || null;
+        const prefillWa  = (existing && existing.wa_number) || "";
         const scriptOpen = state.idx === 0 || !existing;
 
         $("leadBody").innerHTML = `
           <div>
-            <span class="tier ${esc(lead.priority)}">${esc(lead.priority)}</span>
+            <span class="tier ${esc(lead.priority)}">${esc(lead.priority)} · ${esc(lead.band || "")}</span>
             <span class="done-flag ${existing ? "show" : ""}">✓ ${existing ? esc(STATUS_LABEL[existing.status] || existing.status) : ""}</span>
           </div>
           <div class="company">${esc(lead.company_name)}</div>
           <div class="meta">
-            <b>${esc(lead.town || "")}</b>${lead.province ? " · " + esc(lead.province) : ""}${timing}
-            ${lead.project_name ? "<br/>" + esc(lead.project_name) : ""}
+            <b>${esc(lead.town || "")}</b>${lead.province ? " · " + esc(lead.province) : ""}
+            ${lead.project_name ? " · " + esc(lead.project_name) : ""}
+            ${lead.timing ? " · <b>" + esc(lead.timing) + "</b>" : ""}
           </div>
 
           <div class="askbox">
             <div class="l">Ask for</div>
             <div class="n">${esc(lead.contact_name || "—")}</div>
-            <div class="r">${esc(lead.position || lead.role || "")}</div>
+            <div class="r">${esc(lead.position || "")}</div>
           </div>
 
           <a class="callbtn" href="tel:${esc(telHref(lead.phone))}">
-            <span>📞</span><span>${esc(tel || "No number")}</span>
+            <span class="ph">📞</span><span>${esc(lead.phone || "No number")}</span>
           </a>
 
           <div class="xcheck">
             <a class="xbtn li" href="${esc(linkedinUrl(lead.company_name, lead.contact_name))}" target="_blank" rel="noopener">in · Verify</a>
+            <a class="xbtn" href="https://www.google.com/search?q=${encodeURIComponent((lead.company_name || "") + " " + (lead.project_name || ""))}" target="_blank" rel="noopener">🔍 Search</a>
             <a class="xbtn" href="${lead.email ? "mailto:" + esc(lead.email) : "#"}" ${lead.email ? "" : 'aria-disabled="true"'}>✉ Email</a>
           </div>
-          <div class="xhint">Cross-check on LinkedIn — confirm the person &amp; role before pitching.</div>
+          <div class="xhint">Cross-check on LinkedIn first — confirm the person &amp; role before you pitch.</div>
 
           <details class="script" ${scriptOpen ? "open" : ""}>
             <summary>What to say <span class="chev">▾</span></summary>
             <div class="body">
               "Selamat pagi, dengan <b>${esc(lead.company_name)}</b>? Boleh bicara dengan Bapak/Ibu
-              <b>${esc(lead.contact_name || "yang bertanggung jawab")}</b>${lead.position ? ", bagian " + esc(lead.position) : ""}?
-              … Saya dari <b>Kencana Panelindo</b>, produsen Sandwich Panel ACP pertama di Indonesia.
-              ${lead.project_name ? "Kami tertarik berdiskusi mengenai kebutuhan project <b>" + esc(lead.project_name) + "</b>. " : ""}
-              Boleh saya kirimkan <b>Company Profile dan spesifikasi produk</b> kami?
-              <b>Nomor WhatsApp atau email aktif Bapak/Ibu di mana ya?</b>"
+              <b>${esc(lead.contact_name || "yang bertugas")}</b>? … Saya dari SY, supplier panel sandwich panel
+              untuk proyek BCI. Kami ada <b>sample + spec sheet</b> untuk proyek
+              ${esc(lead.project_name || "Anda")}.
+              <b>Boleh saya kirim via WhatsApp? Nomor WA aktifnya berapa ya?</b>"
             </div>
           </details>
 
           <div class="capture">
             <div class="field">
-              <div class="label">Note (optional)</div>
-              <textarea class="note-input" id="noteInput" placeholder="Spoke with reception, ask for email… call back Tue…">${esc(existing && existing.note || "")}</textarea>
+              <div class="label">WhatsApp number</div>
+              <input id="waInput" type="tel" inputmode="tel" placeholder="+62 8xx xxxx xxxx" value="${esc(prefillWa)}" />
+              <div class="inline-err" id="waErr">Enter a valid Indonesian mobile (+628…).</div>
             </div>
+            <div class="field">
+              <div class="label">PIC name (optional)</div>
+              <input id="picInput" type="text" placeholder="Fill only if a different person answered" value="${esc(existing && existing.pic_name || "")}" />
+            </div>
+            <div class="toggle">
+              <span>Sample sent</span>
+              <div class="sw ${existing && existing.sample_sent ? "on" : ""}" id="sampleSw" role="switch"
+                aria-checked="${existing && existing.sample_sent ? "true" : "false"}"></div>
+            </div>
+
             <div class="chips" id="chips">
-              ${chip("connected", "connected",      "✅ Connected",        existing)}
-              ${chip("warm",      "warm",            "🔥 Warm — follow up", existing)}
-              ${chip("ni",        "not_interested",  "🚫 Not interested",   existing)}
-              ${chip("na",        "no_answer",       "☎️ No answer",        existing)}
-              ${chip("dead",      "dead",            "❌ Dead number",       existing, true)}
+              ${chip("won",  "won_wa",         "✅ WA captured",     existing)}
+              ${chip("warm", "warm",            "🔥 Warm — call back", existing)}
+              ${chip("ni",   "not_interested",  "🚫 Not interested",  existing)}
+              ${chip("na",   "no_answer",       "☎️ No answer",       existing)}
+              ${chip("dead", "dead",            "❌ Dead number",     existing, true)}
             </div>
           </div>`;
 
@@ -416,18 +452,38 @@
         return `<div class="chip ${cls} ${span2 ? "span2" : ""} ${sel}" data-status="${status}">${label}</div>`;
       }
 
+      /* ---------- wire interactions ---------- */
       let chosenStatus = null;
+      let sampleSent   = false;
 
       function wireLead(existing) {
         chosenStatus = existing ? existing.status : null;
+        sampleSent   = !!(existing && existing.sample_sent);
+
+        const sw = $("sampleSw");
+        sw.addEventListener("click", () => {
+          sampleSent = !sampleSent;
+          sw.classList.toggle("on", sampleSent);
+          sw.setAttribute("aria-checked", String(sampleSent));
+        });
+
         $("chips").querySelectorAll(".chip").forEach((c) =>
           c.addEventListener("click", () => {
             $("chips").querySelectorAll(".chip").forEach((x) => x.classList.remove("sel"));
             c.classList.add("sel");
             chosenStatus = c.dataset.status;
+            $("waErr").classList.remove("show");
+            $("waInput").classList.remove("bad");
+            if (chosenStatus === "won_wa") $("waInput").focus();
             updateSaveState();
           })
         );
+
+        $("waInput").addEventListener("input", () => {
+          $("waInput").classList.remove("bad");
+          $("waErr").classList.remove("show");
+        });
+
         updateSaveState();
         $("backBtn").disabled = state.idx === 0;
         $("skipBtn").disabled = state.idx >= state.leads.length - 1;
@@ -435,6 +491,7 @@
 
       function updateSaveState() { $("saveBtn").disabled = !chosenStatus; }
 
+      /* ---------- actions ---------- */
       $("saveBtn").addEventListener("click", saveAndNext);
       $("backBtn").addEventListener("click", () => { if (state.idx > 0) { state.idx--; renderLead(); } });
       $("skipBtn").addEventListener("click", () => { if (state.idx < state.leads.length - 1) { state.idx++; renderLead(); } });
@@ -444,24 +501,53 @@
         const lead = state.leads[state.idx];
         if (!chosenStatus) return;
 
-        const noteEl = $("noteInput");
-        const note   = noteEl ? noteEl.value.trim() || null : null;
+        let waNumber = null;
+        if (chosenStatus === "won_wa") {
+          waNumber = normalizeWa($("waInput").value);
+          if (!WA_RE.test(waNumber)) {
+            $("waInput").classList.add("bad");
+            $("waErr").classList.add("show");
+            $("waInput").focus();
+            return;
+          }
+        }
 
-        const payload = { contact_id: lead.id, status: chosenStatus, note, updated_by: state.role };
+        const payload = {
+          contact_id:  lead.id,
+          status:      chosenStatus,
+          wa_number:   waNumber,
+          pic_name:    $("picInput").value.trim() || null,
+          sample_sent: sampleSent,
+        };
+
         const btn = $("saveBtn");
-        btn.disabled = true; btn.textContent = "Saving…";
+        btn.disabled = true;
+        btn.textContent = "Saving…";
         let res;
         try {
-          res = await fetch("/api/sy/outcome", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(payload) });
+          res = await fetch("/api/sy/outcome", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
         } catch {
-          btn.disabled = false; btn.textContent = "Save & next →"; alert("Network error — try again."); return;
+          btn.disabled = false;
+          btn.textContent = "Save & next →";
+          alert("Network error — try again.");
+          return;
         }
 
         const data = await res.json().catch(() => ({}));
         btn.textContent = "Save & next →";
         if (!res.ok) { btn.disabled = false; alert(data.error || "Could not save."); return; }
 
-        lead.outcome = { status: chosenStatus, note, updated_by: state.role, updated_at: new Date().toISOString() };
+        lead.outcome = {
+          status:      chosenStatus,
+          wa_number:   waNumber,
+          pic_name:    payload.pic_name,
+          sample_sent: sampleSent,
+          updated_at:  new Date().toISOString(),
+        };
 
         const nextOpen = findNextOpen(state.idx);
         if (nextOpen === -1) { showComplete(); return; }
@@ -475,19 +561,21 @@
         return -1;
       }
 
+      /* ---------- day complete ---------- */
       function showComplete() {
-        const dialed    = state.leads.filter((l) => l.outcome).length;
-        const connected = state.leads.filter((l) => l.outcome && ["connected","warm"].includes(l.outcome.status)).length;
-        const rate      = dialed ? Math.round((connected / dialed) * 100) : 0;
-        $("xWho").textContent       = `SY HUNTER · DAY ${state.day}`;
-        $("xDialed").textContent    = dialed;
-        $("xConnected").textContent = connected;
-        $("xRate").textContent      = rate + "%";
+        const dialed   = state.leads.filter((l) => l.outcome).length;
+        const captured = state.leads.filter((l) => l.outcome && l.outcome.status === "won_wa").length;
+        const rate     = dialed ? Math.round((captured / dialed) * 100) : 0;
+        $("xWho").textContent      = `SY HUNTER · DAY ${state.day}`;
+        $("xDialed").textContent   = dialed;
+        $("xCaptured").textContent = captured;
+        $("xRate").textContent     = rate + "%";
         show("complete");
       }
 
+      /* ---------- boot ---------- */
       const saved = localStorage.getItem(ROLE_KEY);
-      if (saved === "SY Hunter") { state.role = saved; enterDays(); }
+      if (saved === "SY Hunter") enterDays();
       else show("gate");
     })();
     </script>

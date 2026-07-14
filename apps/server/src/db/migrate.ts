@@ -798,6 +798,9 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
     `;
     await db`create index if not exists sy_outcomes_status_idx  on sy_outcomes (status)`;
     await db`create index if not exists sy_outcomes_updated_idx on sy_outcomes (updated_at desc)`;
+    await db`alter table sy_outcomes add column if not exists wa_number   text`;
+    await db`alter table sy_outcomes add column if not exists pic_name    text`;
+    await db`alter table sy_outcomes add column if not exists sample_sent boolean not null default false`;
 
     await db`alter table sy_pipeline add column if not exists messaged_at  timestamptz`;
     await db`alter table sy_pipeline add column if not exists replied_at   timestamptz`;

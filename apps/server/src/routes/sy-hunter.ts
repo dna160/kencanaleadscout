@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { getSql } from "../db/client.js";
 import { seedSyHunter } from "../db/seedSyHunter.js";
 
-const VALID_OUTCOME  = new Set(["connected", "warm", "not_interested", "no_answer", "dead"]);
+const VALID_OUTCOME  = new Set(["won_wa", "warm", "not_interested", "no_answer", "dead"]);
 const VALID_PIPELINE = new Set(["fresh", "messaged", "replied", "meeting_set", "won", "dead"]);
 const PREV_STAGE: Record<string, string> = {
   messaged: "fresh", replied: "messaged", meeting_set: "replied", won: "meeting_set",
@@ -54,29 +54,37 @@ export async function syHunterRoutes(app: FastifyInstance) {
 
   // ── POST /api/sy/outcome ───────────────────────────────────────────────────
   app.post<{
-    Body: { contact_id: number; status: string; note?: string; updated_by?: string };
+    Body: {
+      contact_id: number; status: string;
+      wa_number?: string | null; pic_name?: string | null;
+      sample_sent?: boolean; updated_by?: string;
+    };
   }>("/api/sy/outcome", async (request, reply) => {
     const db = getSql();
     if (!db) return reply.code(503).send({ error: "Database not configured." });
 
-    const { contact_id, status, note, updated_by } = request.body ?? {};
+    const { contact_id, status, wa_number, pic_name, sample_sent, updated_by } = request.body ?? {};
     if (!contact_id || !status) return reply.code(400).send({ error: "contact_id and status required." });
     if (!VALID_OUTCOME.has(status)) return reply.code(400).send({ error: "Invalid status." });
 
-    const noteVal   = note?.trim() || null;
-    const updatedBy = updated_by || null;
+    const waVal      = wa_number?.trim()  || null;
+    const picVal     = pic_name?.trim()   || null;
+    const sampleVal  = sample_sent === true;
+    const updatedBy  = updated_by || null;
 
     await db`
-      insert into sy_outcomes (contact_id, status, note, updated_by, updated_at)
-      values (${contact_id}, ${status}, ${noteVal}, ${updatedBy}, now())
+      insert into sy_outcomes (contact_id, status, wa_number, pic_name, sample_sent, updated_by, updated_at)
+      values (${contact_id}, ${status}, ${waVal}, ${picVal}, ${sampleVal}, ${updatedBy}, now())
       on conflict (contact_id) do update set
-        status     = ${status},
-        note       = coalesce(${noteVal}, sy_outcomes.note),
-        updated_by = ${updatedBy},
-        updated_at = now()
+        status      = ${status},
+        wa_number   = coalesce(${waVal}, sy_outcomes.wa_number),
+        pic_name    = coalesce(${picVal}, sy_outcomes.pic_name),
+        sample_sent = ${sampleVal},
+        updated_by  = ${updatedBy},
+        updated_at  = now()
     `;
 
-    if (status === "connected" || status === "warm") {
+    if (status === "won_wa" || status === "warm") {
       await db`
         insert into sy_pipeline (contact_id, stage, called_at, updated_at)
         values (${contact_id}, 'fresh', now(), now())
@@ -95,10 +103,10 @@ export async function syHunterRoutes(app: FastifyInstance) {
 
     const totRows = await db`
       select
-        count(*) filter (where o.status is not null)::int              as dialed,
-        (select count(*)::int from sy_contacts where active = true)    as assigned,
-        count(*) filter (where o.status in ('connected','warm'))::int  as connected,
-        count(*) filter (where o.status = 'warm')::int                 as interested
+        count(*) filter (where o.status is not null)::int             as dialed,
+        (select count(*)::int from sy_contacts where active = true)   as assigned,
+        count(*) filter (where o.status = 'won_wa')::int              as captured,
+        count(*) filter (where o.status = 'warm')::int                as warm
       from sy_contacts c
       left join sy_outcomes o on o.contact_id = c.id
       where c.active = true
@@ -107,8 +115,8 @@ export async function syHunterRoutes(app: FastifyInstance) {
     const byDay = await db`
       select
         c.day,
-        count(*) filter (where o.status is not null)::int             as dialed,
-        count(*) filter (where o.status in ('connected','warm'))::int as connected
+        count(*) filter (where o.status is not null)::int  as dialed,
+        count(*) filter (where o.status = 'won_wa')::int   as captured
       from sy_contacts c
       left join sy_outcomes o on o.contact_id = c.id
       where c.active = true
@@ -119,9 +127,9 @@ export async function syHunterRoutes(app: FastifyInstance) {
     const byPriority = await db`
       select
         c.priority,
-        count(*)::int                                                  as total,
-        count(*) filter (where o.status is not null)::int             as dialed,
-        count(*) filter (where o.status in ('connected','warm'))::int as connected
+        count(*)::int                                       as total,
+        count(*) filter (where o.status is not null)::int  as dialed,
+        count(*) filter (where o.status = 'won_wa')::int   as captured
       from sy_contacts c
       left join sy_outcomes o on o.contact_id = c.id
       where c.active = true
@@ -132,9 +140,9 @@ export async function syHunterRoutes(app: FastifyInstance) {
     const byBand = await db`
       select
         c.band,
-        count(*)::int                                                  as total,
-        count(*) filter (where o.status is not null)::int             as dialed,
-        count(*) filter (where o.status in ('connected','warm'))::int as connected
+        count(*)::int                                       as total,
+        count(*) filter (where o.status is not null)::int  as dialed,
+        count(*) filter (where o.status = 'won_wa')::int   as captured
       from sy_contacts c
       left join sy_outcomes o on o.contact_id = c.id
       where c.active = true
@@ -145,24 +153,24 @@ export async function syHunterRoutes(app: FastifyInstance) {
     const recent = await db`
       select
         c.company_name, c.contact_name, c.priority, c.band, c.timing, c.project_name,
-        o.status, o.note, o.updated_by, o.updated_at
+        o.status, o.wa_number, o.pic_name, o.updated_by, o.updated_at
       from sy_outcomes o
       join sy_contacts c on c.id = o.contact_id
-      where o.status in ('connected','warm')
+      where o.status in ('won_wa', 'warm')
       order by o.updated_at desc
       limit 15
     `;
 
-    const t        = totRows[0];
-    const dialed    = Number(t?.dialed    ?? 0);
-    const connected = Number(t?.connected ?? 0);
+    const t       = totRows[0];
+    const dialed   = Number(t?.dialed   ?? 0);
+    const captured = Number(t?.captured ?? 0);
     return {
       totals: {
         dialed,
-        assigned:     Number(t?.assigned   ?? 0),
-        connected,
-        interested:   Number(t?.interested ?? 0),
-        connect_rate: dialed ? connected / dialed : 0,
+        assigned:      Number(t?.assigned ?? 0),
+        captured,
+        warm:          Number(t?.warm     ?? 0),
+        capture_rate:  dialed ? captured / dialed : 0,
       },
       by_day:      byDay,
       by_priority: byPriority,
@@ -354,12 +362,12 @@ export async function syHunterRoutes(app: FastifyInstance) {
     const topProjects = await db`
       select c.project_name,
              count(*)::int as total_contacts,
-             count(*) filter (where o.status in ('connected','warm'))::int as active_contacts
+             count(*) filter (where o.status in ('won_wa','warm'))::int as active_contacts
       from sy_contacts c
       left join sy_outcomes o on o.contact_id = c.id
       where c.active = true and c.project_name is not null
       group by c.project_name
-      having count(*) filter (where o.status in ('connected','warm')) > 0
+      having count(*) filter (where o.status in ('won_wa','warm')) > 0
       order by active_contacts desc
       limit 10
     `;
