@@ -114,6 +114,7 @@ export async function miraeRoutes(app: FastifyInstance): Promise<void> {
       .replace(/\b\S+/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
     const postal_code  = b.postal_code  ? String(b.postal_code).trim()  : null;
     const notes        = b.notes        ? String(b.notes).trim()        : null;
+    const phone        = b.phone        ? String(b.phone).trim()        : null;
     const activity_type_raw = b.activity_type
       ? String(b.activity_type).trim().toLowerCase() : "kunjungan";
     const activity_type = ["kunjungan", "telepon"].includes(activity_type_raw)
@@ -156,11 +157,11 @@ export async function miraeRoutes(app: FastifyInstance): Promise<void> {
       insert into mirae_visits (
         salesperson_id, customer_id, pic_name, store_name,
         customer_type, category, address, area, postal_code, notes,
-        activity_type, visited_at, source
+        phone, activity_type, visited_at, source
       ) values (
         ${salesperson_id}, ${customer_id}, ${pic_name}, ${store_name},
         ${customer_type}, ${category}, ${address}, ${area}, ${postal_code}, ${notes},
-        ${activity_type}, now(), 'app'
+        ${phone}, ${activity_type}, now(), 'app'
       )
       returning *
     `;
@@ -188,7 +189,7 @@ export async function miraeRoutes(app: FastifyInstance): Promise<void> {
       select
         v.id, v.salesperson_id, v.customer_id,
         v.pic_name, v.store_name, v.customer_type, v.category,
-        v.address, v.area, v.postal_code, v.notes,
+        v.address, v.area, v.postal_code, v.notes, v.phone,
         v.visited_at, v.source, v.activity_type,
         s.full_name as salesperson_name,
         s.code      as salesperson_code
@@ -256,7 +257,7 @@ export async function miraeRoutes(app: FastifyInstance): Promise<void> {
       db`
         SELECT
           v.id, v.store_name, v.customer_type, v.area, v.category,
-          v.pic_name, v.visited_at, v.activity_type,
+          v.pic_name, v.phone, v.visited_at, v.activity_type,
           s.full_name AS salesperson_name,
           s.code      AS salesperson_code
         FROM mirae_visits v
@@ -266,7 +267,7 @@ export async function miraeRoutes(app: FastifyInstance): Promise<void> {
       db`
         SELECT
           v.id, v.store_name, v.customer_type, v.area, v.category,
-          v.pic_name, v.notes, v.visited_at, v.activity_type,
+          v.pic_name, v.phone, v.notes, v.visited_at, v.activity_type,
           s.full_name AS salesperson_name,
           s.code      AS salesperson_code
         FROM mirae_visits v
@@ -340,7 +341,7 @@ export async function miraeRoutes(app: FastifyInstance): Promise<void> {
     const rows = await db<{
       id: number; visited_at: string;
       salesperson_name: string; salesperson_code: string;
-      store_name: string; pic_name: string | null;
+      store_name: string; pic_name: string | null; phone: string | null;
       customer_type: string; category: string;
       area: string; address: string | null;
       postal_code: string | null; notes: string | null;
@@ -349,7 +350,7 @@ export async function miraeRoutes(app: FastifyInstance): Promise<void> {
         v.id,
         to_char(v.visited_at at time zone 'Asia/Jakarta', 'YYYY-MM-DD HH24:MI') as visited_at,
         s.full_name as salesperson_name, s.code as salesperson_code,
-        v.store_name, v.pic_name, v.customer_type, v.category,
+        v.store_name, v.pic_name, v.phone, v.customer_type, v.category,
         v.area, v.address, v.postal_code, v.notes
       from mirae_visits v
       join mirae_salespeople s on s.id = v.salesperson_id
@@ -369,6 +370,7 @@ export async function miraeRoutes(app: FastifyInstance): Promise<void> {
       "Sales":                 `${r.salesperson_name} (${r.salesperson_code})`,
       "Nama Toko":             r.store_name,
       "PIC":                   r.pic_name ?? "",
+      "No. HP":                r.phone ?? "",
       "Tipe":                  r.customer_type === "new" ? "NEW" : "OLD",
       "Kategori":              r.category,
       "Area":                  r.area,
@@ -542,7 +544,7 @@ export async function miraeRoutes(app: FastifyInstance): Promise<void> {
     const [base] = await db<{
       full_name: string; code: string;
       total_visits: string; active_days: string;
-      new_visits: string; unique_stores: string; notes_ok: string;
+      new_visits: string; unique_stores: string; notes_ok: string; phone_ok: string;
     }[]>`
       select
         s.full_name, s.code,
@@ -550,7 +552,8 @@ export async function miraeRoutes(app: FastifyInstance): Promise<void> {
         count(distinct date(v.visited_at at time zone 'Asia/Jakarta'))::text as active_days,
         count(*) filter (where v.customer_type = 'new')::text               as new_visits,
         count(distinct v.customer_id)::text                                  as unique_stores,
-        count(*) filter (where length(coalesce(v.notes,'')) >= 40)::text     as notes_ok
+        count(*) filter (where length(coalesce(v.notes,'')) >= 40)::text     as notes_ok,
+        count(*) filter (where v.phone is not null and trim(v.phone) <> '')::text as phone_ok
       from mirae_salespeople s
       left join mirae_visits v on v.salesperson_id = s.id
         and v.visited_at >= ${from} and v.visited_at <= ${to}
@@ -564,6 +567,7 @@ export async function miraeRoutes(app: FastifyInstance): Promise<void> {
     const newVisits    = Number(base.new_visits);
     const uniqueStores = Number(base.unique_stores);
     const notesOk      = Number(base.notes_ok);
+    const phoneOk      = Number(base.phone_ok);
 
     const [catMix, areaMix, hourly] = await Promise.all([
       db<{ category: string; cnt: string }[]>`
@@ -605,6 +609,7 @@ export async function miraeRoutes(app: FastifyInstance): Promise<void> {
         hunter_index:          hunterIndex,
         unique_stores:         uniqueStores,
         notes_discipline:      totalVisits > 0 ? Math.round((notesOk / totalVisits) * 1000) / 10 : 0,
+        phone_coverage:        totalVisits > 0 ? Math.round((phoneOk / totalVisits) * 1000) / 10 : 0,
         top_area_pct:          topAreaPct,
         unique_areas:          uniqueAreas,
       },

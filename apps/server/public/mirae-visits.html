@@ -206,6 +206,11 @@
           <input id="f-pic" type="text" placeholder="mis. Bpk. Yayan" autocomplete="off" />
         </div>
 
+        <div class="field">
+          <label>No. HP PIC <span class="opt">opsional</span></label>
+          <input id="f-phone" type="tel" inputmode="tel" placeholder="mis. 0812-3456-7890" autocomplete="off" />
+        </div>
+
         <div class="divider"></div>
 
         <div class="field">
@@ -570,6 +575,7 @@
         const category       = $("f-cat").value;
         const area           = $("f-area").value;
         const pic_name       = $("f-pic").value.trim() || null;
+        const phone          = $("f-phone").value.trim() || null;
         const address        = $("f-addr").value.trim() || null;
         const postal_code    = $("f-postal").value.trim() || null;
         const notes          = $("f-notes").value.trim() || null;
@@ -597,7 +603,7 @@
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ salesperson_id, store_name, customer_type, category,
-            area, pic_name, address, postal_code, notes, activity_type: activityType }),
+            area, pic_name, phone, address, postal_code, notes, activity_type: activityType }),
         }).then(r => r.json()).catch(() => ({ error: "Koneksi gagal." }));
 
         btn.disabled = false;

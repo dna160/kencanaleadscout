@@ -243,11 +243,11 @@
             <thead>
               <tr>
                 <th id="timeColHead">Waktu</th><th>Sales</th><th>Toko / PIC</th>
-                <th>Tipe</th><th>Aktivitas</th><th>Kategori</th><th>Area</th><th>Catatan</th>
+                <th>No. HP</th><th>Tipe</th><th>Aktivitas</th><th>Kategori</th><th>Area</th><th>Catatan</th>
               </tr>
             </thead>
             <tbody id="tableBody">
-              <tr><td colspan="8" style="text-align:center;padding:26px;color:var(--muted)">Memuat…</td></tr>
+              <tr><td colspan="9" style="text-align:center;padding:26px;color:var(--muted)">Memuat…</td></tr>
             </tbody>
           </table>
         </div>
@@ -395,7 +395,7 @@
         countEl.textContent = visits.length ? visits.length + " kunjungan" : "";
 
         if (!visits.length) {
-          tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:26px;color:var(--muted)">Tidak ada kunjungan untuk periode ini.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:26px;color:var(--muted)">Tidak ada kunjungan untuk periode ini.</td></tr>';
           return;
         }
         tbody.innerHTML = visits.map(v => {
@@ -407,6 +407,7 @@
             ? '<span class="badge-tel">Telepon</span>'
             : '<span style="color:var(--muted);font-size:11.5px">Kunjungan</span>';
           const pic   = v.pic_name ? `<span class="pic"> · ${esc(v.pic_name)}</span>` : "";
+          const phone = v.phone ? esc(v.phone) : '<span style="color:var(--muted)">—</span>';
           const note  = v.notes
             ? (v.notes.length > 45 ? esc(v.notes.slice(0, 45)) + "…" : esc(v.notes))
             : "—";
@@ -415,6 +416,7 @@
             <td>${timeStr}</td>
             <td>${esc(v.salesperson_name)}</td>
             <td class="co">${esc(v.store_name)}${pic}</td>
+            <td>${phone}</td>
             <td>${badge}</td>
             <td>${actBadge}</td>
             <td>${esc(v.category)}</td>
@@ -427,13 +429,13 @@
       async function loadTable() {
         const from = `${tableFrom}T00:00:00+07:00`;
         const to   = `${tableTo}T23:59:59+07:00`;
-        $("tableBody").innerHTML = '<tr><td colspan="8" style="text-align:center;padding:26px;color:var(--muted)">Memuat…</td></tr>';
+        $("tableBody").innerHTML = '<tr><td colspan="9" style="text-align:center;padding:26px;color:var(--muted)">Memuat…</td></tr>';
         try {
           const res  = await fetch(`/api/mirae/visits?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&limit=500`);
           const data = await res.json();
           renderTable(data.visits ?? []);
         } catch {
-          $("tableBody").innerHTML = '<tr><td colspan="8" style="text-align:center;padding:26px;color:#e05252">Gagal memuat data.</td></tr>';
+          $("tableBody").innerHTML = '<tr><td colspan="9" style="text-align:center;padding:26px;color:#e05252">Gagal memuat data.</td></tr>';
         }
       }
 

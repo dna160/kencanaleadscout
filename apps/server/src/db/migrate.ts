@@ -536,6 +536,7 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
     await db`create index if not exists mirae_visits_rep_time on mirae_visits (salesperson_id, visited_at desc)`;
     await db`create index if not exists mirae_visits_area     on mirae_visits (area)`;
     await db`create index if not exists mirae_visits_type     on mirae_visits (customer_type)`;
+    await db`alter table mirae_visits add column if not exists phone text`;
     await db`
       create table if not exists mirae_visit_photos (
         id         bigserial primary key,
@@ -675,14 +676,14 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
     `;
 
     // Seed categories + areas (Project-specific)
-    for (const v of ["Project", "HO", "Aplikator", "Kontraktor"]) {
+    for (const v of ["Project", "HO", "Aplikator", "Arsitek", "Design & Build", "Build Contractor"]) {
       await db`insert into project_visit_lists (type, value) values ('category', ${v}) on conflict do nothing`;
     }
-    // Deactivate categories not in the project-team list
+    // Deactivate categories not in the project-team list (including old Kontraktor)
     await db`
       update project_visit_lists set active = false
       where type = 'category'
-        and lower(value) not in ('project','ho','aplikator','kontraktor')
+        and lower(value) not in ('project','ho','aplikator','arsitek','design & build','build contractor')
     `;
     for (const v of [
       "Bekasi Barat", "Bekasi Timur", "Bekasi Utara", "Bekasi Selatan", "Bekasi Kota",

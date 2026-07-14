@@ -390,6 +390,11 @@
                   <div class="m-sub">≥ 40 karakter</div>
                 </div>
                 <div class="rc-metric">
+                  <div class="m-label">Coverage HP</div>
+                  <div class="m-val" style="color:${(sc.phone_coverage??0)>=60?'#7ee87e':'var(--muted)'};">${sc.phone_coverage??0}%</div>
+                  <div class="m-sub">kunjungan ada nomor</div>
+                </div>
+                <div class="rc-metric">
                   <div class="m-label">Area Utama</div>
                   <div class="m-val" style="font-size:14px;font-weight:600;">${esc(topArea)}</div>
                   <div class="m-sub">${sc.top_area_pct}% kunjungan</div>

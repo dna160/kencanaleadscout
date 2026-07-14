@@ -290,12 +290,13 @@
       const actIcon = isTel ? "📞" : "🚶";
       const metaParts = [esc(v.category ?? ""), esc(v.area ?? "")].filter(Boolean).join(" · ");
       const picPart   = v.pic_name ? ` · PIC: ${esc(v.pic_name)}` : "";
+      const phonePart = v.phone ? ` · 📞 ${esc(v.phone)}` : "";
       return `
         <div class="vlog-item${isNew ? " fresh" : ""}" data-id="${v.id}" onclick="toggleWaCard(event, this)">
           <div class="vlog-dot${isTel ? " telepon" : ""}"></div>
           <div class="vlog-body">
             <div class="vlog-store">${esc(v.store_name)}${badge}</div>
-            <div class="vlog-meta">${actIcon} ${isTel ? "Telepon" : "Kunjungan"} · ${metaParts}${picPart}</div>
+            <div class="vlog-meta">${actIcon} ${isTel ? "Telepon" : "Kunjungan"} · ${metaParts}${picPart}${phonePart}</div>
             ${v.notes ? `<div class="vlog-notes">${esc(v.notes)}</div>` : ""}
             <div class="vlog-wa">
               <div class="vlog-wa-preview" onclick="copyWaCard(event, this)"></div>
