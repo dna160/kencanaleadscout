@@ -98,6 +98,30 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
     return { suggestions: rows };
   });
 
+  // ── Customer portfolio (for My Day) ───────────────────────────────────────
+  app.get<{ Querystring: { rep_id?: string } }>("/api/project/customers/portfolio", async (request, reply) => {
+    const db = getSql();
+    if (!db) return reply.code(503).send({ error: "Database not configured." });
+
+    const rep_id = request.query.rep_id ? Number(request.query.rep_id) : null;
+
+    const rows = await db`
+      select
+        c.id, c.store_name, c.category, c.area, c.address,
+        count(v.id)::int                                          as visit_count,
+        max(v.visited_at)                                         as last_visit_at,
+        count(*) filter (where v.customer_type = 'new')::int      as new_count,
+        count(*) filter (where v.customer_type = 'old')::int      as old_count
+      from project_customers c
+      join project_visits v on v.customer_id = c.id
+      ${rep_id ? db`where v.salesperson_id = ${rep_id}` : db``}
+      group by c.id, c.store_name, c.category, c.area, c.address
+      order by max(v.visited_at) desc
+      limit 300
+    `;
+    return { customers: rows };
+  });
+
   // ── Create visit ───────────────────────────────────────────────────────────
   app.post<{ Body: Record<string, unknown> }>("/api/project/visits", async (request, reply) => {
     const db = getSql();

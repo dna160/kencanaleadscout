@@ -134,6 +134,33 @@
 
     .empty { color: var(--muted); font-size: 13px; text-align: center; padding: 36px 0; }
     .spinner { color: var(--muted); font-size: 13px; text-align: center; padding: 36px 0; }
+
+    /* ── Portfolio Pelanggan ─────────────────────────────────────────── */
+    .portfolio-section { padding: 24px 0 0; border-top: 1px solid var(--line); margin-top: 16px; }
+    .portfolio-header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+    .portfolio-title { font-family: var(--display); font-size: 15px; font-weight: 700; }
+    .portfolio-count { color: var(--muted); font-size: 13px; }
+    .pf-search {
+      width: 100%; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12);
+      border-radius: 10px; padding: 10px 14px; color: var(--paper); font-family: var(--sans);
+      font-size: 14px; outline: none; margin-bottom: 12px;
+    }
+    .pf-search:focus { border-color: var(--blue-light); }
+    .pf-search::placeholder { color: var(--muted); }
+    .acct-card {
+      border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
+      background: rgba(255,255,255,.03); margin-bottom: 8px;
+    }
+    .acct-name { font-weight: 600; font-size: 13.5px; }
+    .acct-meta { color: var(--muted); font-size: 12px; margin-top: 3px; }
+    .acct-row2 { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; flex-wrap: wrap; gap: 6px; }
+    .acct-days { font-size: 12px; font-weight: 600; }
+    .days-ok   { color: #9fe0b9; }
+    .days-warn { color: #fbbf24; }
+    .days-crit { color: #f8a0a0; }
+    .acct-badge { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 99px; }
+    .acct-badge-new { background: rgba(46,111,214,.18); color: #7eb8f7; }
+    .acct-badge-old { background: rgba(62,155,79,.18); color: #9fe0b9; }
   </style>
 </head>
 <body>
@@ -168,6 +195,15 @@
     <div id="visit-list"><div class="spinner">Pilih sales untuk memuat kunjungan hari ini…</div></div>
   </div>
 
+  <div class="portfolio-section" id="portfolio-section" style="display:none">
+    <div class="portfolio-header">
+      <div class="portfolio-title">Portfolio Pelanggan</div>
+      <div class="portfolio-count" id="portfolio-count"></div>
+    </div>
+    <input class="pf-search" id="pf-search" type="search" placeholder="Cari nama toko…" />
+    <div id="portfolio-list"><div class="spinner">Memuat portfolio…</div></div>
+  </div>
+
 </div>
 
 <div id="toast" class="toast"></div>
@@ -185,6 +221,8 @@
   let firstLoad = true;
   let syncTimer = null;
   let lastSyncTime = null;
+  let allPortfolio = [];
+  let pfSearchTerm = "";
 
   function esc(s) {
     if (s == null) return "";
@@ -310,6 +348,67 @@
     knownIds = new Set(visits.map(v => String(v.id)));
   }
 
+  function daysAgo(iso) {
+    if (!iso) return null;
+    return Math.floor((Date.now() - new Date(iso).getTime()) / (24 * 3600 * 1000));
+  }
+  function daysClass(d) {
+    if (d === null) return "days-crit";
+    if (d <= 14) return "days-ok";
+    if (d <= 28) return "days-warn";
+    return "days-crit";
+  }
+  function daysLabel(d) {
+    if (d === null) return "Belum pernah";
+    if (d === 0)   return "Hari ini";
+    if (d === 1)   return "Kemarin";
+    return `${d} hari lalu`;
+  }
+
+  function renderPortfolio() {
+    const el = $("portfolio-list");
+    const countEl = $("portfolio-count");
+    const filtered = pfSearchTerm
+      ? allPortfolio.filter(c => c.store_name.toLowerCase().includes(pfSearchTerm))
+      : allPortfolio;
+    countEl.textContent = `${filtered.length} pelanggan`;
+    if (!filtered.length) {
+      el.innerHTML = `<div class="empty">${pfSearchTerm ? "Tidak ditemukan." : "Belum ada pelanggan tercatat."}</div>`;
+      return;
+    }
+    el.innerHTML = filtered.map(c => {
+      const d = daysAgo(c.last_visit_at);
+      const dc = daysClass(d);
+      const nw = Number(c.new_count ?? 0);
+      const ol = Number(c.old_count ?? 0);
+      return `<div class="acct-card">
+        <div class="acct-name">${esc(c.store_name)}</div>
+        <div class="acct-meta">${esc(c.category ?? "")} · ${esc(c.area ?? "")}</div>
+        <div class="acct-row2">
+          <span class="acct-days ${dc}">↻ ${daysLabel(d)}</span>
+          <span>
+            ${nw ? `<span class="acct-badge acct-badge-new">${nw} baru</span> ` : ""}
+            ${ol ? `<span class="acct-badge acct-badge-old">${ol} lama</span>` : ""}
+          </span>
+        </div>
+      </div>`;
+    }).join("");
+  }
+
+  async function loadPortfolio(repId) {
+    $("portfolio-section").style.display = "";
+    $("portfolio-list").innerHTML = '<div class="spinner">Memuat portfolio…</div>';
+    const res = await fetch(`/api/mirae/customers/portfolio?rep_id=${repId}`)
+      .then(r => r.json()).catch(() => ({ customers: [] }));
+    allPortfolio = res.customers ?? [];
+    renderPortfolio();
+  }
+
+  $("pf-search").addEventListener("input", e => {
+    pfSearchTerm = e.target.value.toLowerCase().trim();
+    renderPortfolio();
+  });
+
   function tickSync() {
     if (!lastSyncTime) return;
     const s = Math.floor((Date.now() - lastSyncTime) / 1000);
@@ -356,12 +455,19 @@
       sel.value = saved;
       currentRepId = Number(saved);
       load();
+      loadPortfolio(currentRepId);
     }
 
     sel.addEventListener("change", () => {
       currentRepId = sel.value ? Number(sel.value) : null;
       firstLoad = true;
-      if (currentRepId) localStorage.setItem("mirae_myday_rep_id", String(currentRepId));
+      if (currentRepId) {
+        localStorage.setItem("mirae_myday_rep_id", String(currentRepId));
+        loadPortfolio(currentRepId);
+      } else {
+        $("portfolio-section").style.display = "none";
+        allPortfolio = [];
+      }
       load();
     });
 
