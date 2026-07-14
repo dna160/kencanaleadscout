@@ -1,0 +1,537 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>SY Hunter · Handler Cockpit</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --ink: #14213d; --ink-2: #1b2949; --paper: #f5f2ec; --muted: #8a96ad; --line: rgba(255,255,255,.09);
+      --gold: #bb9457; --green: #2c6e49;
+      --accent: #ea580c; --accent-d: #c2410c; --accent-bg: rgba(234,88,12,.13);
+      --p1: #ef4444; --p2: #f59e0b; --p3: #6366f1;
+      --display: "Space Grotesk","Inter",system-ui,sans-serif;
+      --sans: "Inter",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; overflow: hidden; }
+    body {
+      font-family: var(--sans); color: var(--paper);
+      background: radial-gradient(1200px 600px at 90% -10%, rgba(234,88,12,.12), transparent 60%), var(--ink);
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrap { max-width: 920px; margin: 0 auto; height: 100%; display: flex; flex-direction: column; }
+    .top-bar { flex-shrink: 0; padding: 18px 20px 0; border-bottom: 1px solid var(--line); }
+    .cards-wrap { flex: 1; overflow-y: auto; padding: 14px 20px 60px; }
+
+    /* header */
+    header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+    .brand { display: flex; align-items: center; gap: 11px; }
+    .mark { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center;
+      background: linear-gradient(135deg, var(--accent), var(--accent-d));
+      font-family: var(--display); font-weight: 700; color: #fff; font-size: 18px; }
+    .brand b { font-family: var(--display); font-size: 16px; }
+    .brand span { color: var(--muted); font-size: 12px; display: block; }
+    .hdr-right { display: flex; align-items: center; gap: 10px; }
+    .sync-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px rgba(44,110,73,.25); }
+    .sync-txt { color: var(--muted); font-size: 12.5px; }
+    .btn-sm { border: 1px solid var(--line); background: rgba(255,255,255,.05); color: var(--paper);
+      border-radius: 9px; padding: 6px 12px; cursor: pointer; font-weight: 600; font-size: 12.5px; }
+    .btn-sm:hover { background: rgba(255,255,255,.09); }
+    a.nav-link { color: var(--muted); text-decoration: none; font-size: 13px; }
+    a.nav-link:hover { color: var(--paper); }
+
+    /* stats strip */
+    .strip { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+    .stat { border: 1px solid var(--line); border-radius: 12px; padding: 11px 14px;
+      background: rgba(255,255,255,.04); min-width: 80px; }
+    .stat .l { color: var(--muted); font-size: 10.5px; font-weight: 600; letter-spacing: .5px; text-transform: uppercase; }
+    .stat .v { font-family: var(--display); font-size: 24px; font-weight: 700; margin-top: 2px; font-variant-numeric: tabular-nums; }
+    .stat.hot .v { color: var(--accent); }
+    .stat.good .v { color: #9fe0b9; }
+
+    /* filters */
+    .filter-row { display: flex; gap: 7px; margin-bottom: 12px; flex-wrap: wrap; align-items: center; }
+    .filter-group { display: flex; gap: 5px; }
+    .filter-sep { width: 1px; background: var(--line); margin: 0 4px; align-self: stretch; }
+    .filter { border: 1px solid var(--line); background: rgba(255,255,255,.04); color: var(--muted);
+      border-radius: 99px; padding: 6px 13px; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+    .filter:hover { color: var(--paper); border-color: rgba(255,255,255,.2); }
+    .filter.on { border-color: var(--accent); color: var(--accent); background: var(--accent-bg); }
+    .search-box {
+      background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12);
+      border-radius: 99px; padding: 6px 14px; color: var(--paper); font-family: var(--sans);
+      font-size: 12.5px; outline: none; width: 180px;
+    }
+    .search-box:focus { border-color: var(--accent); }
+    .search-box::placeholder { color: var(--muted); }
+
+    /* section headers */
+    .section { margin-bottom: 6px; }
+    .section-hdr {
+      display: flex; align-items: center; gap: 10px; padding: 8px 2px;
+      border-bottom: 1px solid var(--line); margin-bottom: 10px; cursor: pointer; user-select: none;
+    }
+    .section-title { font-family: var(--display); font-weight: 700; font-size: 11px; letter-spacing: .8px; text-transform: uppercase; }
+    .section-cnt { border-radius: 99px; padding: 2px 8px; font-size: 11px; font-weight: 700; }
+    .section-toggle { margin-left: auto; color: var(--muted); font-size: 11px; }
+    .section.collapsed .section-cards { display: none; }
+    .section-cards { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; }
+
+    /* priority colours */
+    .ph-P1 .section-title { color: #fca5a5; }
+    .ph-P1 .section-cnt { background: rgba(239,68,68,.2); color: #fca5a5; }
+    .ph-P2 .section-title { color: #fcd34d; }
+    .ph-P2 .section-cnt { background: rgba(245,158,11,.2); color: #fcd34d; }
+    .ph-P3 .section-title { color: #a5b4fc; }
+    .ph-P3 .section-cnt { background: rgba(99,102,241,.2); color: #a5b4fc; }
+
+    /* stage section colours */
+    .sh-called .section-title      { color: var(--accent); }
+    .sh-called .section-cnt        { background: var(--accent-bg); color: var(--accent); }
+    .sh-interested .section-title  { color: #fcd34d; }
+    .sh-interested .section-cnt    { background: rgba(245,158,11,.18); color: #fcd34d; }
+    .sh-meeting_set .section-title { color: #c4b5fd; }
+    .sh-meeting_set .section-cnt   { background: rgba(139,92,246,.18); color: #c4b5fd; }
+    .sh-won .section-title         { color: #86efac; }
+    .sh-won .section-cnt           { background: rgba(44,110,73,.22); color: #86efac; }
+    .sh-dead .section-title        { color: #fca5a5; }
+    .sh-dead .section-cnt          { background: rgba(239,68,68,.14); color: #fca5a5; }
+
+    /* cards */
+    .card {
+      border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px;
+      background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
+    }
+    .card.stage-called      { border-color: rgba(234,88,12,.35); }
+    .card.stage-interested  { border-color: rgba(245,158,11,.35); }
+    .card.stage-meeting_set { border-color: rgba(139,92,246,.45); }
+    .card.stage-won         { border-color: rgba(44,110,73,.5); background: linear-gradient(180deg, rgba(44,110,73,.1), rgba(44,110,73,.03)); }
+    .card.stage-dead        { opacity: .5; }
+
+    .card-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+    .card-co { font-family: var(--display); font-weight: 700; font-size: 16px; }
+    .card-sub { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+    .card-project { font-size: 12px; color: #b8c4d8; margin-top: 5px; line-height: 1.4; }
+
+    .badges { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 8px; }
+    .badge { display: inline-block; border-radius: 99px; padding: 2px 8px; font-size: 10.5px; font-weight: 700; }
+    .badge.P1 { background: rgba(239,68,68,.18); color: #fca5a5; }
+    .badge.P2 { background: rgba(245,158,11,.18); color: #fcd34d; }
+    .badge.P3 { background: rgba(99,102,241,.18); color: #a5b4fc; }
+    .badge.A  { background: rgba(234,88,12,.18); color: var(--accent); }
+    .badge.B  { background: rgba(255,255,255,.08); color: #c7cfde; }
+    .badge.C  { background: rgba(255,255,255,.05); color: var(--muted); }
+    .badge.HOT  { background: rgba(239,68,68,.16); color: #fca5a5; }
+    .badge.WARM { background: rgba(245,158,11,.14); color: #fcd34d; }
+    .badge.COLD { background: rgba(99,102,241,.14); color: #a5b4fc; }
+    .badge.captive { background: rgba(139,92,246,.18); color: #c4b5fd; }
+    .badge.stage { background: rgba(255,255,255,.07); color: var(--muted); }
+    .badge.stage.called      { background: var(--accent-bg); color: var(--accent); }
+    .badge.stage.interested  { background: rgba(245,158,11,.16); color: #fcd34d; }
+    .badge.stage.meeting_set { background: rgba(139,92,246,.18); color: #c4b5fd; }
+    .badge.stage.won         { background: rgba(44,110,73,.22); color: #86efac; }
+    .badge.stage.dead        { background: rgba(239,68,68,.14); color: #fca5a5; }
+
+    .card-phone { margin-top: 8px; font-size: 12.5px; color: #b8c4d8; }
+    .card-phone a { color: inherit; text-decoration: none; }
+    .card-phone a:hover { color: var(--paper); text-decoration: underline; }
+
+    .card-meeting-info { margin-top: 7px; font-size: 12.5px; color: #c4b5fd; font-weight: 600; }
+
+    .card-row { display: flex; gap: 7px; margin-top: 11px; flex-wrap: wrap; }
+    .btn { border: none; cursor: pointer; border-radius: 10px; padding: 8px 13px; font-weight: 700; font-size: 12.5px; font-family: var(--sans); }
+    .btn.call    { background: var(--accent-bg); color: var(--accent); border: 1px solid rgba(234,88,12,.5); }
+    .btn.interest{ background: rgba(245,158,11,.16); color: #fcd34d; border: 1px solid rgba(245,158,11,.5); }
+    .btn.meet    { background: rgba(139,92,246,.16); color: #c4b5fd; border: 1px solid rgba(139,92,246,.5); }
+    .btn.won     { background: rgba(44,110,73,.22); color: #86efac; border: 1px solid rgba(44,110,73,.5); }
+    .btn.dead    { background: rgba(239,68,68,.12); color: #fca5a5; border: 1px solid rgba(239,68,68,.4); }
+    .btn.undo    { background: rgba(255,255,255,.05); color: var(--muted); border: 1px solid var(--line); font-size: 12px; padding: 8px 11px; }
+    .btn:disabled { opacity: .3; cursor: not-allowed; }
+
+    .meeting-row { display: none; gap: 8px; margin-top: 9px; align-items: center; flex-wrap: wrap; }
+    .meeting-row.show { display: flex; }
+    .meeting-row input[type="datetime-local"] {
+      background: rgba(255,255,255,.05); border: 1px solid var(--line); color: var(--paper);
+      border-radius: 9px; padding: 7px 10px; font-family: var(--sans); font-size: 12.5px;
+    }
+    .note-ta {
+      width: 100%; margin-top: 10px; background: rgba(255,255,255,.04); border: 1px solid var(--line);
+      border-radius: 9px; padding: 8px 10px; color: var(--paper); font-family: var(--sans);
+      font-size: 12.5px; resize: vertical; min-height: 32px;
+    }
+    .note-ta::placeholder { color: #5e6a82; }
+
+    .empty { color: var(--muted); font-size: 13px; text-align: center; padding: 44px 0; }
+    .spinner { color: var(--muted); font-size: 13px; text-align: center; padding: 44px 0; }
+
+    .banner { display: none; border: 1px solid rgba(234,88,12,.5); background: rgba(234,88,12,.12); color: var(--accent);
+      border-radius: 11px; padding: 10px 14px; margin-bottom: 12px; font-weight: 600; font-size: 13px; }
+    .banner.show { display: block; }
+
+    .load-more { display: block; text-align: center; padding: 14px;
+      color: var(--muted); font-size: 13px; cursor: pointer; }
+    .load-more:hover { color: var(--paper); }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top-bar">
+    <header>
+      <div class="brand">
+        <div class="mark">🎯</div>
+        <div><b>SY Hunter · Handler Cockpit</b><span>Kencana SY — factory &amp; warehouse pipeline</span></div>
+      </div>
+      <div class="hdr-right">
+        <span class="sync-dot"></span>
+        <span class="sync-txt" id="sync-txt">loading…</span>
+        <button class="btn-sm" onclick="load()">↻ Refresh</button>
+        <a class="nav-link" href="/sy-champion">Champion ↗</a>
+        <a class="nav-link" href="/">Home</a>
+      </div>
+    </header>
+
+    <div class="banner" id="banner"></div>
+
+    <div class="strip">
+      <div class="stat hot"><div class="l">P1 Fresh</div><div class="v" id="s-p1f">—</div></div>
+      <div class="stat"><div class="l">P1 Called</div><div class="v" id="s-p1c">—</div></div>
+      <div class="stat"><div class="l">Interested</div><div class="v" id="s-int">—</div></div>
+      <div class="stat"><div class="l">Meetings</div><div class="v" id="s-meet">—</div></div>
+      <div class="stat good"><div class="l">Won</div><div class="v" id="s-won">—</div></div>
+      <div class="stat"><div class="l">Total</div><div class="v" id="s-total">—</div></div>
+    </div>
+
+    <div class="filter-row">
+      <div class="filter-group" id="fg-priority">
+        <div class="filter on" data-k="priority" data-v="">All</div>
+        <div class="filter" data-k="priority" data-v="P1">P1</div>
+        <div class="filter" data-k="priority" data-v="P2">P2</div>
+        <div class="filter" data-k="priority" data-v="P3">P3</div>
+      </div>
+      <div class="filter-sep"></div>
+      <div class="filter-group" id="fg-band">
+        <div class="filter on" data-k="band" data-v="">A–C</div>
+        <div class="filter" data-k="band" data-v="A">Band A</div>
+        <div class="filter" data-k="band" data-v="B">Band B</div>
+        <div class="filter" data-k="band" data-v="C">Band C</div>
+      </div>
+      <div class="filter-sep"></div>
+      <div class="filter-group" id="fg-stage">
+        <div class="filter on" data-k="stage" data-v="">All stages</div>
+        <div class="filter" data-k="stage" data-v="fresh">Fresh</div>
+        <div class="filter" data-k="stage" data-v="called">Called</div>
+        <div class="filter" data-k="stage" data-v="interested">Interested</div>
+        <div class="filter" data-k="stage" data-v="meeting_set">Meeting</div>
+        <div class="filter" data-k="stage" data-v="won">Won</div>
+        <div class="filter" data-k="stage" data-v="dead">Dead</div>
+      </div>
+      <div class="filter-sep"></div>
+      <input class="search-box" id="search" type="search" placeholder="Search company / project…" />
+    </div>
+  </div>
+
+  <div class="cards-wrap">
+    <div id="cards-root"><div class="spinner">Loading pipeline…</div></div>
+  </div>
+</div>
+
+<script>
+(() => {
+"use strict";
+const $ = id => document.getElementById(id);
+const POLL_MS = 12000;
+const PAGE_SIZE = 100;
+
+let contacts   = [];
+let localState = {}; // contactId → { stage, note, meeting_at }
+let filters    = { priority: "", band: "", stage: "", search: "" };
+let offset     = 0;
+let total      = 0;
+let firstLoad  = true;
+
+const PREV_STAGE = { called: "fresh", interested: "called", meeting_set: "interested", won: "meeting_set" };
+const STAGE_LABEL = { fresh: "Fresh", called: "Called", interested: "Interested", meeting_set: "Meeting set", won: "Won", dead: "Dead" };
+const SECTION_LABEL = { fresh: "Fresh Leads", called: "Called — No Response Yet", interested: "Interested", meeting_set: "Meeting Set", won: "Won 🎉", dead: "Dead" };
+const SECTION_ORDER = ["fresh", "called", "interested", "meeting_set", "won", "dead"];
+
+const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"})[c]);
+const timingBand = t => {
+  if (!t) return "";
+  if (t.startsWith("HOT"))  return "HOT";
+  if (t.startsWith("WARM")) return "WARM";
+  return "COLD";
+};
+
+function stageOf(c) {
+  return (localState[c.id]?.stage ?? c.stage) || "fresh";
+}
+function noteOf(c) {
+  return localState[c.id]?.note ?? c.note ?? "";
+}
+function meetingOf(c) {
+  return localState[c.id]?.meeting_at ?? c.meeting_at;
+}
+
+function buildUrl() {
+  const p = new URLSearchParams();
+  if (filters.priority) p.set("priority", filters.priority);
+  if (filters.band)     p.set("band",     filters.band);
+  if (filters.stage)    p.set("stage",    filters.stage);
+  if (filters.search)   p.set("search",   filters.search);
+  p.set("limit",  String(PAGE_SIZE));
+  p.set("offset", String(offset));
+  return `/api/sy/contacts?${p}`;
+}
+
+async function load(reset = true) {
+  if (reset) { offset = 0; contacts = []; }
+  let data;
+  try {
+    const res = await fetch(buildUrl());
+    if (!res.ok) throw new Error();
+    data = await res.json();
+  } catch {
+    $("sync-txt").textContent = "offline — retrying";
+    return;
+  }
+  if (reset) contacts = data.contacts;
+  else contacts = [...contacts, ...data.contacts];
+  total = data.total;
+  updateStats();
+  render();
+  $("sync-txt").textContent = "synced just now";
+  firstLoad = false;
+}
+
+async function loadStats() {
+  try {
+    const res = await fetch("/api/sy/champion");
+    const d   = await res.json();
+    const sc  = {};
+    (d.stageCounts ?? []).forEach(r => { sc[r.stage] = Number(r.cnt); });
+
+    const p1rows = (d.byPriority ?? []).filter(r => r.priority === "P1");
+    const p1sc   = {};
+    p1rows.forEach(r => { p1sc[r.stage] = Number(r.cnt); });
+
+    $("s-p1f").textContent  = String(p1sc["fresh"] ?? "—");
+    $("s-p1c").textContent  = String(p1sc["called"] ?? 0);
+    $("s-int").textContent  = String(sc["interested"] ?? 0);
+    $("s-meet").textContent = String(sc["meeting_set"] ?? 0);
+    $("s-won").textContent  = String(sc["won"] ?? 0);
+    const tot = Object.values(sc).reduce((a,b) => a + Number(b), 0);
+    $("s-total").textContent = String(tot || "—");
+  } catch {/* non-fatal */}
+}
+
+function updateStats() { loadStats(); }
+
+function groupByStage(list) {
+  const groups = {};
+  for (const c of list) {
+    const s = stageOf(c);
+    if (!groups[s]) groups[s] = [];
+    groups[s].push(c);
+  }
+  return groups;
+}
+
+let collapsed = new Set(["won", "dead"]);
+
+function render() {
+  const root = $("cards-root");
+  if (!contacts.length) {
+    root.innerHTML = '<div class="empty">No contacts match the current filters.</div>';
+    return;
+  }
+
+  const groups = groupByStage(contacts);
+  let html = "";
+
+  for (const s of SECTION_ORDER) {
+    const items = groups[s];
+    if (!items?.length) continue;
+    const isCollapsed = collapsed.has(s);
+    html += `
+      <div class="section ${isCollapsed ? "collapsed" : ""}" id="sec-${s}">
+        <div class="section-hdr sh-${s}" onclick="toggleSection('${s}')">
+          <span class="section-title">${SECTION_LABEL[s] ?? s}</span>
+          <span class="section-cnt">${items.length}</span>
+          <span class="section-toggle">${isCollapsed ? "▸" : "▾"}</span>
+        </div>
+        <div class="section-cards">
+          ${items.map(renderCard).join("")}
+        </div>
+      </div>`;
+  }
+
+  if (contacts.length < total) {
+    html += `<div class="load-more" onclick="loadMore()">Load more (${total - contacts.length} remaining) ↓</div>`;
+  }
+
+  root.innerHTML = html;
+}
+
+function renderCard(c) {
+  const stage   = stageOf(c);
+  const note    = noteOf(c);
+  const meeting = meetingOf(c);
+
+  const tb    = timingBand(c.timing);
+  const isCaptive = c.source === "captive";
+  const canCall  = stage === "fresh";
+  const canInt   = stage === "called";
+  const canMeet  = stage === "interested";
+  const canWon   = stage === "meeting_set";
+  const canDead  = stage !== "won" && stage !== "dead";
+  const canUndo  = stage in PREV_STAGE;
+
+  const meetingFmt = meeting
+    ? new Date(meeting).toLocaleString("en-GB", { weekday:"short", day:"numeric", month:"short", hour:"2-digit", minute:"2-digit" })
+    : "";
+
+  return `
+  <div class="card stage-${stage}" id="card-${c.id}" data-id="${c.id}">
+    <div class="card-top">
+      <div style="flex:1;min-width:0">
+        <div class="card-co">${esc(c.company_name || "Unknown Company")}</div>
+        <div class="card-sub">${esc(c.role || "—")}${c.contact_name ? " · " + esc(c.contact_name) : ""}${c.position ? " · " + esc(c.position) : ""}</div>
+        ${c.project_name ? `<div class="card-project">📌 ${esc(c.project_name)}${c.town ? " · " + esc(c.town) : ""}${c.province ? ", " + esc(c.province) : ""}</div>` : ""}
+      </div>
+    </div>
+    <div class="badges">
+      <span class="badge ${esc(c.priority)}">${esc(c.priority)}</span>
+      <span class="badge ${esc(c.band || "")}">${esc(c.band || "—")}</span>
+      ${tb ? `<span class="badge ${tb}">${esc(c.timing)}</span>` : ""}
+      ${isCaptive ? `<span class="badge captive">CAPTIVE</span>` : ""}
+      <span class="badge stage ${stage}">${STAGE_LABEL[stage]}</span>
+    </div>
+    ${c.phone ? `<div class="card-phone">📞 <a href="tel:${esc(c.phone)}">${esc(c.phone)}</a>${c.email ? " · " + esc(c.email) : ""}</div>` : ""}
+    ${meeting ? `<div class="card-meeting-info">📅 Meeting: ${meetingFmt}</div>` : ""}
+    <div class="card-row">
+      <button class="btn call"     onclick="advance(${c.id},'called')"       ${canCall  ? "" : "disabled"}>📞 Called</button>
+      <button class="btn interest" onclick="advance(${c.id},'interested')"   ${canInt   ? "" : "disabled"}>💡 Interested</button>
+      <button class="btn meet"     onclick="showMeeting(${c.id})"            ${canMeet  ? "" : "disabled"}>📅 Set meeting</button>
+      <button class="btn won"      onclick="advance(${c.id},'won')"          ${canWon   ? "" : "disabled"}>✅ Won</button>
+      <button class="btn dead"     onclick="advance(${c.id},'dead')"         ${canDead  ? "" : "disabled"}>✗ Dead</button>
+      ${canUndo ? `<button class="btn undo" onclick="revert(${c.id})">↩ Undo</button>` : ""}
+    </div>
+    <div class="meeting-row" id="meeting-row-${c.id}">
+      <input type="datetime-local" id="meeting-dt-${c.id}" />
+      <button class="btn call" onclick="confirmMeeting(${c.id})">Confirm</button>
+    </div>
+    <textarea class="note-ta" placeholder="Notes…" data-id="${c.id}" onchange="saveNote(${c.id}, this.value)">${esc(note)}</textarea>
+  </div>`;
+}
+
+window.toggleSection = function(s) {
+  if (collapsed.has(s)) collapsed.delete(s);
+  else collapsed.add(s);
+  render();
+};
+
+window.advance = async function(id, stage) {
+  localState[id] = { ...localState[id], stage };
+  reRenderCard(id);
+  loadStats();
+  try {
+    await fetch(`/api/sy/pipeline/${id}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stage }),
+    });
+  } catch {/* non-fatal — next load will correct */}
+};
+
+window.revert = async function(id) {
+  const cur = stageOf(contacts.find(c => c.id == id) ?? {});
+  const prev = PREV_STAGE[cur];
+  if (!prev) return;
+  localState[id] = { ...localState[id], stage: prev };
+  reRenderCard(id);
+  loadStats();
+  try {
+    await fetch(`/api/sy/pipeline/${id}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stage: prev }),
+    });
+  } catch {/* non-fatal */}
+};
+
+window.showMeeting = function(id) {
+  const row = $(`meeting-row-${id}`);
+  if (row) row.classList.toggle("show");
+};
+
+window.confirmMeeting = async function(id) {
+  const dt = $(`meeting-dt-${id}`)?.value;
+  if (!dt) return;
+  const meetingIso = new Date(dt).toISOString();
+  localState[id] = { ...localState[id], stage: "meeting_set", meeting_at: meetingIso };
+  reRenderCard(id);
+  loadStats();
+  const row = $(`meeting-row-${id}`);
+  if (row) row.classList.remove("show");
+  try {
+    await fetch(`/api/sy/pipeline/${id}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stage: "meeting_set", meeting_at: meetingIso }),
+    });
+  } catch {/* non-fatal */}
+};
+
+window.saveNote = async function(id, note) {
+  localState[id] = { ...localState[id], note };
+  try {
+    await fetch(`/api/sy/pipeline/${id}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ note }),
+    });
+  } catch {/* non-fatal */}
+};
+
+function reRenderCard(id) {
+  const c = contacts.find(x => x.id == id);
+  if (!c) { render(); return; }
+  const el = $(`card-${id}`);
+  if (!el) { render(); return; }
+  const tmp = document.createElement("div");
+  tmp.innerHTML = renderCard(c);
+  el.replaceWith(tmp.firstElementChild);
+}
+
+window.loadMore = function() {
+  offset += PAGE_SIZE;
+  load(false);
+};
+
+// Filters
+document.querySelectorAll(".filter").forEach(el => {
+  el.addEventListener("click", () => {
+    const k = el.dataset.k;
+    const v = el.dataset.v;
+    // Clear siblings
+    el.closest(".filter-group").querySelectorAll(".filter").forEach(f => f.classList.remove("on"));
+    el.classList.add("on");
+    filters[k] = v;
+    load();
+  });
+});
+
+$("search").addEventListener("input", e => {
+  filters.search = e.target.value.trim();
+  load();
+});
+
+async function poll() { await Promise.all([load(), loadStats()]); }
+setInterval(poll, POLL_MS);
+
+load();
+loadStats();
+})();
+</script>
+</body>
+</html>

@@ -35,6 +35,7 @@ import { escalationsRoutes } from "./routes/escalations.js";
 import { miraeRoutes } from "./routes/mirae.js";
 import { projectRoutes } from "./routes/project.js";
 import { colorGatewayRoutes } from "./routes/color-gateway.js";
+import { syHunterRoutes } from "./routes/sy-hunter.js";
 
 const PUBLIC_DIR = fileURLToPath(new URL("../public", import.meta.url));
 
@@ -98,6 +99,8 @@ async function main(): Promise<void> {
   app.get("/project-myday", (_req, reply) => reply.header("Cache-Control", NC).sendFile("project-myday.html"));
   app.get("/project-insights", (_req, reply) => reply.header("Cache-Control", NC).sendFile("project-insights.html"));
   app.get("/color-gateway", (_req, reply) => reply.header("Cache-Control", NC).sendFile("color-gateway.html"));
+  app.get("/sy-hunter",    (_req, reply) => reply.header("Cache-Control", NC).sendFile("sy-hunter.html"));
+  app.get("/sy-champion",  (_req, reply) => reply.header("Cache-Control", NC).sendFile("sy-champion.html"));
 
   // [A] Scraper APIs.
   await app.register(enrichRoutes);
@@ -128,6 +131,9 @@ async function main(): Promise<void> {
 
   // [E] Color Gateway APIs.
   await app.register(colorGatewayRoutes);
+
+  // [SY] SY Hunter — BCI factory/warehouse pipeline.
+  await app.register(syHunterRoutes);
 
   await bootDatabase(app);
   startCadenceEngine();

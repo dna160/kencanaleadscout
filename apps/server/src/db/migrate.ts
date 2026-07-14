@@ -715,6 +715,75 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
   } catch (projectErr) {
     console.error("[migrate] Project module migration failed (non-fatal):", projectErr);
   }
+
+  // ── SY Hunter Module — BCI factory/warehouse pipeline tracker ─────────────
+  try {
+    await db`
+      create table if not exists sy_projects (
+        id            bigserial primary key,
+        rank          int,
+        score         int,
+        band          text,
+        project_name  text not null,
+        timing        text,
+        fit           text,
+        floor_area_m2 numeric,
+        value_b_idr   numeric,
+        province      text,
+        town          text,
+        stage         text,
+        status        text,
+        start_date    text,
+        project_url   text,
+        segment       text,
+        is_captive    boolean not null default false,
+        active        boolean not null default true,
+        created_at    timestamptz not null default now()
+      )
+    `;
+    await db`create unique index if not exists sy_projects_name_idx on sy_projects (lower(trim(project_name)))`;
+
+    await db`
+      create table if not exists sy_contacts (
+        id           bigserial primary key,
+        project_id   bigint references sy_projects(id),
+        priority     text not null,
+        band         text,
+        score        int,
+        company_name text,
+        role         text,
+        contact_name text,
+        position     text,
+        phone        text,
+        email        text,
+        project_name text,
+        province     text,
+        town         text,
+        timing       text,
+        source       text not null default 'hunter',
+        active       boolean not null default true,
+        created_at   timestamptz not null default now()
+      )
+    `;
+    await db`create index if not exists sy_contacts_priority_idx on sy_contacts (priority, band, score desc nulls last)`;
+    await db`create index if not exists sy_contacts_project_idx  on sy_contacts (project_id)`;
+
+    await db`
+      create table if not exists sy_pipeline (
+        id            bigserial primary key,
+        contact_id    bigint not null unique references sy_contacts(id),
+        stage         text not null default 'fresh',
+        note          text,
+        meeting_at    timestamptz,
+        called_at     timestamptz,
+        interested_at timestamptz,
+        updated_at    timestamptz not null default now()
+      )
+    `;
+    await db`create index if not exists sy_pipeline_stage_idx on sy_pipeline (stage)`;
+  } catch (syErr) {
+    console.error("[migrate] SY Hunter migration failed (non-fatal):", syErr);
+  }
 }
 
 // Allow `tsx src/db/migrate.ts` as a one-off.

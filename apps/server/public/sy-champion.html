@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>SY Hunter · Champion Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --ink: #14213d; --ink-2: #1b2949; --paper: #f5f2ec; --muted: #8a96ad; --line: rgba(255,255,255,.09);
+      --gold: #bb9457; --green: #2c6e49;
+      --accent: #ea580c; --accent-d: #c2410c; --accent-bg: rgba(234,88,12,.13);
+      --p1: #ef4444; --p2: #f59e0b; --p3: #6366f1;
+      --display: "Space Grotesk","Inter",system-ui,sans-serif;
+      --sans: "Inter",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      font-family: var(--sans); color: var(--paper);
+      background: radial-gradient(1200px 600px at 90% -10%, rgba(234,88,12,.12), transparent 60%), var(--ink);
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 20px 20px 60px; }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 24px; flex-wrap: wrap; }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .mark { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center;
+      background: linear-gradient(135deg, var(--accent), var(--accent-d));
+      font-family: var(--display); font-weight: 700; color: #fff; font-size: 18px; }
+    .brand b { font-family: var(--display); font-size: 16px; }
+    .brand span { color: var(--muted); font-size: 12px; display: block; }
+    .hdr-right { display: flex; align-items: center; gap: 10px; }
+    .sync-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px rgba(44,110,73,.25); }
+    .sync-txt { color: var(--muted); font-size: 12.5px; }
+    .btn-sm { border: 1px solid var(--line); background: rgba(255,255,255,.05); color: var(--paper);
+      border-radius: 9px; padding: 6px 12px; cursor: pointer; font-weight: 600; font-size: 12.5px; }
+    .btn-sm:hover { background: rgba(255,255,255,.09); }
+    a.nav-link { color: var(--muted); text-decoration: none; font-size: 13px; }
+    a.nav-link:hover { color: var(--paper); }
+
+    /* KPI grid */
+    .kpis { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 16px; }
+    @media (max-width: 900px) { .kpis { grid-template-columns: repeat(3, 1fr); } }
+    @media (max-width: 540px) { .kpis { grid-template-columns: repeat(2, 1fr); } }
+    .kpi { border: 1px solid var(--line); border-radius: 16px; padding: 16px;
+      background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02)); }
+    .kpi .l { color: var(--muted); font-size: 10.5px; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; }
+    .kpi .v { font-family: var(--display); font-size: 34px; font-weight: 700; line-height: 1.1; margin-top: 6px; font-variant-numeric: tabular-nums; }
+    .kpi .s { color: var(--muted); font-size: 12px; margin-top: 3px; }
+    .kpi.hero { background: linear-gradient(135deg, rgba(234,88,12,.2), rgba(234,88,12,.06)); border-color: rgba(234,88,12,.4); }
+    .kpi.hero .v { color: var(--accent); font-size: 44px; }
+    .kpi.green { background: linear-gradient(135deg, rgba(44,110,73,.18), rgba(44,110,73,.04)); border-color: rgba(44,110,73,.4); }
+    .kpi.green .v { color: #86efac; }
+
+    /* Progress bars */
+    .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+    @media (max-width: 700px) { .cols { grid-template-columns: 1fr; } }
+    .panel { border: 1px solid var(--line); border-radius: 16px; padding: 18px;
+      background: linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.015)); }
+    .panel h3 { font-family: var(--display); font-size: 15px; margin: 0 0 3px; }
+    .panel .cap { color: var(--muted); font-size: 12px; margin: 0 0 14px; }
+
+    .bars { display: flex; flex-direction: column; gap: 12px; }
+    .barrow .top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 5px; }
+    .barrow .nm { font-weight: 600; font-size: 13.5px; }
+    .barrow .rt { font-family: var(--display); font-size: 13.5px; font-variant-numeric: tabular-nums; }
+    .barrow .track { height: 10px; border-radius: 99px; background: rgba(255,255,255,.07); overflow: hidden; display: flex; }
+    .barrow .track div { height: 100%; transition: width .6s cubic-bezier(.2,.8,.2,1); }
+    .barrow .sub { color: var(--muted); font-size: 11px; margin-top: 4px; font-variant-numeric: tabular-nums; }
+    .seg-called      { background: var(--accent); }
+    .seg-interested  { background: #f59e0b; }
+    .seg-meeting_set { background: #8b5cf6; }
+    .seg-won         { background: #22c55e; }
+    .seg-dead        { background: #374151; }
+
+    /* Priority cards */
+    .pri-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 14px; }
+    @media (max-width: 600px) { .pri-grid { grid-template-columns: 1fr; } }
+    .pri-card { border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+    .pri-card.P1 { border-color: rgba(239,68,68,.4); background: rgba(239,68,68,.06); }
+    .pri-card.P2 { border-color: rgba(245,158,11,.4); background: rgba(245,158,11,.06); }
+    .pri-card.P3 { border-color: rgba(99,102,241,.4); background: rgba(99,102,241,.06); }
+    .pri-tag { display: inline-block; border-radius: 99px; padding: 3px 10px; font-family: var(--display);
+      font-weight: 700; font-size: 12px; margin-bottom: 10px; }
+    .P1 .pri-tag { background: rgba(239,68,68,.22); color: #fca5a5; }
+    .P2 .pri-tag { background: rgba(245,158,11,.22); color: #fcd34d; }
+    .P3 .pri-tag { background: rgba(99,102,241,.22); color: #a5b4fc; }
+    .pri-stat { display: flex; justify-content: space-between; font-size: 12.5px; margin-bottom: 4px; }
+    .pri-stat .lbl { color: var(--muted); }
+    .pri-stat .val { font-weight: 600; font-variant-numeric: tabular-nums; }
+
+    /* Activity feed */
+    .feed { display: flex; flex-direction: column; gap: 8px; max-height: 420px; overflow-y: auto; }
+    .feed-item { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px;
+      border: 1px solid var(--line); border-radius: 11px; background: rgba(255,255,255,.03); }
+    .feed-item.new { animation: pop 1.6s ease; }
+    @keyframes pop { 0% { background: rgba(234,88,12,.22); } 100% { background: rgba(255,255,255,.03); } }
+    .feed-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: 4px;
+      background: var(--muted); }
+    .feed-dot.called      { background: var(--accent); }
+    .feed-dot.interested  { background: #f59e0b; }
+    .feed-dot.meeting_set { background: #8b5cf6; }
+    .feed-dot.won         { background: #22c55e; }
+    .feed-dot.dead        { background: #374151; }
+    .feed-body { flex: 1; min-width: 0; }
+    .feed-co  { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .feed-proj { color: var(--muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .feed-right { text-align: right; flex-shrink: 0; }
+    .feed-stage { font-size: 11.5px; font-weight: 700; }
+    .feed-stage.called      { color: var(--accent); }
+    .feed-stage.interested  { color: #f59e0b; }
+    .feed-stage.meeting_set { color: #c4b5fd; }
+    .feed-stage.won         { color: #86efac; }
+    .feed-stage.dead        { color: #fca5a5; }
+    .feed-ago { color: var(--muted); font-size: 11px; margin-top: 2px; }
+
+    /* Top projects */
+    .proj-list { display: flex; flex-direction: column; gap: 8px; }
+    .proj-row { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+    .proj-nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .proj-cnt { font-family: var(--display); font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--accent); white-space: nowrap; }
+
+    .empty { color: var(--muted); font-size: 13px; text-align: center; padding: 28px 0; }
+    .spinner { color: var(--muted); font-size: 13px; text-align: center; padding: 28px 0; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <div class="mark">🏆</div>
+      <div><b>SY Hunter · Champion Dashboard</b><span>Kencana SY — factory &amp; warehouse pipeline</span></div>
+    </div>
+    <div class="hdr-right">
+      <span class="sync-dot"></span>
+      <span class="sync-txt" id="sync-txt">loading…</span>
+      <button class="btn-sm" onclick="load()">↻ Refresh</button>
+      <a class="nav-link" href="/sy-hunter">Handler ↗</a>
+      <a class="nav-link" href="/">Home</a>
+    </div>
+  </header>
+
+  <!-- KPIs -->
+  <div class="kpis">
+    <div class="kpi hero"><div class="l">Active Pipeline</div><div class="v" id="k-active">—</div><div class="s">contacts touched</div></div>
+    <div class="kpi"><div class="l">Called</div><div class="v" id="k-called">—</div><div class="s">no response yet</div></div>
+    <div class="kpi"><div class="l">Interested</div><div class="v" id="k-interested">—</div><div class="s">expressed interest</div></div>
+    <div class="kpi"><div class="l">Meetings</div><div class="v" id="k-meetings">—</div><div class="s">set</div></div>
+    <div class="kpi green"><div class="l">Won</div><div class="v" id="k-won">—</div><div class="s">spec confirmed</div></div>
+    <div class="kpi"><div class="l">Coverage</div><div class="v" id="k-coverage">—</div><div class="s">of total list</div></div>
+  </div>
+
+  <!-- Priority breakdown -->
+  <div class="pri-grid" id="pri-grid">
+    <div class="pri-card P1"><div class="pri-tag">P1 — Developer / EPC</div><div id="pg-P1"></div></div>
+    <div class="pri-card P2"><div class="pri-tag">P2 — Architect / Sub</div><div id="pg-P2"></div></div>
+    <div class="pri-card P3"><div class="pri-tag">P3 — M&amp;E / PM / QS</div><div id="pg-P3"></div></div>
+  </div>
+
+  <!-- Band progress + Activity feed -->
+  <div class="cols">
+    <div class="panel">
+      <h3>Progress by Band</h3>
+      <p class="cap">Called + higher as % of band total</p>
+      <div class="bars" id="band-bars"><div class="spinner">Loading…</div></div>
+    </div>
+    <div class="panel">
+      <h3>Recent Activity</h3>
+      <p class="cap">Latest pipeline moves</p>
+      <div class="feed" id="feed"><div class="spinner">Loading…</div></div>
+    </div>
+  </div>
+
+  <!-- Top active projects -->
+  <div class="panel" style="margin-top:14px">
+    <h3>Top Active Projects</h3>
+    <p class="cap">Projects with most contacts in progress</p>
+    <div class="proj-list" id="proj-list"><div class="spinner">Loading…</div></div>
+  </div>
+
+</div>
+
+<script>
+(() => {
+"use strict";
+const $ = id => document.getElementById(id);
+const POLL_MS = 8000;
+const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"})[c]);
+
+function timeAgo(iso) {
+  if (!iso) return "";
+  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60)  return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s/60)}m ago`;
+  if (s < 86400) return `${Math.floor(s/3600)}h ago`;
+  return `${Math.floor(s/86400)}d ago`;
+}
+
+const STAGE_LABEL = { fresh: "Fresh", called: "Called", interested: "Interested", meeting_set: "Meeting set", won: "Won", dead: "Dead" };
+const ACTIVE_STAGES = new Set(["called", "interested", "meeting_set", "won"]);
+
+let lastFeedIds = new Set();
+let firstLoad   = true;
+
+async function load() {
+  let d;
+  try {
+    const res = await fetch("/api/sy/champion");
+    if (!res.ok) throw new Error();
+    d = await res.json();
+  } catch {
+    $("sync-txt").textContent = "offline — retrying";
+    return;
+  }
+
+  const sc = {};
+  (d.stageCounts ?? []).forEach(r => { sc[r.stage] = Number(r.cnt); });
+  const total = Object.values(sc).reduce((a,b) => a + Number(b), 0);
+  const active = Object.entries(sc).filter(([k]) => ACTIVE_STAGES.has(k)).reduce((a,[,v])=>a+Number(v), 0);
+
+  $("k-active").textContent    = String(active);
+  $("k-called").textContent    = String(sc["called"]      ?? 0);
+  $("k-interested").textContent= String(sc["interested"]  ?? 0);
+  $("k-meetings").textContent  = String(sc["meeting_set"] ?? 0);
+  $("k-won").textContent       = String(sc["won"]         ?? 0);
+  const covered = total - (sc["fresh"] ?? 0);
+  $("k-coverage").textContent  = total > 0 ? Math.round(covered / total * 100) + "%" : "—";
+
+  // Priority cards
+  const byPri = {};
+  (d.byPriority ?? []).forEach(r => {
+    if (!byPri[r.priority]) byPri[r.priority] = {};
+    byPri[r.priority][r.stage] = Number(r.cnt);
+  });
+  for (const pri of ["P1","P2","P3"]) {
+    const m  = byPri[pri] ?? {};
+    const tot = Object.values(m).reduce((a,b)=>a+b,0);
+    const el = $(`pg-${pri}`);
+    if (!el) continue;
+    el.innerHTML = [
+      ["Fresh", m["fresh"]??0],
+      ["Called", m["called"]??0],
+      ["Interested", m["interested"]??0],
+      ["Meeting", m["meeting_set"]??0],
+      ["Won", m["won"]??0],
+    ].map(([lbl, val]) => `
+      <div class="pri-stat">
+        <span class="lbl">${lbl}</span>
+        <span class="val">${val} <span style="color:var(--muted);font-weight:400;font-size:11px">${tot>0?Math.round(val/tot*100)+"%" : ""}</span></span>
+      </div>`).join("");
+  }
+
+  // Band bars
+  const byBand = {};
+  (d.byBand ?? []).forEach(r => {
+    if (!byBand[r.band]) byBand[r.band] = {};
+    byBand[r.band][r.stage] = Number(r.cnt);
+  });
+  const bandEl = $("band-bars");
+  bandEl.innerHTML = ["A","B","C"].map(band => {
+    const m   = byBand[band] ?? {};
+    const tot = Object.values(m).reduce((a,b)=>a+b,0);
+    if (!tot) return "";
+    const pct = s => tot > 0 ? Math.round((m[s]??0)/tot*100) : 0;
+    const calledPct = pct("called"); const intPct = pct("interested");
+    const meetPct   = pct("meeting_set"); const wonPct = pct("won");
+    const deadPct   = pct("dead");
+    const totalActive = (m["called"]??0)+(m["interested"]??0)+(m["meeting_set"]??0)+(m["won"]??0);
+    return `
+      <div class="barrow">
+        <div class="top">
+          <span class="nm">Band ${band}</span>
+          <span class="rt">${totalActive} / ${tot} touched</span>
+        </div>
+        <div class="track">
+          <div class="seg-called"      style="width:${calledPct}%"></div>
+          <div class="seg-interested"  style="width:${intPct}%"></div>
+          <div class="seg-meeting_set" style="width:${meetPct}%"></div>
+          <div class="seg-won"         style="width:${wonPct}%"></div>
+          <div class="seg-dead"        style="width:${deadPct}%"></div>
+        </div>
+        <div class="sub">${pct("called")}% called · ${pct("interested")}% interested · ${pct("won")}% won</div>
+      </div>`;
+  }).join("");
+
+  // Activity feed
+  const feedEl = $("feed");
+  const activity = d.recentActivity ?? [];
+  if (!activity.length) {
+    feedEl.innerHTML = '<div class="empty">No activity yet.</div>';
+  } else {
+    const newIds = new Set(activity.map(r => `${r.company_name}-${r.stage}-${r.updated_at}`));
+    feedEl.innerHTML = activity.map(r => {
+      const key   = `${r.company_name}-${r.stage}-${r.updated_at}`;
+      const isNew = !firstLoad && !lastFeedIds.has(key);
+      return `
+        <div class="feed-item ${isNew ? "new" : ""}">
+          <div class="feed-dot ${esc(r.stage)}"></div>
+          <div class="feed-body">
+            <div class="feed-co">${esc(r.company_name || "—")}</div>
+            <div class="feed-proj">${esc(r.project_name || "—")} · ${esc(r.priority)}</div>
+          </div>
+          <div class="feed-right">
+            <div class="feed-stage ${esc(r.stage)}">${STAGE_LABEL[r.stage] ?? r.stage}</div>
+            <div class="feed-ago">${timeAgo(r.updated_at)}</div>
+          </div>
+        </div>`;
+    }).join("");
+    lastFeedIds = newIds;
+  }
+
+  // Top projects
+  const projEl = $("proj-list");
+  const projects = d.topProjects ?? [];
+  if (!projects.length) {
+    projEl.innerHTML = '<div class="empty">No active projects yet.</div>';
+  } else {
+    projEl.innerHTML = projects.map((p, i) => `
+      <div class="proj-row">
+        <span style="color:var(--muted);font-size:11.5px;width:18px;text-align:right;flex-shrink:0">${i+1}</span>
+        <span class="proj-nm">${esc(p.project_name)}</span>
+        <span class="proj-cnt">${p.active_contacts} active</span>
+        <span style="color:var(--muted);font-size:11.5px">${p.total_contacts} total</span>
+      </div>`).join("");
+  }
+
+  $("sync-txt").textContent = "synced just now";
+  firstLoad = false;
+}
+
+setInterval(load, POLL_MS);
+load();
+})();
+</script>
+</body>
+</html>
