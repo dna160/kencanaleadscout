@@ -378,11 +378,11 @@
 
       function wireCards() {
         document.querySelectorAll(".card").forEach((card) => {
-          const contactId = Number(card.dataset.id);
+          const contactId = card.dataset.id; // keep as string — postgres.js returns bigserial as string
 
           const waLink = card.querySelector('[data-action="open-wa"]');
           waLink.addEventListener("click", async () => {
-            const item = items.find((i) => i.contact_id === contactId);
+            const item = items.find((i) => String(i.contact_id) === contactId);
             if (item && item.stage === "fresh") {
               await advance(contactId, "messaged");
             }
@@ -413,8 +413,8 @@
 
           const note = card.querySelector('[data-action="note"]');
           note.addEventListener("change", () => {
-            const item = items.find((i) => i.contact_id === contactId);
-            advance(contactId, item.stage, undefined, note.value);
+            const item = items.find((i) => String(i.contact_id) === contactId);
+            if (item) advance(contactId, item.stage, undefined, note.value);
           });
         });
       }
