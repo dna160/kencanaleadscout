@@ -52,7 +52,7 @@
     }
     .btn-refresh:hover { background: rgba(255,255,255,.09); }
 
-    /* ── Summary chips ──────────────────────────────────────────────────── */
+    /* ── Summary chips ──────────────────────────────────────────────────────── */
     .summary-bar {
       display: flex; gap: 8px; padding: 16px 0 12px; flex-wrap: wrap;
       border-bottom: 1px solid var(--line);
@@ -75,7 +75,7 @@
     .chip-old   { background: rgba(62,155,79,.16); border-color: rgba(62,155,79,.35); color: #9fe0b9; }
     .chip-old .cnt { background: rgba(62,155,79,.22); }
 
-    /* ── Visit list ─────────────────────────────────────────────────────── */
+    /* ── Visit list ─────────────────────────────────────────────────────────── */
     .section { padding: 20px 0 0; }
     .section-header { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
     .section-title { font-family: var(--display); font-size: 15px; font-weight: 700; }
@@ -107,7 +107,18 @@
     .badge-old { display: inline-block; border-radius: 99px; padding: 1px 7px; font-size: 10.5px; font-weight: 700;
       background: rgba(62,155,79,.18); color: #9fe0b9; margin-left: 5px; }
 
-    /* ── WA expand panel ────────────────────────────────────────────────── */
+    /* ── Visit action buttons ─────────────────────────────────────────────── */
+    .vlog-actions { display: flex; gap: 6px; margin-top: 9px; }
+    .vlog-btn {
+      border: none; border-radius: 7px; padding: 5px 11px; font-size: 11.5px;
+      font-family: var(--sans); font-weight: 600; cursor: pointer; transition: background .15s;
+    }
+    .vlog-btn-edit { background: rgba(26,95,180,.18); color: var(--blue-light); }
+    .vlog-btn-edit:hover { background: rgba(26,95,180,.3); }
+    .vlog-btn-del  { background: rgba(239,68,68,.12); color: #fca5a5; }
+    .vlog-btn-del:hover { background: rgba(239,68,68,.22); }
+
+    /* ── WA expand panel ────────────────────────────────────────────────────── */
     .vlog-wa { display: none; margin-top: 10px; }
     .vlog-wa.open { display: block; }
     .vlog-wa-preview {
@@ -124,6 +135,50 @@
       font-size: 11px; font-weight: 600; letter-spacing: .4px;
     }
 
+    /* ── Modals ─────────────────────────────────────────────────────────────── */
+    .modal-backdrop {
+      position: fixed; inset: 0; background: rgba(0,0,0,.65);
+      z-index: 50; display: none; align-items: flex-end; justify-content: center;
+    }
+    .modal-backdrop.open { display: flex; }
+    .modal-sheet {
+      background: #1b2949; border-radius: 20px 20px 0 0; padding: 24px 20px 44px;
+      width: 100%; max-width: 600px; max-height: 88vh; overflow-y: auto;
+    }
+    .modal-title { font-family: var(--display); font-size: 16px; font-weight: 700; margin-bottom: 18px; }
+    .modal-field { margin-bottom: 14px; }
+    .modal-label { font-size: 11.5px; font-weight: 600; color: var(--muted); margin-bottom: 5px; display: block; }
+    .modal-input, .modal-select, .modal-textarea {
+      width: 100%; background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.12);
+      border-radius: 10px; padding: 10px 13px; color: var(--paper); font-family: var(--sans);
+      font-size: 14px; outline: none; color-scheme: dark; display: block;
+    }
+    .modal-input:focus, .modal-select:focus, .modal-textarea:focus { border-color: var(--blue-light); }
+    .modal-select option { background: #1b2949; }
+    .modal-textarea { resize: vertical; min-height: 76px; }
+    .mchips { display: flex; gap: 8px; }
+    .mchip {
+      flex: 1; border: 1px solid rgba(255,255,255,.15); background: transparent;
+      border-radius: 8px; padding: 8px 10px; font-family: var(--sans); font-size: 13px;
+      font-weight: 600; color: var(--muted); cursor: pointer; text-align: center;
+      transition: all .15s;
+    }
+    .mchip.sel { background: rgba(26,95,180,.25); border-color: var(--blue-light); color: var(--paper); }
+    .modal-footer { display: flex; gap: 10px; margin-top: 20px; }
+    .modal-btn {
+      flex: 1; border: none; border-radius: 11px; padding: 13px; font-family: var(--sans);
+      font-size: 14px; font-weight: 700; cursor: pointer; transition: opacity .15s;
+    }
+    .modal-btn:disabled { opacity: .5; cursor: not-allowed; }
+    .modal-btn-cancel { background: rgba(255,255,255,.08); color: var(--muted); }
+    .modal-btn-save   { background: var(--blue); color: #fff; }
+    .modal-btn-del    { background: rgba(239,68,68,.7); color: #fff; }
+
+    /* ── Confirm sheet ──────────────────────────────────────────────────────── */
+    .confirm-title { font-family: var(--display); font-size: 16px; font-weight: 700; margin-bottom: 8px; }
+    .confirm-msg   { font-size: 13.5px; color: var(--muted); margin-bottom: 24px; line-height: 1.55; }
+
+    /* ── Toast ──────────────────────────────────────────────────────────────── */
     .toast {
       position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
       background: #1e3a1e; color: #7ee87e; border: 1px solid #3e9b4f;
@@ -135,7 +190,7 @@
     .empty { color: var(--muted); font-size: 13px; text-align: center; padding: 36px 0; }
     .spinner { color: var(--muted); font-size: 13px; text-align: center; padding: 36px 0; }
 
-    /* ── Portfolio Pelanggan ─────────────────────────────────────────── */
+    /* ── Portfolio Pelanggan ─────────────────────────────────────────────────── */
     .portfolio-section { padding: 24px 0 0; border-top: 1px solid var(--line); margin-top: 16px; }
     .portfolio-header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
     .portfolio-title { font-family: var(--display); font-size: 15px; font-weight: 700; }
@@ -149,7 +204,7 @@
     .pf-search::placeholder { color: var(--muted); }
     .acct-card {
       border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
-      background: rgba(255,255,255,.03); margin-bottom: 8px;
+      background: rgba(255,255,255,.03); margin-bottom: 8px; position: relative;
     }
     .acct-name { font-weight: 600; font-size: 13.5px; }
     .acct-meta { color: var(--muted); font-size: 12px; margin-top: 3px; }
@@ -158,9 +213,37 @@
     .days-ok   { color: #9fe0b9; }
     .days-warn { color: #fbbf24; }
     .days-crit { color: #f8a0a0; }
+    .acct-right { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
     .acct-badge { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 99px; }
     .acct-badge-new { background: rgba(46,111,214,.18); color: #7eb8f7; }
     .acct-badge-old { background: rgba(62,155,79,.18); color: #9fe0b9; }
+
+    /* ── Portfolio status ──────────────────────────────────────────────────── */
+    .status-wrap { position: relative; display: inline-block; }
+    .status-badge {
+      display: inline-block; border-radius: 99px; padding: 2px 9px;
+      font-size: 10.5px; font-weight: 700; cursor: pointer; border: 1px solid transparent;
+      transition: opacity .15s; user-select: none;
+    }
+    .status-badge:hover { opacity: .8; }
+    .status-aktif      { background: rgba(62,155,79,.18);  color: #9fe0b9; border-color: rgba(62,155,79,.3); }
+    .status-prospek    { background: rgba(26,95,180,.18);  color: #7eb8f7; border-color: rgba(26,95,180,.3); }
+    .status-follow_up  { background: rgba(251,191,36,.12); color: #fbbf24; border-color: rgba(251,191,36,.3); }
+    .status-tidak_aktif{ background: rgba(239,68,68,.1);   color: #fca5a5; border-color: rgba(239,68,68,.25); }
+    .status-picker {
+      display: none; position: absolute; bottom: calc(100% + 6px); right: 0;
+      background: #1b2949; border: 1px solid rgba(255,255,255,.15);
+      border-radius: 12px; padding: 6px; z-index: 20;
+      box-shadow: 0 8px 32px rgba(0,0,0,.5); min-width: 148px;
+    }
+    .status-picker.open { display: block; }
+    .status-opt {
+      display: block; width: 100%; border: none; background: transparent;
+      padding: 8px 12px; border-radius: 8px; font-family: var(--sans); font-size: 12.5px;
+      font-weight: 600; text-align: left; cursor: pointer; color: var(--paper);
+      transition: background .12s;
+    }
+    .status-opt:hover { background: rgba(255,255,255,.08); }
   </style>
 </head>
 <body>
@@ -206,6 +289,83 @@
 
 </div>
 
+<!-- ── Edit modal ──────────────────────────────────────────────────────────── -->
+<div class="modal-backdrop" id="editModal" onclick="if(event.target===this)closeEditModal()">
+  <div class="modal-sheet">
+    <div class="modal-title">✏ Edit Kunjungan</div>
+
+    <div class="modal-field">
+      <span class="modal-label">Jenis Aktivitas</span>
+      <div class="mchips" id="eActivity">
+        <button class="mchip sel" data-value="kunjungan">🚶 Kunjungan</button>
+        <button class="mchip"     data-value="telepon">📞 Telepon</button>
+      </div>
+    </div>
+
+    <div class="modal-field">
+      <span class="modal-label">Jenis Customer</span>
+      <div class="mchips" id="eCustomerType">
+        <button class="mchip sel" data-value="new">Baru</button>
+        <button class="mchip"     data-value="old">Lama</button>
+      </div>
+    </div>
+
+    <div class="modal-field">
+      <label class="modal-label" for="eStoreName">Nama Toko *</label>
+      <input class="modal-input" id="eStoreName" type="text" placeholder="Nama toko" />
+    </div>
+
+    <div class="modal-field">
+      <label class="modal-label" for="eCategory">Kategori *</label>
+      <select class="modal-select" id="eCategory"></select>
+    </div>
+
+    <div class="modal-field">
+      <label class="modal-label" for="eArea">Area *</label>
+      <select class="modal-select" id="eArea"></select>
+    </div>
+
+    <div class="modal-field">
+      <label class="modal-label" for="ePicName">PIC (opsional)</label>
+      <input class="modal-input" id="ePicName" type="text" placeholder="Nama PIC" />
+    </div>
+
+    <div class="modal-field">
+      <label class="modal-label" for="ePhone">No. HP (opsional)</label>
+      <input class="modal-input" id="ePhone" type="tel" placeholder="08xx…" />
+    </div>
+
+    <div class="modal-field">
+      <label class="modal-label" for="eAddress">Alamat (opsional)</label>
+      <input class="modal-input" id="eAddress" type="text" placeholder="Alamat toko" />
+    </div>
+
+    <div class="modal-field">
+      <label class="modal-label" for="eNotes">Catatan (opsional)</label>
+      <textarea class="modal-textarea" id="eNotes" placeholder="Hasil kunjungan, informasi penting…"></textarea>
+    </div>
+
+    <div class="modal-footer">
+      <button class="modal-btn modal-btn-cancel" onclick="closeEditModal()">Batal</button>
+      <button class="modal-btn modal-btn-save" id="eSaveBtn" onclick="submitEdit()">Simpan</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Delete confirmation modal ──────────────────────────────────────────── -->
+<div class="modal-backdrop" id="deleteModal" onclick="if(event.target===this)closeDeleteModal()">
+  <div class="modal-sheet">
+    <div class="confirm-title">🗑 Hapus Kunjungan?</div>
+    <div class="confirm-msg">
+      Kunjungan ke <b id="deleteConfirmStore"></b> akan dihapus permanen beserta foto dan data terkait. Tindakan ini tidak bisa dibatalkan.
+    </div>
+    <div class="modal-footer">
+      <button class="modal-btn modal-btn-cancel" onclick="closeDeleteModal()">Batal</button>
+      <button class="modal-btn modal-btn-del" id="dDeleteBtn" onclick="executeDelete()">Hapus</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast" class="toast"></div>
 
 <script>
@@ -215,14 +375,22 @@
   const WIB_MS = 7 * 3600 * 1000;
   const POLL_MS = 20000;
 
+  const STATUS_LABELS = {
+    aktif: "Aktif", prospek: "Prospek", follow_up: "Follow Up", tidak_aktif: "Tidak Aktif",
+  };
+
   let currentRepId = null;
   let visitDataMap = {};
   let knownIds = new Set();
   let firstLoad = true;
-  let syncTimer = null;
   let lastSyncTime = null;
   let allPortfolio = [];
   let pfSearchTerm = "";
+  let categories = [];
+  let areas = [];
+  let editingVisitId = null;
+  let deletingVisitId = null;
+  let activePicker = null;
 
   function esc(s) {
     if (s == null) return "";
@@ -247,6 +415,7 @@
     setTimeout(() => t.classList.remove("show"), 2500);
   }
 
+  /* ── WA copy ──────────────────────────────────────────────────────────────── */
   function buildWaText(v) {
     const B = "•⁠  ";
     const CTYPE = { new: "Baru", old: "Lama" };
@@ -275,6 +444,7 @@
 
   window.toggleWaCard = function(event, item) {
     if (event.target.tagName === "A") return;
+    if (event.target.closest(".vlog-actions")) return;
     const waDiv = item.querySelector(".vlog-wa");
     if (!waDiv) return;
     const isOpen = waDiv.classList.toggle("open");
@@ -304,6 +474,7 @@
     showToast("Pesan di copy ✓");
   };
 
+  /* ── Visit list render ────────────────────────────────────────────────────── */
   function renderVisits(visits) {
     visitDataMap = {};
     const el = $("visit-list");
@@ -336,6 +507,10 @@
             <div class="vlog-store">${esc(v.store_name)}${badge}</div>
             <div class="vlog-meta">${actIcon} ${isTel ? "Telepon" : "Kunjungan"} · ${metaParts}${picPart}${phonePart}</div>
             ${v.notes ? `<div class="vlog-notes">${esc(v.notes)}</div>` : ""}
+            <div class="vlog-actions">
+              <button class="vlog-btn vlog-btn-edit" onclick="event.stopPropagation();openEditModal(${v.id})">✏ Edit</button>
+              <button class="vlog-btn vlog-btn-del"  onclick="event.stopPropagation();openDeleteConfirm(${v.id})">🗑 Hapus</button>
+            </div>
             <div class="vlog-wa">
               <div class="vlog-wa-preview" onclick="copyWaCard(event, this)"></div>
               <span class="vlog-wa-hint">Ketuk untuk copy pesan WA</span>
@@ -348,6 +523,171 @@
     knownIds = new Set(visits.map(v => String(v.id)));
   }
 
+  /* ── Edit modal ───────────────────────────────────────────────────────────── */
+  // Chip toggle inside modal
+  document.addEventListener("click", e => {
+    const chip = e.target.closest(".mchip");
+    if (!chip) return;
+    const group = chip.closest("[id]");
+    if (!group) return;
+    group.querySelectorAll(".mchip").forEach(c => c.classList.remove("sel"));
+    chip.classList.add("sel");
+  });
+
+  function populateSelect(selEl, list, currentValue) {
+    const hasValue = list.includes(currentValue);
+    selEl.innerHTML = "";
+    if (!hasValue && currentValue) {
+      const o = document.createElement("option");
+      o.value = currentValue; o.textContent = currentValue; o.selected = true;
+      selEl.appendChild(o);
+    }
+    list.forEach(item => {
+      const o = document.createElement("option");
+      o.value = item; o.textContent = item;
+      if (item === currentValue) o.selected = true;
+      selEl.appendChild(o);
+    });
+  }
+
+  window.openEditModal = function(visitId) {
+    const v = visitDataMap[visitId];
+    if (!v) return;
+    editingVisitId = visitId;
+
+    const act = v.activity_type || "kunjungan";
+    $("eActivity").querySelectorAll(".mchip").forEach(c =>
+      c.classList.toggle("sel", c.dataset.value === act));
+
+    const ct = v.customer_type || "new";
+    $("eCustomerType").querySelectorAll(".mchip").forEach(c =>
+      c.classList.toggle("sel", c.dataset.value === ct));
+
+    $("eStoreName").value = v.store_name ?? "";
+    populateSelect($("eCategory"), categories, v.category ?? "");
+    populateSelect($("eArea"),     areas,      v.area     ?? "");
+    $("ePicName").value  = v.pic_name ?? "";
+    $("ePhone").value    = v.phone    ?? "";
+    $("eAddress").value  = v.address  ?? "";
+    $("eNotes").value    = v.notes    ?? "";
+
+    const btn = $("eSaveBtn");
+    btn.disabled = false;
+    btn.textContent = "Simpan";
+    $("editModal").classList.add("open");
+  };
+
+  window.closeEditModal = function() {
+    $("editModal").classList.remove("open");
+    editingVisitId = null;
+  };
+
+  window.submitEdit = async function() {
+    if (!editingVisitId) return;
+    const activity_type = $("eActivity").querySelector(".mchip.sel")?.dataset.value || "kunjungan";
+    const customer_type = $("eCustomerType").querySelector(".mchip.sel")?.dataset.value || "new";
+    const store_name    = $("eStoreName").value.trim();
+    const category      = $("eCategory").value;
+    const area          = $("eArea").value;
+    const pic_name      = $("ePicName").value.trim()  || null;
+    const phone         = $("ePhone").value.trim()    || null;
+    const address       = $("eAddress").value.trim()  || null;
+    const notes         = $("eNotes").value.trim()    || null;
+
+    if (!store_name) { showToast("Nama toko wajib diisi"); return; }
+    if (!category)   { showToast("Kategori wajib diisi");  return; }
+    if (!area)       { showToast("Area wajib diisi");      return; }
+
+    const btn = $("eSaveBtn");
+    btn.disabled = true; btn.textContent = "Menyimpan…";
+
+    try {
+      const res = await fetch(`/api/mirae/visits/${editingVisitId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ activity_type, customer_type, store_name, category, area, pic_name, phone, address, notes }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { showToast(data.error || "Gagal menyimpan"); btn.disabled = false; btn.textContent = "Simpan"; return; }
+      closeEditModal();
+      showToast("Kunjungan diperbarui ✓");
+      await load();
+    } catch {
+      showToast("Gagal terhubung ke server");
+      btn.disabled = false; btn.textContent = "Simpan";
+    }
+  };
+
+  /* ── Delete modal ─────────────────────────────────────────────────────────── */
+  window.openDeleteConfirm = function(visitId) {
+    const v = visitDataMap[visitId];
+    deletingVisitId = visitId;
+    $("deleteConfirmStore").textContent = v ? v.store_name : "";
+    const btn = $("dDeleteBtn");
+    btn.disabled = false; btn.textContent = "Hapus";
+    $("deleteModal").classList.add("open");
+  };
+
+  window.closeDeleteModal = function() {
+    $("deleteModal").classList.remove("open");
+    deletingVisitId = null;
+  };
+
+  window.executeDelete = async function() {
+    if (!deletingVisitId) return;
+    const btn = $("dDeleteBtn");
+    btn.disabled = true; btn.textContent = "Menghapus…";
+    try {
+      const res = await fetch(`/api/mirae/visits/${deletingVisitId}`, { method: "DELETE" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { showToast(data.error || "Gagal menghapus"); btn.disabled = false; btn.textContent = "Hapus"; return; }
+      closeDeleteModal();
+      showToast("Kunjungan dihapus");
+      await load();
+      if (currentRepId) loadPortfolio(currentRepId);
+    } catch {
+      showToast("Gagal terhubung ke server");
+      btn.disabled = false; btn.textContent = "Hapus";
+    }
+  };
+
+  /* ── Portfolio status picker ──────────────────────────────────────────────── */
+  document.addEventListener("click", () => {
+    if (activePicker) { activePicker.classList.remove("open"); activePicker = null; }
+  });
+
+  window.toggleStatusPicker = function(event, customerId) {
+    event.stopPropagation();
+    const wrap = event.currentTarget.closest(".status-wrap");
+    const picker = wrap.querySelector(".status-picker");
+    if (activePicker && activePicker !== picker) {
+      activePicker.classList.remove("open");
+    }
+    picker.classList.toggle("open");
+    activePicker = picker.classList.contains("open") ? picker : null;
+  };
+
+  window.setCustomerStatus = async function(customerId, status, event) {
+    if (event) event.stopPropagation();
+    if (activePicker) { activePicker.classList.remove("open"); activePicker = null; }
+    try {
+      const res = await fetch(`/api/mirae/customers/${customerId}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { showToast(data.error || "Gagal update status"); return; }
+      const cust = allPortfolio.find(c => c.id === customerId);
+      if (cust) cust.status = status;
+      showToast(`Status: ${STATUS_LABELS[status] || status} ✓`);
+      renderPortfolio();
+    } catch {
+      showToast("Gagal terhubung ke server");
+    }
+  };
+
+  /* ── Portfolio render ─────────────────────────────────────────────────────── */
   function daysAgo(iso) {
     if (!iso) return null;
     return Math.floor((Date.now() - new Date(iso).getTime()) / (24 * 3600 * 1000));
@@ -377,19 +717,28 @@
       return;
     }
     el.innerHTML = filtered.map(c => {
-      const d = daysAgo(c.last_visit_at);
+      const d  = daysAgo(c.last_visit_at);
       const dc = daysClass(d);
       const nw = Number(c.new_count ?? 0);
       const ol = Number(c.old_count ?? 0);
+      const st = c.status || "aktif";
+      const stLabel = STATUS_LABELS[st] || st;
+      const statusOpts = Object.entries(STATUS_LABELS).map(([val, lbl]) =>
+        `<button class="status-opt" onclick="setCustomerStatus(${c.id},'${val}',event)">${esc(lbl)}</button>`
+      ).join("");
       return `<div class="acct-card">
         <div class="acct-name">${esc(c.store_name)}</div>
         <div class="acct-meta">${esc(c.category ?? "")} · ${esc(c.area ?? "")}</div>
         <div class="acct-row2">
           <span class="acct-days ${dc}">↻ ${daysLabel(d)}</span>
-          <span>
-            ${nw ? `<span class="acct-badge acct-badge-new">${nw} baru</span> ` : ""}
+          <div class="acct-right">
+            <div class="status-wrap">
+              <span class="status-badge status-${esc(st)}" onclick="toggleStatusPicker(event,${c.id})">${esc(stLabel)} ▾</span>
+              <div class="status-picker" onclick="event.stopPropagation()">${statusOpts}</div>
+            </div>
+            ${nw ? `<span class="acct-badge acct-badge-new">${nw} baru</span>` : ""}
             ${ol ? `<span class="acct-badge acct-badge-old">${ol} lama</span>` : ""}
-          </span>
+          </div>
         </div>
       </div>`;
     }).join("");
@@ -409,12 +758,14 @@
     renderPortfolio();
   });
 
+  /* ── Sync label ───────────────────────────────────────────────────────────── */
   function tickSync() {
     if (!lastSyncTime) return;
     const s = Math.floor((Date.now() - lastSyncTime) / 1000);
     $("sync-label").textContent = s < 3 ? "baru saja" : `${s}d lalu`;
   }
 
+  /* ── Load visits ──────────────────────────────────────────────────────────── */
   window.load = async function() {
     if (!currentRepId) {
       $("visit-list").innerHTML = '<div class="spinner">Pilih sales untuk memuat kunjungan hari ini…</div>';
@@ -440,7 +791,16 @@
     firstLoad = false;
   };
 
+  /* ── Boot ─────────────────────────────────────────────────────────────────── */
   async function boot() {
+    // Load category/area lists for edit modal
+    const [catRes, areaRes] = await Promise.all([
+      fetch("/api/mirae/lists/categories").then(r => r.json()).catch(() => ({ values: [] })),
+      fetch("/api/mirae/lists/areas").then(r => r.json()).catch(() => ({ values: [] })),
+    ]);
+    categories = catRes.values ?? [];
+    areas      = areaRes.values ?? [];
+
     const res = await fetch("/api/mirae/salespeople").then(r => r.json()).catch(() => ({ salespeople: [] }));
     const sel = $("rep-sel");
     (res.salespeople ?? []).forEach(sp => {

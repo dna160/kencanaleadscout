@@ -11,7 +11,8 @@ import type { FastifyInstance } from "fastify";
 import * as XLSX from "xlsx";
 import { getSql } from "../db/client.js";
 
-const CUSTOMER_TYPES = new Set(["new", "old"]);
+const CUSTOMER_TYPES   = new Set(["new", "old"]);
+const CUSTOMER_STATUSES = new Set(["aktif", "prospek", "follow_up", "tidak_aktif"]);
 
 function parseDate(s: string | undefined): Date | null {
   if (!s) return null;
@@ -107,7 +108,7 @@ export async function miraeRoutes(app: FastifyInstance): Promise<void> {
 
     const rows = await db`
       select
-        c.id, c.store_name, c.category, c.area, c.address,
+        c.id, c.store_name, c.category, c.area, c.address, c.status,
         count(v.id)::int                                          as visit_count,
         max(v.visited_at)                                         as last_visit_at,
         count(*) filter (where v.customer_type = 'new')::int      as new_count,
@@ -457,6 +458,100 @@ export async function miraeRoutes(app: FastifyInstance): Promise<void> {
       values (${id}, 'visited_at', ${current.visited_at.toISOString()}, ${new_ts.toISOString()}, ${changed_by})
     `;
     return { ok: true, visit: saved };
+  });
+
+  // ── Edit visit fields ─────────────────────────────────────────────────────
+  app.put<{
+    Params: { id: string };
+    Body: Record<string, unknown>;
+  }>("/api/mirae/visits/:id", async (request, reply) => {
+    const db = getSql();
+    if (!db) return reply.code(503).send({ error: "Database not configured." });
+
+    const id = Number(request.params.id);
+    if (!Number.isInteger(id) || id < 1)
+      return reply.code(400).send({ error: "Invalid visit id." });
+
+    const b = request.body ?? {};
+    const store_name = String(b.store_name ?? "").trim();
+    if (!store_name) return reply.code(400).send({ error: "store_name is required." });
+    const customer_type_raw = String(b.customer_type ?? "").trim().toLowerCase();
+    if (!CUSTOMER_TYPES.has(customer_type_raw))
+      return reply.code(400).send({ error: "customer_type must be 'new' or 'old'." });
+    const category = String(b.category ?? "").trim();
+    if (!category) return reply.code(400).send({ error: "category is required." });
+    const area = String(b.area ?? "").trim();
+    if (!area) return reply.code(400).send({ error: "area is required." });
+    const activity_type_raw = String(b.activity_type ?? "kunjungan").trim().toLowerCase();
+    const activity_type = ["kunjungan", "telepon"].includes(activity_type_raw) ? activity_type_raw : "kunjungan";
+    const pic_name    = b.pic_name    ? String(b.pic_name).trim()    : null;
+    const phone       = b.phone       ? String(b.phone).trim()       : null;
+    const address     = b.address     ? String(b.address).trim()     : null;
+    const postal_code = b.postal_code ? String(b.postal_code).trim() : null;
+    const notes       = b.notes       ? String(b.notes).trim()       : null;
+
+    if (postal_code && !/^\d{5}$/.test(postal_code))
+      return reply.code(400).send({ error: "postal_code must be 5 digits if provided." });
+
+    const [current] = await db<{ id: number }[]>`select id from mirae_visits where id = ${id}`;
+    if (!current) return reply.code(404).send({ error: "Visit not found." });
+
+    const [saved] = await db`
+      update mirae_visits set
+        activity_type = ${activity_type},
+        customer_type = ${customer_type_raw},
+        store_name    = ${store_name},
+        category      = ${category},
+        area          = ${area},
+        pic_name      = ${pic_name},
+        phone         = ${phone},
+        address       = ${address},
+        postal_code   = ${postal_code},
+        notes         = ${notes}
+      where id = ${id}
+      returning *
+    `;
+    return { ok: true, visit: saved };
+  });
+
+  // ── Delete visit (+ audits; photos cascade) ────────────────────────────────
+  app.delete<{ Params: { id: string } }>("/api/mirae/visits/:id", async (request, reply) => {
+    const db = getSql();
+    if (!db) return reply.code(503).send({ error: "Database not configured." });
+
+    const id = Number(request.params.id);
+    if (!Number.isInteger(id) || id < 1)
+      return reply.code(400).send({ error: "Invalid visit id." });
+
+    const [visit] = await db<{ id: number }[]>`select id from mirae_visits where id = ${id}`;
+    if (!visit) return reply.code(404).send({ error: "Visit not found." });
+
+    await db`delete from mirae_visit_audits where visit_id = ${id}`;
+    await db`delete from mirae_visits where id = ${id}`;
+    return { ok: true };
+  });
+
+  // ── Update customer status ─────────────────────────────────────────────────
+  app.patch<{
+    Params: { id: string };
+    Body: { status?: unknown };
+  }>("/api/mirae/customers/:id/status", async (request, reply) => {
+    const db = getSql();
+    if (!db) return reply.code(503).send({ error: "Database not configured." });
+
+    const id = Number(request.params.id);
+    if (!Number.isInteger(id) || id < 1)
+      return reply.code(400).send({ error: "Invalid customer id." });
+
+    const status = String(request.body?.status ?? "").trim().toLowerCase();
+    if (!CUSTOMER_STATUSES.has(status))
+      return reply.code(400).send({ error: "status must be: aktif, prospek, follow_up, atau tidak_aktif." });
+
+    const [updated] = await db<{ id: number; status: string }[]>`
+      update mirae_customers set status = ${status} where id = ${id} returning id, status
+    `;
+    if (!updated) return reply.code(404).send({ error: "Customer not found." });
+    return { ok: true, id: updated.id, status: updated.status };
   });
 
   // ── Photo upload ───────────────────────────────────────────────────────────

@@ -537,6 +537,7 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
     await db`create index if not exists mirae_visits_area     on mirae_visits (area)`;
     await db`create index if not exists mirae_visits_type     on mirae_visits (customer_type)`;
     await db`alter table mirae_visits add column if not exists phone text`;
+    await db`alter table mirae_customers add column if not exists status text not null default 'aktif'`;
     await db`
       create table if not exists mirae_visit_photos (
         id         bigserial primary key,
