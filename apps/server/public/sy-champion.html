@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>SY Hunter Dashboard · Kencana LeadScout</title>
+    <title>SY Champion · Kencana LeadScout</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
@@ -48,13 +48,6 @@
       .panel .cap { color: var(--muted); font-size: 12.5px; margin: 0 0 16px; }
       .mt { margin-top: 14px; }
 
-      .bars { display: flex; flex-direction: column; gap: 14px; }
-      .barrow .top-r { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
-      .barrow .nm { font-weight: 600; font-size: 14px; } .barrow .rt { font-family: var(--display); font-size: 15px; font-variant-numeric: tabular-nums; }
-      .barrow .track { height: 11px; border-radius: 99px; background: rgba(255,255,255,.07); overflow: hidden; }
-      .barrow .track > div { height: 100%; border-radius: 99px; transition: width .6s cubic-bezier(.2,.8,.2,1); }
-      .barrow .sub { color: var(--muted); font-size: 11.5px; margin-top: 5px; font-variant-numeric: tabular-nums; }
-
       .pgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
       .pcard { border: 1px solid var(--line); border-radius: 13px; padding: 14px; text-align: center; }
       .pcard .tag { font-family: var(--display); font-weight: 700; font-size: 13px; padding: 3px 9px; border-radius: 99px; color: #fff; display: inline-block; }
@@ -78,12 +71,29 @@
         border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.03); }
       .feed .item.new { animation: pop 1.6s ease; }
       @keyframes pop { 0% { background: rgba(234,88,12,.25); } 100% { background: rgba(255,255,255,.03); } }
-      .feed .co { font-weight: 600; font-size: 14px; } .feed .st { font-size: 12.5px; font-variant-numeric: tabular-nums; }
-      .feed .st.connected { color: #9fe0b9; } .feed .st.warm { color: #ecb44f; }
+      .feed .co { font-weight: 600; font-size: 14px; } .feed .wa { color: #9fe0b9; font-size: 12.5px; font-variant-numeric: tabular-nums; }
       .feed .rep { color: var(--muted); font-size: 12px; } .feed .ago { color: var(--muted); font-size: 11.5px; white-space: nowrap; }
       .tag.prio { font-family: var(--display); font-weight: 700; font-size: 11.5px; padding: 2px 8px; border-radius: 99px; color: #fff; }
       .tag.prio.P1 { background: var(--p1); } .tag.prio.P2 { background: var(--p2); } .tag.prio.P3 { background: var(--p3); }
       .empty { color: var(--muted); font-size: 13.5px; text-align: center; padding: 26px 0; }
+
+      .panel.wide { margin-top: 14px; }
+      .panel .head-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+      .exportBtn { border: 1px solid rgba(234,88,12,.45); background: rgba(234,88,12,.12); color: #fdba74;
+        border-radius: 9px; padding: 8px 14px; cursor: pointer; font-weight: 700; font-size: 12.5px; white-space: nowrap; }
+      .exportBtn:disabled { opacity: .4; cursor: not-allowed; }
+      .tableWrap { overflow-x: auto; margin-top: 12px; }
+      table.captures { width: 100%; border-collapse: collapse; font-size: 13px; }
+      table.captures th { text-align: left; color: var(--muted); font-size: 11px; letter-spacing: .6px; text-transform: uppercase;
+        font-weight: 600; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+      table.captures td { padding: 9px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+      table.captures tr:last-child td { border-bottom: none; }
+      table.captures .co { font-weight: 600; }
+      table.captures a.wa { color: #9fe0b9; text-decoration: none; font-variant-numeric: tabular-nums; }
+      table.captures a.wa:hover { text-decoration: underline; }
+      .badge { display: inline-block; border-radius: 99px; padding: 3px 9px; font-size: 11px; font-weight: 700; }
+      .badge.won_wa { background: rgba(44,110,73,.22); color: #9fe0b9; }
+      .badge.warm { background: rgba(209,138,30,.2); color: #ecb44f; }
     </style>
   </head>
   <body>
@@ -91,7 +101,7 @@
       <header>
         <div class="brand">
           <div class="mark">SY</div>
-          <div><b>SY Hunter Dashboard</b><span>Kencana · BCI Factory Pipeline · live</span></div>
+          <div><b>SY Champion Dashboard</b><span>Kencana · BCI Factory Pipeline · live</span></div>
         </div>
         <div class="sync">
           <span class="dot"></span>
@@ -104,15 +114,15 @@
 
       <div class="kpis">
         <div class="kpi"><div class="l">Dialed</div><div class="v" id="kDialed">—</div><div class="s" id="kAssigned">of — assigned</div></div>
-        <div class="kpi"><div class="l">Connected</div><div class="v" id="kConnected" style="color:var(--green)">—</div><div class="s">spoke with someone</div></div>
-        <div class="kpi hero"><div class="l">Connect Rate</div><div class="v" id="kRate">—</div><div class="s">connected / dialed</div></div>
-        <div class="kpi"><div class="l">Interested</div><div class="v" id="kInterested" style="color:#ecb44f">—</div><div class="s">warm — wants follow-up</div></div>
+        <div class="kpi"><div class="l">WA Captured</div><div class="v" id="kCaptured" style="color:var(--green)">—</div><div class="s">WhatsApp confirmed</div></div>
+        <div class="kpi hero"><div class="l">Capture Rate</div><div class="v" id="kRate">—</div><div class="s">captured / dialed</div></div>
+        <div class="kpi"><div class="l">Warm</div><div class="v" id="kWarm" style="color:#ecb44f">—</div><div class="s">interested, no WA yet</div></div>
       </div>
 
       <div class="cols mt">
         <div class="panel">
           <h3>By priority</h3>
-          <p class="cap">Which tier is converting — connect rate per priority level.</p>
+          <p class="cap">Which tier is capturing WA numbers — capture rate per priority.</p>
           <div class="pgrid" id="byPriority"></div>
         </div>
         <div class="panel">
@@ -125,13 +135,31 @@
       <div class="cols mt">
         <div class="panel">
           <h3>By day</h3>
-          <p class="cap">Connections across the 10-day pilot.</p>
+          <p class="cap">WA captures across the 10-day pilot.</p>
           <div class="spark" id="byDay"></div>
         </div>
         <div class="panel">
-          <h3>Live connect feed</h3>
-          <p class="cap">Last 15 connected / warm contacts.</p>
-          <div class="feed" id="feed"><div class="empty">Waiting for the first connection…</div></div>
+          <h3>Live capture feed</h3>
+          <p class="cap">Last 15 WA captures.</p>
+          <div class="feed" id="feed"><div class="empty">Waiting for the first capture…</div></div>
+        </div>
+      </div>
+
+      <div class="panel wide">
+        <div class="head-row">
+          <div>
+            <h3>All WhatsApp numbers</h3>
+            <p class="cap">All contacts with captured WA numbers — click number to open chat.</p>
+          </div>
+          <button class="exportBtn" id="exportCsv" disabled>Export CSV</button>
+        </div>
+        <div class="tableWrap">
+          <table class="captures" id="capturesTable">
+            <thead>
+              <tr><th>Company</th><th>Contact</th><th>WA Number</th><th>Priority</th><th>Band</th><th>Project</th><th>Town</th><th>Status</th><th>Updated</th></tr>
+            </thead>
+            <tbody id="capturesBody"><tr><td colspan="9"><div class="empty">No WhatsApp numbers yet.</div></td></tr></tbody>
+          </table>
         </div>
       </div>
     </div>
@@ -140,8 +168,9 @@
       const $ = (id) => document.getElementById(id);
       const POLL_MS = 8000;
       let lastSync = Date.now();
-      let knownKeys = new Set();
+      let knownWa = new Set();
       let firstLoad = true;
+      let captures = [];
 
       const fmtPct = (r) => Math.round(r * 100) + "%";
       const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -165,65 +194,130 @@
         lastSync = Date.now();
         render(data);
         firstLoad = false;
+        loadCaptures();
+      }
+
+      async function loadCaptures() {
+        try {
+          const res = await fetch("/api/sy/captures");
+          if (!res.ok) throw new Error();
+          const data = await res.json();
+          captures = data.captures;
+          renderCaptures();
+        } catch { /* leave previous table state */ }
+      }
+
+      function renderCaptures() {
+        const body = $("capturesBody");
+        $("exportCsv").disabled = captures.length === 0;
+        if (!captures.length) {
+          body.innerHTML = '<tr><td colspan="9"><div class="empty">No WhatsApp numbers yet.</div></td></tr>';
+          return;
+        }
+        body.innerHTML = captures.map((c) => {
+          const waNum = c.wa_number ? c.wa_number.replace("+", "") : "";
+          const wa = c.wa_number
+            ? `<a class="wa" target="_blank" rel="noopener" href="https://wa.me/${esc(waNum)}">${esc(c.wa_number)}</a>`
+            : "—";
+          const statusCls = c.status === "won_wa" ? "won_wa" : "warm";
+          const statusLbl = c.status === "won_wa" ? "Captured" : "Warm";
+          const badge = `<span class="badge ${statusCls}">${statusLbl}</span>`;
+          const updated = c.updated_at ? ago(c.updated_at) : "—";
+          return `<tr>
+            <td class="co">${esc(c.company_name)}</td>
+            <td>${esc(c.contact_name || c.pic_name || "—")}</td>
+            <td>${wa}</td>
+            <td><span class="tag prio ${esc(c.priority)}">${esc(c.priority)}</span></td>
+            <td>${esc(c.band || "—")}</td>
+            <td>${esc(c.project_name || "—")}</td>
+            <td>${esc(c.town || "—")}</td>
+            <td>${badge}</td>
+            <td>${updated}</td>
+          </tr>`;
+        }).join("");
+      }
+
+      function csvEscape(v) {
+        const s = String(v == null ? "" : v);
+        return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+      }
+
+      function exportCaptures() {
+        const header = ["Company", "Contact", "WA Number", "Priority", "Band", "Project", "Town", "Status", "Updated At"];
+        const lines = [header.join(",")];
+        for (const c of captures) {
+          lines.push([
+            c.company_name, c.contact_name || c.pic_name || "", c.wa_number ?? "",
+            c.priority, c.band ?? "", c.project_name ?? "", c.town ?? "",
+            c.status, c.updated_at ?? "",
+          ].map(csvEscape).join(","));
+        }
+        const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `sy-wa-captures-${new Date().toISOString().slice(0, 10)}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
       }
 
       function render(d) {
         const t = d.totals;
         $("kDialed").textContent    = t.dialed;
         $("kAssigned").textContent  = `of ${t.assigned} assigned`;
-        $("kConnected").textContent = t.connected;
-        $("kRate").textContent      = fmtPct(t.connect_rate);
-        $("kInterested").textContent = t.interested;
+        $("kCaptured").textContent  = t.captured;
+        $("kRate").textContent      = fmtPct(t.capture_rate);
+        $("kWarm").textContent      = t.warm;
 
         // By priority
-        const priorities = ["P1","P2","P3"];
+        const priorities = ["P1", "P2", "P3"];
         const pmap = Object.fromEntries(d.by_priority.map((x) => [x.priority, x]));
         $("byPriority").innerHTML = priorities.map((p) => {
-          const x = pmap[p] || { total: 0, dialed: 0, connected: 0 };
-          const rate = x.dialed ? x.connected / x.dialed : null;
+          const x = pmap[p] || { total: 0, dialed: 0, captured: 0 };
+          const rate = x.dialed ? x.captured / x.dialed : null;
           return `<div class="pcard ${p}"><span class="tag">${p}</span>
             <div class="rt">${rate !== null ? fmtPct(rate) : "—"}</div>
-            <div class="sub">${x.connected}/${x.dialed} dialed</div>
+            <div class="sub">${x.captured}/${x.dialed} dialed</div>
             <div class="sub">${x.total} total</div></div>`;
         }).join("");
 
         // By band
-        const bands = ["A","B","C"];
+        const bands = ["A", "B", "C"];
         const bmap = Object.fromEntries(d.by_band.map((x) => [x.band, x]));
         $("byBand").innerHTML = bands.map((b) => {
-          const x = bmap[b] || { total: 0, dialed: 0, connected: 0 };
-          const rate = x.dialed ? x.connected / x.dialed : null;
+          const x = bmap[b] || { total: 0, dialed: 0, captured: 0 };
+          const rate = x.dialed ? x.captured / x.dialed : null;
           return `<div class="bcard"><span class="btag">Band ${b}</span>
             <div class="rt">${rate !== null ? fmtPct(rate) : "—"}</div>
-            <div class="sub">${x.connected}/${x.dialed} dialed</div>
+            <div class="sub">${x.captured}/${x.dialed} dialed</div>
             <div class="sub">${x.total} total</div></div>`;
         }).join("");
 
         // By day sparkline
-        const maxConn = Math.max(1, ...d.by_day.map((x) => Number(x.connected)));
-        const dmap    = Object.fromEntries(d.by_day.map((x) => [x.day, x]));
+        const maxCap = Math.max(1, ...d.by_day.map((x) => Number(x.captured)));
+        const dmap   = Object.fromEntries(d.by_day.map((x) => [x.day, x]));
         let sp = "";
         for (let day = 1; day <= 10; day++) {
-          const x = dmap[day] || { connected: 0, dialed: 0 };
-          const h = Math.round((Number(x.connected) / maxConn) * 90);
-          sp += `<div class="col"><div class="v">${x.connected || ""}</div><div class="bar" style="height:${h}px"></div><div class="d">${day}</div></div>`;
+          const x = dmap[day] || { captured: 0, dialed: 0 };
+          const h = Math.round((Number(x.captured) / maxCap) * 90);
+          sp += `<div class="col"><div class="v">${x.captured || ""}</div><div class="bar" style="height:${h}px"></div><div class="d">${day}</div></div>`;
         }
         $("byDay").innerHTML = sp;
 
-        // Feed
+        // Live capture feed
         const feed = $("feed");
         if (!d.recent.length) {
-          feed.innerHTML = '<div class="empty">Waiting for the first connection…</div>';
+          feed.innerHTML = '<div class="empty">Waiting for the first capture…</div>';
         } else {
           feed.innerHTML = d.recent.map((r) => {
-            const key   = r.company_name + r.updated_at;
-            const isNew = !firstLoad && !knownKeys.has(key);
-            const stCls = r.status === "connected" ? "connected" : "warm";
-            const stLbl = r.status === "connected" ? "Connected" : "Warm";
+            const key   = (r.wa_number || "") + r.updated_at;
+            const isNew = !firstLoad && !knownWa.has(key);
             return `<div class="item ${isNew ? "new" : ""}">
               <div>
                 <div class="co">${esc(r.company_name)}</div>
-                <div class="st ${stCls}">${stLbl}${r.note ? " · " + esc(r.note.slice(0,40)) : ""}</div>
+                <div class="wa">${r.wa_number ? esc(r.wa_number) : "—"}</div>
               </div>
               <div style="text-align:right">
                 <div><span class="tag prio ${esc(r.priority)}">${esc(r.priority)}</span></div>
@@ -231,7 +325,7 @@
               </div>
             </div>`;
           }).join("");
-          knownKeys = new Set(d.recent.map((r) => r.company_name + r.updated_at));
+          knownWa = new Set(d.recent.map((r) => (r.wa_number || "") + r.updated_at));
         }
       }
 
@@ -241,6 +335,7 @@
       }
 
       $("refresh").addEventListener("click", load);
+      $("exportCsv").addEventListener("click", exportCaptures);
       load();
       setInterval(load, POLL_MS);
       setInterval(tickSync, 1000);

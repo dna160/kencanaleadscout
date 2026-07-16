@@ -90,6 +90,12 @@ export async function syHunterRoutes(app: FastifyInstance) {
         values (${contact_id}, 'fresh', now(), now())
         on conflict (contact_id) do nothing
       `;
+    } else if (status === "dead") {
+      // Auto-advance pipeline to dead if still fresh (hunter re-called and confirmed unreachable)
+      await db`
+        update sy_pipeline set stage = 'dead', updated_at = now()
+        where contact_id = ${contact_id} and stage = 'fresh'
+      `;
     }
 
     return { ok: true };
@@ -161,16 +167,25 @@ export async function syHunterRoutes(app: FastifyInstance) {
       limit 15
     `;
 
+    const medRows = await db`
+      select percentile_cont(0.5) within group (
+        order by extract(epoch from (p.messaged_at - p.called_at)) * 1000
+      )::bigint as median_to_message_ms
+      from sy_pipeline p
+      where p.messaged_at is not null and p.called_at is not null
+    `;
+
     const t       = totRows[0];
     const dialed   = Number(t?.dialed   ?? 0);
     const captured = Number(t?.captured ?? 0);
     return {
       totals: {
         dialed,
-        assigned:      Number(t?.assigned ?? 0),
+        assigned:              Number(t?.assigned ?? 0),
         captured,
-        warm:          Number(t?.warm     ?? 0),
-        capture_rate:  dialed ? captured / dialed : 0,
+        warm:                  Number(t?.warm     ?? 0),
+        capture_rate:          dialed ? captured / dialed : 0,
+        median_to_message_ms:  medRows[0]?.median_to_message_ms ?? null,
       },
       by_day:      byDay,
       by_priority: byPriority,
@@ -196,8 +211,11 @@ export async function syHunterRoutes(app: FastifyInstance) {
       from sy_pipeline p
       join sy_contacts c on c.id = p.contact_id
       left join sy_outcomes o on o.contact_id = c.id
-      where p.stage not in ('won','dead')
-         or p.updated_at > now() - interval '14 days'
+      where (
+        p.stage not in ('won','dead')
+        or p.updated_at > now() - interval '14 days'
+      )
+      and not (p.stage = 'fresh' and o.status = 'dead')
       order by
         case p.stage
           when 'fresh'       then 1
@@ -373,6 +391,25 @@ export async function syHunterRoutes(app: FastifyInstance) {
     `;
 
     return { stageCounts, byPriority, byBand, recentActivity, topProjects };
+  });
+
+  // ── GET /api/sy/captures ──────────────────────────────────────────────────
+  app.get("/api/sy/captures", async (_request, reply) => {
+    const db = getSql();
+    if (!db) return reply.code(503).send({ error: "Database not configured." });
+    await ensureSeeded();
+
+    const rows = await db`
+      select
+        c.id, c.company_name, c.contact_name, c.priority, c.band,
+        c.project_name, c.province, c.town,
+        o.wa_number, o.pic_name, o.status, o.updated_by, o.updated_at
+      from sy_outcomes o
+      join sy_contacts c on c.id = o.contact_id
+      where o.wa_number is not null
+      order by o.updated_at desc nulls last
+    `;
+    return { captures: rows };
   });
 
   // ── GET /api/sy/projects ───────────────────────────────────────────────────

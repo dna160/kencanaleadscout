@@ -309,9 +309,7 @@
           const res = await fetch("/api/sy/stats");
           if (!res.ok) return;
           const data = await res.json();
-          // Show capture rate as a proxy for pipeline health (no median_to_message in SY stats)
-          const rate = data.totals?.capture_rate;
-          $("cAvgMsg").textContent = rate != null ? Math.round(rate * 100) + "% cap." : "—";
+          $("cAvgMsg").textContent = fmtMs(data.totals?.median_to_message_ms ?? null);
         } catch { /* leave previous value */ }
       }
 
