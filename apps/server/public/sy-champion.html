@@ -279,7 +279,7 @@
           const rate = x.dialed ? x.captured / x.dialed : null;
           return `<div class="pcard ${p}"><span class="tag">${p}</span>
             <div class="rt">${rate !== null ? fmtPct(rate) : "—"}</div>
-            <div class="sub">${x.captured}/${x.dialed} dialed</div>
+            <div class="sub">${x.captured} captured · ${x.dialed} dialed</div>
             <div class="sub">${x.total} total</div></div>`;
         }).join("");
 
@@ -291,7 +291,7 @@
           const rate = x.dialed ? x.captured / x.dialed : null;
           return `<div class="bcard"><span class="btag">Band ${b}</span>
             <div class="rt">${rate !== null ? fmtPct(rate) : "—"}</div>
-            <div class="sub">${x.captured}/${x.dialed} dialed</div>
+            <div class="sub">${x.captured} captured · ${x.dialed} dialed</div>
             <div class="sub">${x.total} total</div></div>`;
         }).join("");
 
