@@ -305,10 +305,13 @@
             .then((leads) => {
               const total = leads.length || 35;
               const worked = leads.filter((l) => l.outcome).length;
-              const won = leads.filter((l) => l.outcome && l.outcome.status === "won_wa").length;
+              const won  = leads.filter((l) => l.outcome?.status === "won_wa").length;
+              const warm = leads.filter((l) => l.outcome?.status === "warm").length;
               cards[d - 1].querySelector(".mini > div").style.width = `${Math.round((worked / total) * 100)}%`;
               cards[d - 1].querySelector(".stat").textContent =
-                worked === 0 ? `${total} contacts` : `${worked}/${total} worked · ${won} captured`;
+                worked === 0
+                  ? `${total} contacts`
+                  : `${worked}/${total} worked · ${won} captured${warm ? " · " + warm + " warm" : ""}`;
             })
             .catch(() => {});
         }
@@ -336,8 +339,9 @@
           return;
         }
         const firstOpen = state.leads.findIndex((l) => !l.outcome);
-        if (firstOpen === -1 && state.leads.length) { showComplete(); return; }
-        state.idx = firstOpen === -1 ? 0 : firstOpen;
+        const firstWarm = state.leads.findIndex((l) => l.outcome?.status === "warm");
+        if (firstOpen === -1 && firstWarm === -1 && state.leads.length) { showComplete(); return; }
+        state.idx = firstOpen !== -1 ? firstOpen : firstWarm;
         $("actions").style.display = "block";
         renderLead();
       }
@@ -486,7 +490,7 @@
 
         updateSaveState();
         $("backBtn").disabled = state.idx === 0;
-        $("skipBtn").disabled = state.idx >= state.leads.length - 1;
+        $("skipBtn").disabled = state.leads.length <= 1;
       }
 
       function updateSaveState() { $("saveBtn").disabled = !chosenStatus; }
@@ -494,7 +498,7 @@
       /* ---------- actions ---------- */
       $("saveBtn").addEventListener("click", saveAndNext);
       $("backBtn").addEventListener("click", () => { if (state.idx > 0) { state.idx--; renderLead(); } });
-      $("skipBtn").addEventListener("click", () => { if (state.idx < state.leads.length - 1) { state.idx++; renderLead(); } });
+      $("skipBtn").addEventListener("click", () => { state.idx = (state.idx + 1) % state.leads.length; renderLead(); });
       $("backToDays").addEventListener("click", enterDays);
 
       async function saveAndNext() {
@@ -556,8 +560,12 @@
       }
 
       function findNextOpen(from) {
+        // Pass 1: uncalled leads (no outcome) — priority queue
         for (let i = from + 1; i < state.leads.length; i++) if (!state.leads[i].outcome) return i;
-        for (let i = 0; i < state.leads.length; i++)        if (!state.leads[i].outcome) return i;
+        for (let i = 0; i <= from; i++)                      if (!state.leads[i].outcome) return i;
+        // Pass 2: warm leads (follow-up queue) — exhaust after all fresh leads are done
+        for (let i = from + 1; i < state.leads.length; i++) if (state.leads[i].outcome?.status === "warm") return i;
+        for (let i = 0; i <= from; i++)                      if (state.leads[i].outcome?.status === "warm") return i;
         return -1;
       }
 
