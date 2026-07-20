@@ -10,7 +10,7 @@
  * GET    /api/reps/:id/myday         — My Day: overdue / today / upcoming + at-risk
  */
 import type { FastifyInstance } from "fastify";
-import { getSql } from "../db/client.js";
+import { getSql, type Sql } from "../db/client.js";
 
 const VALID_STAGES_PROJECT   = new Set(["prospek", "penawaran", "negosiasi", "won", "gugur"]);
 const VALID_STAGES_REPEATING = new Set(["aktif", "perlu_followup", "at_risk", "hibernasi"]);
@@ -18,6 +18,31 @@ const VALID_ACTION_TYPES     = new Set(["kunjungan", "telepon", "received_order"
 
 function allValidStages(): Set<string> {
   return new Set([...VALID_STAGES_PROJECT, ...VALID_STAGES_REPEATING]);
+}
+
+/**
+ * Repeating accounts' true health is always derived live from
+ * `last_contact_at` recency (<10d aktif, <14d perlu_followup, <17d
+ * at_risk, else hibernasi) — mirrors GET /api/accounts and insights.ts.
+ * The stored `customers.stage` column for repeating accounts is only a
+ * ratcheting cache the hourly cadence engine advances forward; it never
+ * moves back down after a fresh visit and lags the live thresholds, so
+ * any query that displays a repeating account's current stage must use
+ * this instead of `c.stage` directly or it will disagree with the
+ * account list / at-risk notice / portfolio counts, which already do.
+ * Project accounts keep their manually-managed pipeline stage untouched.
+ */
+function liveStageFragment(db: Sql) {
+  return db`
+    case
+      when c.id is null                  then null
+      when c.account_type <> 'repeating' then c.stage
+      when c.last_contact_at is null     then 'hibernasi'
+      when extract(epoch from (now() - c.last_contact_at)) / 86400 < 10 then 'aktif'
+      when extract(epoch from (now() - c.last_contact_at)) / 86400 < 14 then 'perlu_followup'
+      when extract(epoch from (now() - c.last_contact_at)) / 86400 < 17 then 'at_risk'
+      else 'hibernasi'
+    end`;
 }
 
 export async function accountsRoutes(app: FastifyInstance): Promise<void> {
@@ -36,20 +61,7 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
     const offset   = Number(q.offset) || 0;
     const sortUrgency = q.sort === "urgency";
 
-    // Live "repeating health" derived from visit recency, so the pipeline (and
-    // My Day) reflect reality without relying on the background cadence job.
-    // Mirrors the insights thresholds: <10d aktif, <14d perlu_followup,
-    // <17d at_risk, else hibernasi. Project accounts keep their manually-managed
-    // pipeline stage; repeating accounts never contacted count as hibernasi.
-    const liveStage = () => db`
-      case
-        when c.account_type <> 'repeating' then c.stage
-        when c.last_contact_at is null     then 'hibernasi'
-        when extract(epoch from (now() - c.last_contact_at)) / 86400 < 10 then 'aktif'
-        when extract(epoch from (now() - c.last_contact_at)) / 86400 < 14 then 'perlu_followup'
-        when extract(epoch from (now() - c.last_contact_at)) / 86400 < 17 then 'at_risk'
-        else 'hibernasi'
-      end`;
+    const liveStage = () => liveStageFragment(db);
 
     const rows = await db`
       select
@@ -89,7 +101,7 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
     const [account] = await db`
       select
         c.id, c.store_name, c.category, c.area, c.address, c.postal_code,
-        c.account_type, c.stage, c.last_contact_at, c.first_seen_at,
+        c.account_type, ${liveStageFragment(db)} as stage, c.last_contact_at, c.first_seen_at,
         sp.id as owner_id, sp.full_name as owner_name, sp.code as owner_code
       from customers c
       left join salespeople sp on sp.id = c.owner_id
@@ -292,7 +304,7 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
       // Overdue: past due, not completed, for this rep
       db`
         select sa.id, sa.account_id, sa.action_type, sa.scheduled_for, sa.notes,
-               c.store_name, c.area, c.category, c.stage, c.account_type
+               c.store_name, c.area, c.category, ${liveStageFragment(db)} as stage, c.account_type
         from scheduled_actions sa
         join customers c on c.id = sa.account_id
         where sa.salesperson_id = ${rep_id}
@@ -304,7 +316,7 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
       // Today: due today, not completed
       db`
         select sa.id, sa.account_id, sa.action_type, sa.scheduled_for, sa.notes,
-               c.store_name, c.area, c.category, c.stage, c.account_type
+               c.store_name, c.area, c.category, ${liveStageFragment(db)} as stage, c.account_type
         from scheduled_actions sa
         join customers c on c.id = sa.account_id
         where sa.salesperson_id = ${rep_id}
@@ -317,7 +329,7 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
       // Upcoming: next 7 days
       db`
         select sa.id, sa.account_id, sa.action_type, sa.scheduled_for, sa.notes,
-               c.store_name, c.area, c.category, c.stage, c.account_type
+               c.store_name, c.area, c.category, ${liveStageFragment(db)} as stage, c.account_type
         from scheduled_actions sa
         join customers c on c.id = sa.account_id
         where sa.salesperson_id = ${rep_id}
@@ -420,7 +432,7 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
                v.notes, v.activity_type, v.visited_at, v.customer_id,
                v.customer_type, v.address, v.postal_code,
                s.full_name as salesperson_name,
-               c.stage, c.account_type
+               ${liveStageFragment(db)} as stage, c.account_type
         from visits v
         join salespeople s on s.id = v.salesperson_id
         left join customers c on c.id = v.customer_id
@@ -457,9 +469,18 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
 
 /**
  * Background cadence engine: advances repeating account stages based on
- * last_contact_at. Runs once on startup then every hour.
- * Aktif → perlu_followup after 14d, perlu_followup → at_risk after 28d.
- * Never auto-advances hibernasi.
+ * last_contact_at, keeping the persisted `stage` column (used by
+ * stage_history audit entries, exports, and anything reading `customers`
+ * in bulk outside the live-derivation queries) in agreement with the
+ * <10d/<14d/<17d thresholds that GET /api/accounts, My Day, and
+ * insights.ts already derive live. Runs once on startup then every hour
+ * — display code should never wait on this; it derives live itself.
+ *
+ * Aktif → perlu_followup after 10d, perlu_followup → at_risk after 14d.
+ * Also resets perlu_followup/at_risk back to aktif once a fresh visit
+ * lands (<10d) — stage previously only ever ratcheted forward, so an
+ * account a rep had just re-visited could stay stuck showing stale in
+ * anything reading the stored column. Never auto-advances hibernasi.
  */
 export async function startCadenceEngine(): Promise<void> {
   const db = getSql();
@@ -469,8 +490,8 @@ export async function startCadenceEngine(): Promise<void> {
     const sql = getSql();
     if (!sql) return;
     try {
+      const now10 = new Date(Date.now() - 10 * 24 * 3600 * 1000);
       const now14 = new Date(Date.now() - 14 * 24 * 3600 * 1000);
-      const now28 = new Date(Date.now() - 28 * 24 * 3600 * 1000);
 
       // aktif → perlu_followup
       const toFollowup = await sql<{ id: number }[]>`
@@ -478,7 +499,7 @@ export async function startCadenceEngine(): Promise<void> {
         set stage = 'perlu_followup'
         where account_type = 'repeating'
           and stage = 'aktif'
-          and (last_contact_at is null or last_contact_at < ${now14})
+          and (last_contact_at is null or last_contact_at < ${now10})
         returning id
       `;
 
@@ -488,18 +509,41 @@ export async function startCadenceEngine(): Promise<void> {
         set stage = 'at_risk'
         where account_type = 'repeating'
           and stage = 'perlu_followup'
-          and (last_contact_at is null or last_contact_at < ${now28})
+          and (last_contact_at is null or last_contact_at < ${now14})
         returning id
       `;
 
-      if (toFollowup.length > 0 || toAtRisk.length > 0) {
+      // perlu_followup / at_risk → aktif, once a fresh visit lands.
+      // `RETURNING` reflects the row AFTER the update, so the old stage
+      // (needed for the stage_history row below) is captured via a join
+      // against the pre-update snapshot rather than the UPDATE's own output.
+      const toAktif = await sql<{ id: number; old_stage: string }[]>`
+        with target as (
+          select id, stage as old_stage from customers
+          where account_type = 'repeating'
+            and stage in ('perlu_followup', 'at_risk')
+            and last_contact_at >= ${now10}
+        )
+        update customers
+        set stage = 'aktif'
+        from target
+        where customers.id = target.id
+        returning customers.id, target.old_stage
+      `;
+
+      if (toFollowup.length > 0 || toAtRisk.length > 0 || toAktif.length > 0) {
         for (const r of toFollowup) {
           await sql`insert into stage_history (account_id, old_stage, new_stage, changed_by) values (${r.id}, 'aktif', 'perlu_followup', null)`;
         }
         for (const r of toAtRisk) {
           await sql`insert into stage_history (account_id, old_stage, new_stage, changed_by) values (${r.id}, 'perlu_followup', 'at_risk', null)`;
         }
-        console.info(`[cadence] advanced ${toFollowup.length} → perlu_followup, ${toAtRisk.length} → at_risk`);
+        for (const r of toAktif) {
+          await sql`insert into stage_history (account_id, old_stage, new_stage, changed_by) values (${r.id}, ${r.old_stage}, 'aktif', null)`;
+        }
+        console.info(
+          `[cadence] advanced ${toFollowup.length} → perlu_followup, ${toAtRisk.length} → at_risk, ${toAktif.length} reset → aktif`,
+        );
       }
     } catch (err) {
       console.error("[cadence] tick error:", err);
