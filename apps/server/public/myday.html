@@ -298,6 +298,11 @@
     }
     .btn-urgent-visit:hover { background: rgba(155,34,38,.22); }
 
+    /* Always-visible follow-up notice (at-risk / perlu follow-up) */
+    .zone-followup { display: none; padding: 16px 0 0; }
+    .zone-followup.visible { display: block; }
+    .zone-followup-hint { color: var(--muted); font-size: 12px; margin: -4px 0 12px; }
+
     .spinner { color: var(--muted); font-size: 13px; text-align: center; padding: 40px 0; }
     .list-empty { color: var(--muted); font-size: 13.5px; text-align: center; padding: 40px 0; }
   </style>
@@ -329,6 +334,16 @@
     <button class="chip chip-blue"  data-filter="project_active" onclick="setFilter('project_active',this)">PROJECT AKTIF<span class="cnt" id="cnt-pa">—</span></button>
     <button class="chip chip-green" data-filter="won"     onclick="setFilter('won',this)">MENANG BLN INI<span class="cnt" id="cnt-won">—</span></button>
     <button class="chip"            data-filter="hibernasi" onclick="setFilter('hibernasi',this)">HIBERNASI<span class="cnt" id="cnt-hib">—</span></button>
+  </div>
+
+  <!-- Zone 1b: Perlu Tindak Lanjut — always-visible at-risk / follow-up notice -->
+  <div class="zone-followup" id="zone-followup">
+    <div class="zone-urgent-header">
+      <div class="zone-urgent-title">⚠ Perlu Tindak Lanjut</div>
+      <span class="zone-urgent-badge badge-red" id="followup-badge">0</span>
+    </div>
+    <div class="zone-followup-hint">Akun repeating yang sudah lama tidak dikunjungi — segera jadwalkan kunjungan.</div>
+    <div id="followup-notice-list"></div>
   </div>
 
   <!-- Zone 2: Today's Actions -->
@@ -525,6 +540,37 @@
     $("cnt-pa").textContent    = pc.project_active ?? '—';
     $("cnt-won").textContent   = pc.won_this_month ?? '—';
     $("cnt-hib").textContent   = pc.hibernasi ?? '—';
+  }
+
+  // Always-visible notice: repeating accounts that have gone quiet (at-risk /
+  // perlu follow-up), derived live from visit recency by the myday endpoint.
+  function renderFollowupNotice(items) {
+    const zone = $("zone-followup");
+    const list = $("followup-notice-list");
+    if (!items.length) { zone.classList.remove("visible"); return; }
+    // At-risk first, then perlu follow-up; each group oldest-contact first.
+    const ordered = [...items].sort((a, b) =>
+      (a.stage === b.stage ? 0 : a.stage === "at_risk" ? -1 : 1));
+    zone.classList.add("visible");
+    $("followup-badge").textContent = ordered.length;
+    list.innerHTML = ordered.map(a => {
+      const isRisk = a.stage === "at_risk";
+      const days = daysAgo(a.last_contact_at);
+      const daysStr = days === null ? 'Belum pernah dikunjungi'
+        : days === 0 ? 'Dikunjungi hari ini'
+        : `Terakhir ${days} hari lalu`;
+      const tag = isRisk ? 'AT RISK' : 'PERLU FOLLOW-UP';
+      return `
+        <div class="urgent-item item-${isRisk ? 'at_risk' : 'perlu'}">
+          <div>
+            <div class="urgent-store"><a href="/account?id=${a.id}">${esc(a.store_name)}</a></div>
+            <div class="urgent-meta">${esc(a.category??'')} · ${esc(a.area??'')} · ${daysStr} · ${tag}</div>
+          </div>
+          <div class="urgent-actions">
+            <button class="btn-urgent-visit" onclick="location.href='/visits?prefill=${a.id}'">+ Log Kunjungan</button>
+          </div>
+        </div>`;
+    }).join('');
   }
 
   function renderUrgentZone(filter) {
@@ -761,6 +807,7 @@
       $("account-list").innerHTML = '<div class="list-empty">Pilih sales untuk memuat portfolio…</div>';
       $("overdue-list").innerHTML = '<div class="zone2-empty">Pilih sales dahulu.</div>';
       $("today-list").innerHTML   = '<div class="zone2-empty">Pilih sales dahulu.</div>';
+      $("zone-followup").classList.remove("visible");
       return;
     }
 
@@ -773,6 +820,7 @@
 
     if (myday) {
       updateChipCounts(myday.portfolio_counts);
+      renderFollowupNotice(myday.at_risk ?? []);
       renderScheduledList(myday.overdue ?? [], 'overdue-list', true);
       renderScheduledList(myday.today   ?? [], 'today-list',   false);
       autoCollapseZone2(myday.overdue ?? [], myday.today ?? []);
