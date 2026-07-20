@@ -379,6 +379,7 @@
         const m = {
           prospek:'Prospek', penawaran:'Penawaran', negosiasi:'Negosiasi', won:'Won', gugur:'Gugur',
           aktif:'Aktif', perlu_followup:'Perlu Follow-up', at_risk:'At Risk', hibernasi:'Hibernasi',
+          repeat_order:'Repeat Order',
         };
         return m[s] || s;
       }
@@ -386,7 +387,10 @@
       function showStageSection(customer) {
         const sel = $("f-stage");
         sel.innerHTML = '<option value="">— Tidak ada perubahan tahap —</option>';
-        const stages = [['prospek','Prospek'],['penawaran','Penawaran'],['negosiasi','Negosiasi'],['won','Won'],['gugur','Gugur']];
+        const isProject = customer.account_type === 'project';
+        const stages = isProject
+          ? [['prospek','Prospek'],['penawaran','Penawaran'],['negosiasi','Negosiasi'],['won','Won'],['gugur','Gugur']]
+          : [['aktif','Aktif'],['perlu_followup','Perlu Follow-up'],['at_risk','At Risk'],['hibernasi','Hibernasi'],['repeat_order','Repeat Order']];
         stages.forEach(([val, lbl]) => {
           const o = document.createElement('option');
           o.value = val; o.textContent = lbl;
@@ -615,7 +619,9 @@
         acTimer = setTimeout(async () => {
           const q = $("f-store").value.trim();
           if (q.length < 2) return;
-          const res = await fetch(`/api/customers/suggest?q=${encodeURIComponent(q)}`)
+          const repId = $("f-sales").value;
+          const url = `/api/customers/suggest?q=${encodeURIComponent(q)}${repId ? `&rep_id=${repId}` : ''}`;
+          const res = await fetch(url)
             .then(r => r.json()).catch(() => ({ suggestions: [] }));
           const dl = $("store-dl");
           dl.innerHTML = "";
