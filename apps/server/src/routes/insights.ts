@@ -117,22 +117,27 @@ export async function insightsRoutes(app: FastifyInstance): Promise<void> {
         where owner_id = ${rep_id} and account_type = 'project'
         group by stage
       `,
+      // Derived from customers.last_contact_at (the single source of truth
+      // GET /api/accounts and My Day already use), not visits.visited_at —
+      // that earlier version silently included account_type = 'project'
+      // customers (visits.customer_id doesn't distinguish account type,
+      // and account_type='project' pipeline accounts don't have an
+      // aktif/perlu_followup/at_risk/hibernasi concept at all) and used
+      // "this rep's own last visit" rather than the account's true last
+      // contact, both of which could disagree with My Day for the same
+      // rep on the same day.
       db<{ health: string; cnt: number }[]>`
-        with customer_last_visit as (
-          select customer_id, max(visited_at) as last_visit
-          from visits
-          where salesperson_id = ${rep_id} and customer_id is not null
-          group by customer_id
-        )
         select
           case
-            when extract(epoch from (now() - last_visit)) / 86400 < 10 then 'aktif'
-            when extract(epoch from (now() - last_visit)) / 86400 < 14 then 'perlu_followup'
-            when extract(epoch from (now() - last_visit)) / 86400 < 17 then 'at_risk'
+            when last_contact_at is null then 'hibernasi'
+            when extract(epoch from (now() - last_contact_at)) / 86400 < 10 then 'aktif'
+            when extract(epoch from (now() - last_contact_at)) / 86400 < 14 then 'perlu_followup'
+            when extract(epoch from (now() - last_contact_at)) / 86400 < 17 then 'at_risk'
             else 'hibernasi'
           end as health,
           count(*)::int as cnt
-        from customer_last_visit
+        from customers
+        where owner_id = ${rep_id} and account_type = 'repeating'
         group by 1
       `,
     ]);
@@ -236,22 +241,21 @@ export async function insightsRoutes(app: FastifyInstance): Promise<void> {
         where account_type = 'project'
         group by stage
       `,
+      // See the per-rep query above for why this is derived from
+      // customers.last_contact_at (account_type = 'repeating' only)
+      // rather than visits.visited_at.
       db<{ health: string; cnt: number }[]>`
-        with customer_last_visit as (
-          select customer_id, max(visited_at) as last_visit
-          from visits
-          where customer_id is not null
-          group by customer_id
-        )
         select
           case
-            when extract(epoch from (now() - last_visit)) / 86400 < 10 then 'aktif'
-            when extract(epoch from (now() - last_visit)) / 86400 < 14 then 'perlu_followup'
-            when extract(epoch from (now() - last_visit)) / 86400 < 17 then 'at_risk'
+            when last_contact_at is null then 'hibernasi'
+            when extract(epoch from (now() - last_contact_at)) / 86400 < 10 then 'aktif'
+            when extract(epoch from (now() - last_contact_at)) / 86400 < 14 then 'perlu_followup'
+            when extract(epoch from (now() - last_contact_at)) / 86400 < 17 then 'at_risk'
             else 'hibernasi'
           end as health,
           count(*)::int as cnt
-        from customer_last_visit
+        from customers
+        where account_type = 'repeating'
         group by 1
       `,
     ]);
