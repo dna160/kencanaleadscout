@@ -112,7 +112,16 @@ export async function miraeRoutes(app: FastifyInstance): Promise<void> {
         count(v.id)::int                                          as visit_count,
         max(v.visited_at)                                         as last_visit_at,
         count(*) filter (where v.customer_type = 'new')::int      as new_count,
-        count(*) filter (where v.customer_type = 'old')::int      as old_count
+        count(*) filter (where v.customer_type = 'old')::int      as old_count,
+        -- Live repeating health from visit recency (same thresholds as retail
+        -- insights: <10d aktif, <14d perlu_followup, <17d at_risk, else hibernasi)
+        -- so My Day can flag customers that need a follow-up visit.
+        case
+          when extract(epoch from (now() - max(v.visited_at))) / 86400 < 10 then 'aktif'
+          when extract(epoch from (now() - max(v.visited_at))) / 86400 < 14 then 'perlu_followup'
+          when extract(epoch from (now() - max(v.visited_at))) / 86400 < 17 then 'at_risk'
+          else 'hibernasi'
+        end                                                       as health
       from mirae_customers c
       join mirae_visits v on v.customer_id = c.id
       ${rep_id ? db`where v.salesperson_id = ${rep_id}` : db``}

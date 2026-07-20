@@ -36,10 +36,25 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
     const offset   = Number(q.offset) || 0;
     const sortUrgency = q.sort === "urgency";
 
+    // Live "repeating health" derived from visit recency, so the pipeline (and
+    // My Day) reflect reality without relying on the background cadence job.
+    // Mirrors the insights thresholds: <10d aktif, <14d perlu_followup,
+    // <17d at_risk, else hibernasi. Project accounts keep their manually-managed
+    // pipeline stage; repeating accounts never contacted count as hibernasi.
+    const liveStage = () => db`
+      case
+        when c.account_type <> 'repeating' then c.stage
+        when c.last_contact_at is null     then 'hibernasi'
+        when extract(epoch from (now() - c.last_contact_at)) / 86400 < 10 then 'aktif'
+        when extract(epoch from (now() - c.last_contact_at)) / 86400 < 14 then 'perlu_followup'
+        when extract(epoch from (now() - c.last_contact_at)) / 86400 < 17 then 'at_risk'
+        else 'hibernasi'
+      end`;
+
     const rows = await db`
       select
         c.id, c.store_name, c.category, c.area, c.address,
-        c.account_type, c.stage, c.last_contact_at, c.first_seen_at,
+        c.account_type, ${liveStage()} as stage, c.last_contact_at, c.first_seen_at,
         sp.full_name as owner_name, sp.code as owner_code,
         (
           select count(*) from actions a where a.account_id = c.id
@@ -47,13 +62,13 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
       from customers c
       left join salespeople sp on sp.id = c.owner_id
       where true
-        ${stage     ? db`and c.stage = ${stage}`                               : db``}
+        ${stage     ? db`and ${liveStage()} = ${stage}`                       : db``}
         ${rep_id    ? db`and c.owner_id = ${rep_id}`                           : db``}
         ${area      ? db`and lower(c.area) = lower(${area})`                  : db``}
         ${acct_type ? db`and c.account_type = ${acct_type}`                   : db``}
         ${search    ? db`and (lower(c.store_name) like lower(${search}) or lower(c.area) like lower(${search}))` : db``}
       order by ${sortUrgency
-        ? db`case c.stage when 'at_risk' then 1 when 'perlu_followup' then 2 when 'negosiasi' then 3 when 'penawaran' then 4 when 'prospek' then 5 when 'aktif' then 6 when 'won' then 7 when 'gugur' then 8 when 'hibernasi' then 9 else 10 end, c.last_contact_at desc nulls last`
+        ? db`case ${liveStage()} when 'at_risk' then 1 when 'perlu_followup' then 2 when 'negosiasi' then 3 when 'penawaran' then 4 when 'prospek' then 5 when 'aktif' then 6 when 'won' then 7 when 'gugur' then 8 when 'hibernasi' then 9 else 10 end, c.last_contact_at desc nulls last`
         : db`c.last_contact_at desc nulls last`},
       c.store_name
       limit ${limit} offset ${offset}
@@ -312,13 +327,23 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
         order by sa.scheduled_for asc
         limit 50
       `,
-      // At-risk accounts owned by this rep
+      // At-risk repeating accounts owned by this rep — derived live from visit
+      // recency (same thresholds as insights) so the notice matches the insights
+      // view rather than a possibly-stale stored stage. 10–16 days = the notice
+      // window (perlu_followup 10–13, at_risk 14–16).
       db`
-        select c.id, c.store_name, c.area, c.category, c.stage, c.account_type, c.last_contact_at
+        select c.id, c.store_name, c.area, c.category, c.account_type, c.last_contact_at,
+          case
+            when extract(epoch from (now() - c.last_contact_at)) / 86400 < 14 then 'perlu_followup'
+            else 'at_risk'
+          end as stage
         from customers c
         where c.owner_id = ${rep_id}
-          and c.stage in ('at_risk', 'perlu_followup')
-        order by c.last_contact_at asc nulls first
+          and c.account_type = 'repeating'
+          and c.last_contact_at is not null
+          and extract(epoch from (now() - c.last_contact_at)) / 86400 >= 10
+          and extract(epoch from (now() - c.last_contact_at)) / 86400 <  17
+        order by c.last_contact_at asc
         limit 20
       `,
       // Quick stats for today
@@ -336,22 +361,37 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
           )::int as overdue_count,
           (select count(*) from customers c
            where c.owner_id = ${rep_id}
-             and c.stage in ('at_risk', 'perlu_followup')
+             and c.account_type = 'repeating'
+             and c.last_contact_at is not null
+             and extract(epoch from (now() - c.last_contact_at)) / 86400 >= 10
+             and extract(epoch from (now() - c.last_contact_at)) / 86400 <  17
           )::int as at_risk_count
       `,
-      // Portfolio counts by stage (Zone 1 chips)
+      // Portfolio counts by stage (Zone 1 chips). Repeating buckets are derived
+      // live from visit recency (matching insights); pipeline buckets stay stored.
       db`
         select
           count(*)::int                                                                        as total,
-          count(*) filter (where stage = 'aktif')::int                                        as aktif,
-          count(*) filter (where stage = 'perlu_followup')::int                               as perlu_followup,
-          count(*) filter (where stage = 'at_risk')::int                                      as at_risk,
+          count(*) filter (where account_type = 'repeating' and health = 'aktif')::int         as aktif,
+          count(*) filter (where account_type = 'repeating' and health = 'perlu_followup')::int as perlu_followup,
+          count(*) filter (where account_type = 'repeating' and health = 'at_risk')::int       as at_risk,
           count(*) filter (where account_type = 'project'
                                 and stage not in ('won','gugur'))::int                         as project_active,
-          count(*) filter (where stage = 'hibernasi')::int                                    as hibernasi,
+          count(*) filter (where account_type = 'repeating' and health = 'hibernasi')::int     as hibernasi,
           count(*) filter (where stage = 'won')::int                                          as won_total
-        from customers
-        where owner_id = ${rep_id}
+        from (
+          select account_type, stage,
+            case
+              when account_type <> 'repeating'                                     then null
+              when last_contact_at is null                                         then 'hibernasi'
+              when extract(epoch from (now() - last_contact_at)) / 86400 < 10       then 'aktif'
+              when extract(epoch from (now() - last_contact_at)) / 86400 < 14       then 'perlu_followup'
+              when extract(epoch from (now() - last_contact_at)) / 86400 < 17       then 'at_risk'
+              else 'hibernasi'
+            end as health
+          from customers
+          where owner_id = ${rep_id}
+        ) t
       `,
       // Won this month (stage transitions)
       db`

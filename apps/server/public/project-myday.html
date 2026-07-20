@@ -161,6 +161,15 @@
     .acct-badge { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 99px; }
     .acct-badge-new { background: rgba(6,122,111,.22); color: #5eead4; }
     .acct-badge-old { background: rgba(62,155,79,.18); color: #9fe0b9; }
+
+    /* ── Perlu Tindak Lanjut (follow-up notice) ──────────────────────── */
+    .fu-hint { color: var(--muted); font-size: 12px; margin-bottom: 10px; }
+    .fu-card { border-left: 3px solid; }
+    .fu-card.fu-at_risk        { border-left-color: rgba(155,34,38,.7); }
+    .fu-card.fu-perlu_followup { border-left-color: rgba(217,119,6,.7); }
+    .fu-tag { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 99px; }
+    .fu-tag.fu-tag-at_risk        { background: rgba(155,34,38,.25); color: #f8a0a0; }
+    .fu-tag.fu-tag-perlu_followup { background: rgba(217,119,6,.22); color: #fbbf24; }
   </style>
 </head>
 <body>
@@ -193,6 +202,15 @@
       <span class="sync-label" id="sync-label"></span>
     </div>
     <div id="visit-list"><div class="spinner">Pilih sales untuk memuat kunjungan hari ini…</div></div>
+  </div>
+
+  <div class="section" id="followup-section" style="display:none">
+    <div class="section-header">
+      <div class="section-title">⚠ Perlu Tindak Lanjut</div>
+      <span class="section-badge" id="followup-count">0</span>
+    </div>
+    <div class="fu-hint">Pelanggan yang belum dikunjungi ≥10 hari — segera jadwalkan kunjungan.</div>
+    <div id="followup-list"></div>
   </div>
 
   <div class="portfolio-section" id="portfolio-section" style="display:none">
@@ -394,12 +412,37 @@
     }).join("");
   }
 
+  const HEALTH_LABEL = { at_risk: "At Risk", perlu_followup: "Perlu Follow-up" };
+
+  function renderFollowups() {
+    const sec  = $("followup-section");
+    const list = $("followup-list");
+    const items = allPortfolio
+      .filter(c => c.health === "at_risk" || c.health === "perlu_followup")
+      .sort((a, b) => (a.health === b.health ? 0 : a.health === "at_risk" ? -1 : 1));
+    if (!items.length) { sec.style.display = "none"; return; }
+    sec.style.display = "";
+    $("followup-count").textContent = items.length;
+    list.innerHTML = items.map(c => {
+      const d = daysAgo(c.last_visit_at);
+      return `<div class="acct-card fu-card fu-${c.health}">
+        <div class="acct-name">${esc(c.store_name)}</div>
+        <div class="acct-meta">${esc(c.category ?? "")} · ${esc(c.area ?? "")}</div>
+        <div class="acct-row2">
+          <span class="acct-days days-crit">↻ ${daysLabel(d)}</span>
+          <span class="fu-tag fu-tag-${c.health}">${HEALTH_LABEL[c.health]}</span>
+        </div>
+      </div>`;
+    }).join("");
+  }
+
   async function loadPortfolio(repId) {
     $("portfolio-section").style.display = "";
     $("portfolio-list").innerHTML = '<div class="spinner">Memuat portfolio…</div>';
     const res = await fetch(`/api/project/customers/portfolio?rep_id=${repId}`)
       .then(r => r.json()).catch(() => ({ customers: [] }));
     allPortfolio = res.customers ?? [];
+    renderFollowups();
     renderPortfolio();
   }
 
@@ -465,6 +508,7 @@
         loadPortfolio(currentRepId);
       } else {
         $("portfolio-section").style.display = "none";
+        $("followup-section").style.display = "none";
         allPortfolio = [];
       }
       load();
