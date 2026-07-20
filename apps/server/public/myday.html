@@ -223,6 +223,7 @@
     .acct-card.card-penawaran,
     .acct-card.card-negosiasi { border-left: 3px solid rgba(46,111,214,.5); }
     .acct-card.card-won { border-left: 3px solid rgba(44,110,73,.7); }
+    .acct-card.card-repeat_order { border-left: 3px solid rgba(44,110,73,.85); }
     .acct-row1 { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
     .acct-name { font-family: var(--display); font-size: 15px; font-weight: 700; }
     .acct-name a { color: inherit; text-decoration: none; }
@@ -265,6 +266,37 @@
     .stg-negosiasi { background: rgba(221,107,32,.2); color: #f6b87a; }
     .stg-won       { background: rgba(44,110,73,.3); color: #9fe0b9; }
     .stg-gugur     { background: rgba(155,34,38,.2); color: #f8a0a0; }
+    .stg-repeat    { background: rgba(44,110,73,.35); color: #6ee7b7; }
+
+    /* ── Zone 2 urgent panel ────────────────────────────────────────── */
+    .zone-urgent { display: none; padding: 16px 0 0; }
+    .zone-urgent.visible { display: block; }
+    .zone-urgent-header {
+      display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
+    }
+    .zone-urgent-title { font-family: var(--display); font-size: 15px; font-weight: 700; }
+    .zone-urgent-badge {
+      border-radius: 99px; font-size: 11px; font-weight: 700; padding: 2px 9px;
+    }
+    .badge-red   { background: rgba(155,34,38,.25); color: #f8a0a0; }
+    .badge-amber { background: rgba(217,119,6,.25); color: #fbbf24; }
+    .urgent-item {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      padding: 11px 14px; border: 1px solid var(--line); border-radius: 12px;
+      background: rgba(255,255,255,.03); margin-bottom: 8px;
+    }
+    .urgent-item.item-at_risk    { border-left: 3px solid rgba(155,34,38,.6); }
+    .urgent-item.item-perlu      { border-left: 3px solid rgba(217,119,6,.6); }
+    .urgent-store { font-weight: 600; font-size: 13.5px; }
+    .urgent-store a { color: inherit; text-decoration: none; }
+    .urgent-store a:hover { color: var(--gold); }
+    .urgent-meta { color: var(--muted); font-size: 12px; margin-top: 3px; }
+    .urgent-actions { display: flex; gap: 7px; flex-shrink: 0; }
+    .btn-urgent-visit {
+      font-size: 12px; font-weight: 600; padding: 5px 11px; border-radius: 8px; cursor: pointer;
+      border: 1px solid rgba(155,34,38,.4); background: rgba(155,34,38,.12); color: #f8a0a0;
+    }
+    .btn-urgent-visit:hover { background: rgba(155,34,38,.22); }
 
     .spinner { color: var(--muted); font-size: 13px; text-align: center; padding: 40px 0; }
     .list-empty { color: var(--muted); font-size: 13.5px; text-align: center; padding: 40px 0; }
@@ -315,6 +347,15 @@
         <div id="today-list"><div class="zone2-empty">Memuat…</div></div>
       </div>
     </div>
+  </div>
+
+  <!-- Zone urgent: At Risk / Perlu Follow-up attention panel (shown when chip active) -->
+  <div class="zone-urgent" id="zone-urgent">
+    <div class="zone-urgent-header">
+      <div class="zone-urgent-title" id="urgent-title">Butuh Perhatian</div>
+      <span class="zone-urgent-badge" id="urgent-badge">0</span>
+    </div>
+    <div id="urgent-list"></div>
   </div>
 
   <!-- Zone 2b: Resolved Escalations (shown only when there are items) -->
@@ -454,10 +495,10 @@
   function stageBadge(s) {
     const cls = {aktif:'stg-aktif',perlu_followup:'stg-perlu',at_risk:'stg-at_risk',
       hibernasi:'stg-hibernasi',prospek:'stg-prospek',penawaran:'stg-penawaran',
-      negosiasi:'stg-negosiasi',won:'stg-won',gugur:'stg-gugur'};
+      negosiasi:'stg-negosiasi',won:'stg-won',gugur:'stg-gugur',repeat_order:'stg-repeat'};
     const lbl = {aktif:'Aktif',perlu_followup:'Perlu Follow-up',at_risk:'At Risk',
       hibernasi:'Hibernasi',prospek:'Prospek',penawaran:'Penawaran',negosiasi:'Negosiasi',
-      won:'Won',gugur:'Gugur'};
+      won:'Won',gugur:'Gugur',repeat_order:'Repeat Order'};
     return `<span class="stg ${cls[s]??''}">${lbl[s]??s}</span>`;
   }
 
@@ -486,10 +527,44 @@
     $("cnt-hib").textContent   = pc.hibernasi ?? '—';
   }
 
+  function renderUrgentZone(filter) {
+    const zone = $("zone-urgent");
+    const URGENT = ["at_risk", "perlu_followup"];
+    if (!URGENT.includes(filter) || !allAccounts.length) {
+      zone.classList.remove("visible");
+      return;
+    }
+    const isRisk = filter === "at_risk";
+    const matches = allAccounts.filter(a => a.stage === filter);
+    if (!matches.length) { zone.classList.remove("visible"); return; }
+    zone.classList.add("visible");
+    $("urgent-title").textContent = isRisk ? "Akun At Risk" : "Perlu Follow-up";
+    const badge = $("urgent-badge");
+    badge.className = `zone-urgent-badge ${isRisk ? "badge-red" : "badge-amber"}`;
+    badge.textContent = matches.length;
+    $("urgent-list").innerHTML = matches.map(a => {
+      const days = daysAgo(a.last_contact_at);
+      const daysStr = days === null ? 'Belum pernah dikunjungi'
+        : days === 0 ? 'Dikunjungi hari ini'
+        : `Terakhir ${days} hari lalu`;
+      return `
+        <div class="urgent-item item-${isRisk ? 'at_risk' : 'perlu'}">
+          <div>
+            <div class="urgent-store"><a href="/account?id=${a.id}">${esc(a.store_name)}</a></div>
+            <div class="urgent-meta">${esc(a.category??'')} · ${esc(a.area??'')} · ${daysStr}</div>
+          </div>
+          <div class="urgent-actions">
+            <button class="btn-urgent-visit" onclick="location.href='/visits?prefill=${a.id}'">+ Log Kunjungan</button>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
   window.setFilter = function(filter, chipEl) {
     activeFilter = filter;
     document.querySelectorAll(".chip").forEach(c => c.classList.remove("active"));
     if (chipEl) chipEl.classList.add("active");
+    renderUrgentZone(filter);
     renderAccountList();
   };
 

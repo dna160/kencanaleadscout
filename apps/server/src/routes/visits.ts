@@ -62,7 +62,7 @@ export async function visitsRoutes(app: FastifyInstance): Promise<void> {
     // Optional explicit stage update submitted from the visit form.
     const new_stage_raw = b.new_stage ? String(b.new_stage).trim().toLowerCase() : null;
     const VALID_PROJECT_STAGES   = new Set(["prospek","penawaran","negosiasi","won","gugur"]);
-    const VALID_REPEATING_STAGES = new Set(["aktif","perlu_followup","at_risk","hibernasi"]);
+    const VALID_REPEATING_STAGES = new Set(["aktif","perlu_followup","at_risk","hibernasi","repeat_order"]);
     const valid_stages  = account_type === "project" ? VALID_PROJECT_STAGES : VALID_REPEATING_STAGES;
     const new_stage     = new_stage_raw && valid_stages.has(new_stage_raw) ? new_stage_raw : null;
 
@@ -623,11 +623,12 @@ Fokus pada insight yang actionable. Jangan ulangi daftar kunjungan.`;
   });
 
   // ── Store name autocomplete ───────────────────────────────────────────────
-  app.get<{ Querystring: { q?: string } }>("/api/customers/suggest", async (request, reply) => {
+  app.get<{ Querystring: { q?: string; rep_id?: string } }>("/api/customers/suggest", async (request, reply) => {
     const db = getSql();
     if (!db) return reply.code(503).send({ error: "Database not configured." });
 
     const q = request.query.q ? `%${request.query.q}%` : "%";
+    const rep_id = request.query.rep_id ? Number(request.query.rep_id) : null;
     const rows = await db<{
       id: number; store_name: string; category: string; area: string | null;
       account_type: string | null; stage: string | null;
@@ -647,6 +648,7 @@ Fokus pada insight yang actionable. Jangan ulangi daftar kunjungan.`;
         ) as last_pic_name
       from customers c
       where lower(c.store_name) like lower(${q})
+        ${rep_id ? db`and c.owner_id = ${rep_id}` : db``}
       order by c.store_name
       limit 20
     `;
