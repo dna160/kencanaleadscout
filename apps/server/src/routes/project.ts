@@ -1,11 +1,14 @@
 /**
  * Project Visitation Log routes — isolated module.
  *
- * All database tables are prefixed with mirae_.
+ * All database tables are prefixed with project_.
  * All API endpoints are under /api/project/.
  *
- * Salespeople: Brilliano (BRL), Bayu (BYU), Sarah (SRH).
- * No pipeline/accounts — pure visitation log + insights.
+ * Salespeople: Ali, Dava, Deasy, Febi, Havi, Raafi, Yeni, Yupi, Biya.
+ * Visitation log + insights, plus the same persisted health cadence as
+ * Module D's `customers` table (see startProjectCadenceEngine below) —
+ * display always derives health live from last_contact_at; the cadence
+ * job just keeps the stored stage/audit trail in sync with that.
  */
 import type { FastifyInstance } from "fastify";
 import * as XLSX from "xlsx";
@@ -113,19 +116,24 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
         max(v.visited_at)                                         as last_visit_at,
         count(*) filter (where v.customer_type = 'new')::int      as new_count,
         count(*) filter (where v.customer_type = 'old')::int      as old_count,
-        -- Live repeating health from visit recency (same thresholds as retail
-        -- insights: <10d aktif, <14d perlu_followup, <17d at_risk, else hibernasi)
-        -- so My Day can flag customers that need a follow-up visit.
+        -- Live health from c.last_contact_at (true last contact by ANY rep,
+        -- same column the background cadence job advances/resets) rather
+        -- than this filtered view's own max(v.visited_at) — a customer
+        -- another rep visited recently must not read as stale here just
+        -- because this rep hasn't personally been back. Same thresholds
+        -- as retail: <10d aktif, <14d perlu_followup, <17d at_risk, else
+        -- hibernasi.
         case
-          when extract(epoch from (now() - max(v.visited_at))) / 86400 < 10 then 'aktif'
-          when extract(epoch from (now() - max(v.visited_at))) / 86400 < 14 then 'perlu_followup'
-          when extract(epoch from (now() - max(v.visited_at))) / 86400 < 17 then 'at_risk'
+          when c.last_contact_at is null then 'hibernasi'
+          when extract(epoch from (now() - c.last_contact_at)) / 86400 < 10 then 'aktif'
+          when extract(epoch from (now() - c.last_contact_at)) / 86400 < 14 then 'perlu_followup'
+          when extract(epoch from (now() - c.last_contact_at)) / 86400 < 17 then 'at_risk'
           else 'hibernasi'
         end                                                       as health
       from project_customers c
       join project_visits v on v.customer_id = c.id
       ${rep_id ? db`where v.salesperson_id = ${rep_id}` : db``}
-      group by c.id, c.store_name, c.category, c.area, c.address
+      group by c.id, c.store_name, c.category, c.area, c.address, c.last_contact_at
       order by max(v.visited_at) desc
       limit 300
     `;
@@ -171,15 +179,26 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
 
     let customer_id: number | null = null;
     try {
+      // last_contact_at drives the live health derivation everywhere
+      // (customers/portfolio, and the stage cadence job below) — every
+      // visit bumps it to now(), same as Module D's customers table.
+      // stage is preserved on conflict (except hibernasi, which only a
+      // human/cadence decision should move out of) rather than reset to
+      // 'aktif', matching accounts.ts's upsert exactly.
       const [cust] = await db<{ id: number }[]>`
         insert into project_customers
-          (store_name, category, area, address, postal_code, first_seen_at, created_by)
+          (store_name, category, area, address, postal_code, first_seen_at, created_by, stage, last_contact_at)
         values
-          (${store_name}, ${category}, ${area}, ${address}, ${postal_code}, now(), ${salesperson_id})
+          (${store_name}, ${category}, ${area}, ${address}, ${postal_code}, now(), ${salesperson_id}, 'aktif', now())
         on conflict (lower(trim(store_name)), lower(coalesce(area, '')))
         do update set
-          address     = coalesce(project_customers.address,     excluded.address),
-          postal_code = coalesce(project_customers.postal_code, excluded.postal_code)
+          address         = coalesce(project_customers.address,     excluded.address),
+          postal_code     = coalesce(project_customers.postal_code, excluded.postal_code),
+          last_contact_at = excluded.last_contact_at,
+          stage           = case
+            when project_customers.stage = 'hibernasi' then project_customers.stage
+            else coalesce(project_customers.stage, excluded.stage)
+          end
         returning id
       `;
       customer_id = cust?.id ?? null;
@@ -744,4 +763,88 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
       repeating_stage_counts: {},
     };
   });
+}
+
+/**
+ * Background cadence engine for the Project module — same system as
+ * Module D's startCadenceEngine (accounts.ts), scoped to project_customers
+ * / project_stage_history instead of customers / stage_history. Keeps the
+ * persisted `stage` column and its audit trail in agreement with the
+ * <10d/<14d thresholds customers/portfolio already derives live; nothing
+ * in this module reads the stored column for display, so a lagging tick
+ * never shows stale data — it only keeps bulk reads/exports/history
+ * correct. Runs once on startup then every hour.
+ *
+ * Aktif → perlu_followup after 10d, perlu_followup → at_risk after 14d.
+ * Also resets perlu_followup/at_risk back to aktif once a fresh visit
+ * lands (<10d). Never auto-advances hibernasi.
+ */
+export async function startProjectCadenceEngine(): Promise<void> {
+  const db = getSql();
+  if (!db) return;
+
+  async function tick(): Promise<void> {
+    const sql = getSql();
+    if (!sql) return;
+    try {
+      const now10 = new Date(Date.now() - 10 * 24 * 3600 * 1000);
+      const now14 = new Date(Date.now() - 14 * 24 * 3600 * 1000);
+
+      // aktif → perlu_followup
+      const toFollowup = await sql<{ id: number }[]>`
+        update project_customers
+        set stage = 'perlu_followup'
+        where stage = 'aktif'
+          and (last_contact_at is null or last_contact_at < ${now10})
+        returning id
+      `;
+
+      // perlu_followup → at_risk
+      const toAtRisk = await sql<{ id: number }[]>`
+        update project_customers
+        set stage = 'at_risk'
+        where stage = 'perlu_followup'
+          and (last_contact_at is null or last_contact_at < ${now14})
+        returning id
+      `;
+
+      // perlu_followup / at_risk → aktif, once a fresh visit lands.
+      // `RETURNING` reflects the row AFTER the update, so the old stage
+      // (needed for the stage_history row below) is captured via a join
+      // against the pre-update snapshot rather than the UPDATE's own output.
+      const toAktif = await sql<{ id: number; old_stage: string }[]>`
+        with target as (
+          select id, stage as old_stage from project_customers
+          where stage in ('perlu_followup', 'at_risk')
+            and last_contact_at >= ${now10}
+        )
+        update project_customers
+        set stage = 'aktif'
+        from target
+        where project_customers.id = target.id
+        returning project_customers.id, target.old_stage
+      `;
+
+      if (toFollowup.length > 0 || toAtRisk.length > 0 || toAktif.length > 0) {
+        for (const r of toFollowup) {
+          await sql`insert into project_stage_history (account_id, old_stage, new_stage, changed_by) values (${r.id}, 'aktif', 'perlu_followup', null)`;
+        }
+        for (const r of toAtRisk) {
+          await sql`insert into project_stage_history (account_id, old_stage, new_stage, changed_by) values (${r.id}, 'perlu_followup', 'at_risk', null)`;
+        }
+        for (const r of toAktif) {
+          await sql`insert into project_stage_history (account_id, old_stage, new_stage, changed_by) values (${r.id}, ${r.old_stage}, 'aktif', null)`;
+        }
+        console.info(
+          `[project-cadence] advanced ${toFollowup.length} → perlu_followup, ${toAtRisk.length} → at_risk, ${toAktif.length} reset → aktif`,
+        );
+      }
+    } catch (err) {
+      console.error("[project-cadence] tick error:", err);
+    }
+  }
+
+  // Run once on boot, then every hour.
+  void tick();
+  setInterval(() => void tick(), 60 * 60 * 1000);
 }

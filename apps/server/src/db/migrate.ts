@@ -677,6 +677,40 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
       )
     `;
 
+    // Persisted health cadence (same system as Module D's `customers` table —
+    // see accounts.ts's startCadenceEngine / startProjectCadenceEngine).
+    // Display always derives health live from last_contact_at; these columns
+    // exist so bulk reads/exports and the stage_history audit trail don't
+    // need a live computation, and stay in sync via the hourly cadence job.
+    await db`alter table project_customers add column if not exists stage          text default 'aktif'`;
+    await db`alter table project_customers add column if not exists last_contact_at timestamptz`;
+
+    // Backfill last_contact_at from visit history for rows that pre-date these columns.
+    await db`
+      update project_customers c
+      set last_contact_at = v.last_visited_at
+      from (
+        select customer_id, max(visited_at) as last_visited_at
+        from project_visits
+        where customer_id is not null
+        group by customer_id
+      ) v
+      where c.id = v.customer_id
+        and c.last_contact_at is null
+    `;
+
+    await db`
+      create table if not exists project_stage_history (
+        id          bigserial primary key,
+        account_id  bigint not null references project_customers(id),
+        old_stage   text,
+        new_stage   text not null,
+        changed_by  bigint references project_salespeople(id),
+        changed_at  timestamptz not null default now()
+      )
+    `;
+    await db`create index if not exists project_stage_history_account_idx on project_stage_history (account_id, changed_at desc)`;
+
     // Seed categories + areas (Project-specific)
     for (const v of ["Project", "HO", "Aplikator", "Arsitek", "Design & Build", "Build Contractor"]) {
       await db`insert into project_visit_lists (type, value) values ('category', ${v}) on conflict do nothing`;

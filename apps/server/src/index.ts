@@ -33,7 +33,7 @@ import { insightsRoutes } from "./routes/insights.js";
 import { accountsRoutes, startCadenceEngine } from "./routes/accounts.js";
 import { escalationsRoutes } from "./routes/escalations.js";
 import { miraeRoutes } from "./routes/mirae.js";
-import { projectRoutes } from "./routes/project.js";
+import { projectRoutes, startProjectCadenceEngine } from "./routes/project.js";
 import { colorGatewayRoutes } from "./routes/color-gateway.js";
 import { syHunterRoutes } from "./routes/sy-hunter.js";
 
@@ -138,6 +138,7 @@ async function main(): Promise<void> {
 
   await bootDatabase(app);
   startCadenceEngine();
+  startProjectCadenceEngine();
 
   try {
     await app.listen({ host: config.host, port: config.port });
