@@ -9,6 +9,7 @@
  */
 import type { Sql } from "./client.js";
 import { getSql } from "./client.js";
+import { normalizeProjectCategory } from "../util/projectCategory.js";
 
 export async function runMigrations(db: Sql = getSql()!): Promise<void> {
   // ── Legacy Modules A–C (best-effort; failures must not block Module D) ────
@@ -693,6 +694,22 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
       "Bogor",
     ]) {
       await db`insert into project_visit_lists (type, value) values ('area', ${v}) on conflict do nothing`;
+    }
+
+    // Backfill: canonicalize free-text categories so the insights heatmap groups
+    // cleanly. Reps typed these by hand ("HO"/"ho", "Project JAC Blibli Tower",
+    // "Cafe"), which fragments a single bucket into many. Map each distinct value
+    // onto the canonical set; off-list values fall back to "Project".
+    for (const table of ["project_visits", "project_customers"] as const) {
+      const rows = await db<{ category: string }[]>`
+        select distinct category from ${db(table)} where category is not null
+      `;
+      for (const { category } of rows) {
+        const canon = normalizeProjectCategory(category);
+        if (canon !== category) {
+          await db`update ${db(table)} set category = ${canon} where category = ${category}`;
+        }
+      }
     }
 
     // Seed Project salespeople

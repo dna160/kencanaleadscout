@@ -10,6 +10,7 @@
 import type { FastifyInstance } from "fastify";
 import * as XLSX from "xlsx";
 import { getSql } from "../db/client.js";
+import { normalizeProjectCategory } from "../util/projectCategory.js";
 
 const CUSTOMER_TYPES = new Set(["new", "old"]);
 
@@ -132,7 +133,8 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
     const pic_name     = b.pic_name     ? String(b.pic_name).trim()     : null;
     const store_name   = String(b.store_name   ?? "").trim();
     const customer_type = String(b.customer_type ?? "").trim().toLowerCase();
-    const category     = String(b.category     ?? "").trim();
+    const category_raw = String(b.category     ?? "").trim();
+    const category     = normalizeProjectCategory(category_raw);
     const address      = b.address      ? String(b.address).trim()      : null;
     const area         = String(b.area ?? "").trim()
       .replace(/\b\S+/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
@@ -149,7 +151,7 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(400).send({ error: "store_name is required." });
     if (!CUSTOMER_TYPES.has(customer_type))
       return reply.code(400).send({ error: "customer_type must be 'new' or 'old'." });
-    if (!category)
+    if (!category_raw)
       return reply.code(400).send({ error: "category is required." });
     if (!area)
       return reply.code(400).send({ error: "area is required." });
