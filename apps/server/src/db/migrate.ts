@@ -565,7 +565,7 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
     `;
 
     // Seed categories + areas
-    for (const v of ["Toko", "Workshop", "Aplikator", "Kontraktor", "Distributor", "Advertising/Signage", "Project", "Other"]) {
+    for (const v of ["Toko", "Workshop", "Aplikator", "Kontraktor", "Distributor", "Advertising/Signage", "Arsitek", "Project", "Other"]) {
       await db`insert into mirae_visit_lists (type, value) values ('category', ${v}) on conflict do nothing`;
     }
     for (const v of [

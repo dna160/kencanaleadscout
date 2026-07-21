@@ -19,6 +19,7 @@ export const MIRAE_CATEGORIES = [
   "Kontraktor",
   "Distributor",
   "Advertising/Signage",
+  "Arsitek",
   "Project",
   "Other",
 ] as const;
@@ -74,6 +75,14 @@ const ALIASES: Record<string, MiraeCategory> = {
   signmaker: "Advertising/Signage",
   percetakan: "Advertising/Signage",
   digitalprinting: "Advertising/Signage",
+  // Arsitek (architect / designer / design-&-build — reps type many variants)
+  arsitek: "Arsitek",
+  arsitektur: "Arsitek",
+  architect: "Arsitek",
+  designer: "Arsitek",
+  desainer: "Arsitek",
+  interiordesigner: "Arsitek",
+  interiordesign: "Arsitek",
   // Project
   project: "Project",
   projek: "Project",
@@ -94,5 +103,11 @@ const ALIASES: Record<string, MiraeCategory> = {
 export function normalizeMiraeCategory(raw: string | null | undefined): MiraeCategory {
   const k = key(String(raw ?? ""));
   if (!k) return "Other";
-  return ALIASES[k] ?? "Other";
+  if (ALIASES[k]) return ALIASES[k];
+  // Architect/designer segment is hand-typed with many spellings & typos
+  // ("ARCGITECT", "Arsitec design and built", "INTERIOR DESIGNER"). Catch the
+  // common stems so they land in Arsitek rather than Other.
+  if (k.startsWith("arsi") || k.startsWith("arch") || k.startsWith("arcgi")) return "Arsitek";
+  if (k.includes("desain") || k.includes("designer")) return "Arsitek";
+  return "Other";
 }
