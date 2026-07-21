@@ -138,6 +138,29 @@
       .fill-hibernasi { background: rgba(255,255,255,.3); }
       .funnel-cnt { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; width: 22px; text-align: right; flex-shrink: 0; }
 
+      /* ── Rep account drill-down (click a rep to list its accounts) ──── */
+      .rc-head.clickable { cursor: pointer; }
+      .rc-head.clickable:hover .rc-name { color: var(--gold); }
+      .rc-expand-hint { font-size: 11px; color: var(--muted); margin-top: 4px; }
+      .rc-head.open .rc-chevron { transform: rotate(180deg); }
+      .rc-chevron { display: inline-block; transition: transform .15s; }
+      .rep-accounts { margin: 2px 0 14px; border-top: 1px solid var(--line); padding-top: 12px; }
+      .ra-group { margin-bottom: 12px; }
+      .ra-group:last-child { margin-bottom: 0; }
+      .ra-group-title { display: flex; align-items: center; gap: 7px; font-size: 11px; font-weight: 700;
+        letter-spacing: .5px; text-transform: uppercase; color: var(--muted); margin-bottom: 7px; }
+      .ra-dot { width: 8px; height: 8px; border-radius: 99px; flex-shrink: 0; }
+      .ra-dot.aktif          { background: var(--green); }
+      .ra-dot.perlu_followup { background: #d97706; }
+      .ra-dot.at_risk        { background: var(--red); }
+      .ra-dot.hibernasi      { background: rgba(255,255,255,.3); }
+      .ra-list { display: flex; flex-wrap: wrap; gap: 6px; }
+      .ra-item { font-size: 12px; padding: 3px 9px; border-radius: 8px;
+        background: rgba(255,255,255,.05); border: 1px solid var(--line); }
+      .ra-item a { color: #c0cadc; text-decoration: none; }
+      .ra-item a:hover { color: var(--gold); }
+      .ra-empty, .ra-loading { font-size: 12px; color: var(--muted); }
+
       /* ── Team pipeline ───────────────────────────────────────────── */
       .team-pipeline { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
       @media (max-width: 640px) { .team-pipeline { grid-template-columns: 1fr; } }
@@ -452,14 +475,16 @@
 
           return `
             <div class="rep-card">
-              <div class="rc-head">
+              <div class="rc-head clickable" onclick="toggleRepAccounts(${s.rep_id}, this)">
                 <div class="rc-name">${esc(s.full_name)}</div>
                 <div class="archetype-desc">${esc(archetypeText)}</div>
                 <div class="rc-foot">
                   <div class="rc-code">${esc(s.code)}</div>
                   <div class="archetype-tag">${esc(s.archetype)}</div>
                 </div>
+                <div class="rc-expand-hint"><span class="rc-chevron">▾</span> klik untuk lihat akun aktif / perlu follow-up</div>
               </div>
+              <div class="rep-accounts" id="rep-accts-${s.rep_id}" style="display:none"></div>
               ${pipelineHtml}
               <div class="rc-metrics">
                 <div class="rc-metric">
@@ -501,6 +526,43 @@
                 </div>` : ""}
             </div>`;
         }).join("");
+      }
+
+      // ── Rep account drill-down ───────────────────────────────────────────
+      // Click a rep to reveal which of their repeating accounts are aktif /
+      // perlu follow-up / at risk / hibernasi (live health from /api/accounts).
+      const repAcctCache = {};
+
+      window.toggleRepAccounts = async function(repId, headEl) {
+        const panel = document.getElementById(`rep-accts-${repId}`);
+        if (!panel) return;
+        const isOpen = panel.style.display !== 'none';
+        if (isOpen) { panel.style.display = 'none'; headEl.classList.remove('open'); return; }
+        panel.style.display = '';
+        headEl.classList.add('open');
+        if (repAcctCache[repId]) { renderRepAccounts(panel, repAcctCache[repId]); return; }
+        panel.innerHTML = '<div class="ra-loading">Memuat akun…</div>';
+        const res = await fetch(`/api/accounts?rep_id=${repId}&limit=200`)
+          .then(r => r.json()).catch(() => ({ accounts: [] }));
+        const repeating = (res.accounts ?? []).filter(a => a.account_type === 'repeating');
+        repAcctCache[repId] = repeating;
+        renderRepAccounts(panel, repeating);
+      };
+
+      function renderRepAccounts(panel, accounts) {
+        const groups = [['aktif','Aktif'],['perlu_followup','Perlu Follow-up'],['at_risk','At Risk'],['hibernasi','Hibernasi']];
+        const byStage = {};
+        accounts.forEach(a => { (byStage[a.stage] = byStage[a.stage] || []).push(a); });
+        panel.innerHTML = groups.map(([key, label]) => {
+          const items = (byStage[key] || []).sort((a, b) => a.store_name.localeCompare(b.store_name));
+          return `
+            <div class="ra-group">
+              <div class="ra-group-title"><span class="ra-dot ${key}"></span>${label} · ${items.length}</div>
+              ${items.length
+                ? `<div class="ra-list">${items.map(a => `<span class="ra-item"><a href="/account?id=${a.id}">${esc(a.store_name)}</a></span>`).join('')}</div>`
+                : '<div class="ra-empty">–</div>'}
+            </div>`;
+        }).join('');
       }
 
       function archetypeDescription(s, sc) {
