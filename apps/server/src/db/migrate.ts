@@ -10,6 +10,7 @@
 import type { Sql } from "./client.js";
 import { getSql } from "./client.js";
 import { normalizeProjectCategory } from "../util/projectCategory.js";
+import { normalizeMiraeCategory } from "../util/miraeCategory.js";
 
 export async function runMigrations(db: Sql = getSql()!): Promise<void> {
   // ── Legacy Modules A–C (best-effort; failures must not block Module D) ────
@@ -574,6 +575,30 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
       "Bogor",
     ]) {
       await db`insert into mirae_visit_lists (type, value) values ('area', ${v}) on conflict do nothing`;
+    }
+
+    // Backfill: canonicalize the free-text categories reps typed by hand so the
+    // insights heatmap groups cleanly. Off-list / random values fall back to
+    // "Other". Logs each distinct value's mapping (and how many rows) so the
+    // result can be audited from the deploy logs. Idempotent — safe to re-run.
+    for (const table of ["mirae_visits", "mirae_customers"] as const) {
+      const rows = await db<{ category: string; n: string }[]>`
+        select category, count(*)::text as n from ${db(table)}
+        where category is not null group by category
+      `;
+      let changed = 0;
+      const toOther: string[] = [];
+      for (const { category, n } of rows) {
+        const canon = normalizeMiraeCategory(category);
+        if (canon !== category) {
+          await db`update ${db(table)} set category = ${canon} where category = ${category}`;
+          changed += Number(n);
+          console.info(`[migrate] ${table}: "${category}" -> "${canon}" (${n} rows)`);
+        }
+        if (canon === "Other" && category !== "Other") toOther.push(`"${category}"(${n})`);
+      }
+      console.info(`[migrate] ${table}: category backfill remapped ${changed} rows; ` +
+        `${toOther.length ? `mapped to Other: ${toOther.join(", ")}` : "none mapped to Other"}`);
     }
 
     // Seed Mirae salespeople
