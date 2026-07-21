@@ -300,7 +300,7 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
     const todayEndUTC   = new Date(todayStartUTC.getTime() + 24 * 3600 * 1000);
     const sevenDaysOut  = new Date(todayEndUTC.getTime()   + 6  * 24 * 3600 * 1000);
 
-    const [overdue, today, upcoming, atRisk, stats, portfolioRows, wonRows, resolvedEscalations, todayVisits] = await Promise.all([
+    const [overdue, today, upcoming, atRisk, stats, portfolioRows, wonRows, resolvedEscalations, todayVisits, pipelineStale] = await Promise.all([
       // Overdue: past due, not completed, for this rep
       db`
         select sa.id, sa.account_id, sa.action_type, sa.scheduled_for, sa.notes,
@@ -442,6 +442,21 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
         order by v.visited_at desc
         limit 50
       `,
+      // Stale pipeline (project-type) deals owned by this rep: still open but no
+      // contact for >=14 days. Pipeline accounts run on deal stages, not the
+      // repeating visit-recency health, so they need their own staleness signal.
+      db`
+        select c.id, c.store_name, c.area, c.category, c.stage, c.last_contact_at,
+               floor(extract(epoch from (now() - c.last_contact_at)) / 86400)::int as days_stale
+        from customers c
+        where c.owner_id = ${rep_id}
+          and c.account_type = 'project'
+          and c.stage not in ('won','gugur')
+          and c.last_contact_at is not null
+          and extract(epoch from (now() - c.last_contact_at)) / 86400 >= 14
+        order by c.last_contact_at asc
+        limit 20
+      `,
     ]);
 
     const pc = portfolioRows[0] ?? {};
@@ -463,6 +478,7 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
       },
       resolved_escalations: resolvedEscalations,
       today_visits:         todayVisits,
+      pipeline_stale:       pipelineStale,
     };
   });
 }

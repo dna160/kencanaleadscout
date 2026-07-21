@@ -336,17 +336,7 @@
     <button class="chip"            data-filter="hibernasi" onclick="setFilter('hibernasi',this)">HIBERNASI<span class="cnt" id="cnt-hib">—</span></button>
   </div>
 
-  <!-- Zone 1b: Perlu Tindak Lanjut — always-visible at-risk / follow-up notice -->
-  <div class="zone-followup" id="zone-followup">
-    <div class="zone-urgent-header">
-      <div class="zone-urgent-title">⚠ Perlu Tindak Lanjut</div>
-      <span class="zone-urgent-badge badge-red" id="followup-badge">0</span>
-    </div>
-    <div class="zone-followup-hint">Akun repeating yang sudah lama tidak dikunjungi — segera jadwalkan kunjungan.</div>
-    <div id="followup-notice-list"></div>
-  </div>
-
-  <!-- Zone 2: Today's Actions -->
+  <!-- Zone 2: Today's Actions (kept at the top, directly below the chips) -->
   <div class="zone2" id="zone2">
     <div class="zone2-header">
       <div class="zone2-title" id="z2-title">Aksi Hari Ini</div>
@@ -362,6 +352,26 @@
         <div id="today-list"><div class="zone2-empty">Memuat…</div></div>
       </div>
     </div>
+  </div>
+
+  <!-- Zone 1b: Perlu Tindak Lanjut — always-visible at-risk / follow-up notice -->
+  <div class="zone-followup" id="zone-followup">
+    <div class="zone-urgent-header">
+      <div class="zone-urgent-title">⚠ Perlu Tindak Lanjut</div>
+      <span class="zone-urgent-badge badge-red" id="followup-badge">0</span>
+    </div>
+    <div class="zone-followup-hint">Akun repeating yang sudah lama tidak dikunjungi — segera jadwalkan kunjungan.</div>
+    <div id="followup-notice-list"></div>
+  </div>
+
+  <!-- Zone 1c: Pipeline Perlu Tindak Lanjut — stale project/pipeline deals -->
+  <div class="zone-followup" id="zone-pipeline-stale">
+    <div class="zone-urgent-header">
+      <div class="zone-urgent-title">◆ Pipeline Perlu Tindak Lanjut</div>
+      <span class="zone-urgent-badge badge-amber" id="pipeline-stale-badge">0</span>
+    </div>
+    <div class="zone-followup-hint">Deal pipeline yang belum ada progres ≥14 hari — tindak lanjuti sebelum dingin.</div>
+    <div id="pipeline-stale-list"></div>
   </div>
 
   <!-- Zone urgent: At Risk / Perlu Follow-up attention panel (shown when chip active) -->
@@ -565,6 +575,30 @@
           <div>
             <div class="urgent-store"><a href="/account?id=${a.id}">${esc(a.store_name)}</a></div>
             <div class="urgent-meta">${esc(a.category??'')} · ${esc(a.area??'')} · ${daysStr} · ${tag}</div>
+          </div>
+          <div class="urgent-actions">
+            <button class="btn-urgent-visit" onclick="location.href='/visits?prefill=${a.id}'">+ Log Kunjungan</button>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  // Stale pipeline deals (project-type accounts untouched >=14 days), surfaced
+  // in their own lane so they don't blend into the repeating store cadence.
+  function renderPipelineStale(items) {
+    const zone = $("zone-pipeline-stale");
+    const list = $("pipeline-stale-list");
+    if (!items || !items.length) { zone.classList.remove("visible"); return; }
+    zone.classList.add("visible");
+    $("pipeline-stale-badge").textContent = items.length;
+    list.innerHTML = items.map(a => {
+      const days = (a.days_stale != null) ? a.days_stale : daysAgo(a.last_contact_at);
+      const daysStr = days === null ? 'Belum pernah dikunjungi' : `Terakhir ${days} hari lalu`;
+      return `
+        <div class="urgent-item item-perlu">
+          <div>
+            <div class="urgent-store"><a href="/account?id=${a.id}">${esc(a.store_name)}</a></div>
+            <div class="urgent-meta">${stageBadge(a.stage)} · ${esc(a.category??'')} · ${esc(a.area??'')} · ${daysStr}</div>
           </div>
           <div class="urgent-actions">
             <button class="btn-urgent-visit" onclick="location.href='/visits?prefill=${a.id}'">+ Log Kunjungan</button>
@@ -808,6 +842,7 @@
       $("overdue-list").innerHTML = '<div class="zone2-empty">Pilih sales dahulu.</div>';
       $("today-list").innerHTML   = '<div class="zone2-empty">Pilih sales dahulu.</div>';
       $("zone-followup").classList.remove("visible");
+      $("zone-pipeline-stale").classList.remove("visible");
       return;
     }
 
@@ -821,6 +856,7 @@
     if (myday) {
       updateChipCounts(myday.portfolio_counts);
       renderFollowupNotice(myday.at_risk ?? []);
+      renderPipelineStale(myday.pipeline_stale ?? []);
       renderScheduledList(myday.overdue ?? [], 'overdue-list', true);
       renderScheduledList(myday.today   ?? [], 'today-list',   false);
       autoCollapseZone2(myday.overdue ?? [], myday.today ?? []);
