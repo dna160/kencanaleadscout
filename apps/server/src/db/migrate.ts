@@ -564,10 +564,19 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
       )
     `;
 
-    // Seed categories + areas
-    for (const v of ["Toko", "Workshop", "Aplikator", "Kontraktor", "Distributor", "Advertising/Signage", "Arsitek", "Project", "Other"]) {
+    // Seed categories + areas. Canonical Mirae categories are the seven the team
+    // uses; "Other" is kept only as a fallback bucket (not a dropdown choice).
+    for (const v of ["Toko", "Workshop", "Aplikator", "Kontraktor", "Architect", "Designer", "Project", "Other"]) {
       await db`insert into mirae_visit_lists (type, value) values ('category', ${v}) on conflict do nothing`;
     }
+    // Only the seven real categories are selectable; deactivate legacy / off-list
+    // values (Distributor, Advertising/Signage, Arsitek, Other, …).
+    await db`
+      update mirae_visit_lists set active = (
+        lower(value) in ('toko','workshop','aplikator','kontraktor','architect','designer','project')
+      )
+      where type = 'category'
+    `;
     for (const v of [
       "Bekasi Barat", "Bekasi Timur", "Bekasi Utara", "Bekasi Selatan", "Bekasi Kota",
       "Cikarang", "Karawang", "Depok", "Tangerang Selatan",
@@ -577,49 +586,55 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
       await db`insert into mirae_visit_lists (type, value) values ('area', ${v}) on conflict do nothing`;
     }
 
-    // Backfill: canonicalize the free-text categories reps typed by hand so the
-    // insights heatmap groups cleanly. Off-list / random values fall back to
-    // "Other". Logs each distinct value's mapping (and how many rows) so the
-    // result can be audited from the deploy logs. Idempotent — safe to re-run.
+    // ── One-time recovery of the architect / designer segment ────────────────
+    // A prior cleanup collapsed these into "Other" and overwrote the original
+    // category text, so it can't be normalized back from the category column.
+    // The firm's store_name still identifies it, so rebuild from that. Idempotent
+    // (only touches rows still sitting in 'Other'); fully logged.
+    const archMatch = db`(
+      store_name ilike '%architect%' or store_name ilike '%architec%' or
+      store_name ilike '%arrchitect%' or store_name ilike '%arsitek%' or
+      store_name ilike '%studio%'    or store_name ilike '%atelier%'  or
+      store_name ilike '%assosiate%' or store_name ilike '%associate%')`;
+    const dsgnMatch = db`(
+      store_name ilike '%interior%'  or store_name ilike '%designer%' or
+      store_name ilike '%desain%'    or store_name ilike '%creative%')`;
+
+    const cArch = await db`update mirae_customers set category = 'Architect' where category = 'Other' and ${archMatch}`;
+    const cDsgn = await db`update mirae_customers set category = 'Designer'  where category = 'Other' and ${dsgnMatch}`;
+    // Visits: prefer the now-corrected linked customer's category; fall back to
+    // the visit's own store_name for any unlinked rows.
+    const vLink = await db`
+      update mirae_visits v set category = c.category
+      from mirae_customers c
+      where v.customer_id = c.id and v.category = 'Other' and c.category <> 'Other'`;
+    const vArch = await db`update mirae_visits set category = 'Architect' where category = 'Other' and ${archMatch}`;
+    const vDsgn = await db`update mirae_visits set category = 'Designer'  where category = 'Other' and ${dsgnMatch}`;
+    console.info(`[migrate] mirae recovery — customers: +${cArch.count} Architect, +${cDsgn.count} Designer; ` +
+      `visits: ${vLink.count} via customer link, +${vArch.count} Architect, +${vDsgn.count} Designer`);
+
+    // Safety net: normalize any remaining raw category text (e.g. future imports)
+    // onto the canonical set. No-op for already-canonical rows.
     for (const table of ["mirae_visits", "mirae_customers"] as const) {
       const rows = await db<{ category: string; n: string }[]>`
         select category, count(*)::text as n from ${db(table)}
         where category is not null group by category
       `;
-      let changed = 0;
-      const toOther: string[] = [];
-      for (const { category, n } of rows) {
+      for (const { category } of rows) {
         const canon = normalizeMiraeCategory(category);
         if (canon !== category) {
           await db`update ${db(table)} set category = ${canon} where category = ${category}`;
-          changed += Number(n);
-          console.info(`[migrate] ${table}: "${category}" -> "${canon}" (${n} rows)`);
         }
-        if (canon === "Other" && category !== "Other") toOther.push(`"${category}"(${n})`);
       }
-      console.info(`[migrate] ${table}: category backfill remapped ${changed} rows; ` +
-        `${toOther.length ? `mapped to Other: ${toOther.join(", ")}` : "none mapped to Other"}`);
     }
 
-    // TEMP DIAGNOSTIC (read-only; removed in the follow-up fix) — dump current
-    // Mirae state to the deploy logs so the category/area cleanup can be planned
-    // precisely against real data instead of guessed.
+    // Log the final state so the cleanup is auditable, incl. any customers still
+    // in "Other" (their store_name didn't identify a category — need manual review).
     {
       const vcat = await db`select category, count(*)::int n from mirae_visits group by category order by n desc`;
-      const ccat = await db`select category, count(*)::int n from mirae_customers group by category order by n desc`;
-      const oCust = await db`
-        select c.id, c.store_name,
-               (select count(*)::int from mirae_visits v where v.customer_id = c.id) as visits
-        from mirae_customers c where c.category = 'Other' order by c.store_name`;
-      const oVis = await db`
-        select store_name, (customer_id is not null) as linked, count(*)::int n
-        from mirae_visits where category = 'Other' group by store_name, linked order by n desc`;
-      const vArea = await db`select area, count(*)::int n from mirae_visits group by area order by n desc`;
-      console.info("[diag] mirae_visits categories: "    + JSON.stringify(vcat));
-      console.info("[diag] mirae_customers categories: " + JSON.stringify(ccat));
-      console.info("[diag] mirae Other customers: "      + JSON.stringify(oCust));
-      console.info("[diag] mirae Other visits: "         + JSON.stringify(oVis));
-      console.info("[diag] mirae_visits areas: "         + JSON.stringify(vArea));
+      const stillOther = await db`select id, store_name from mirae_customers where category = 'Other' order by store_name`;
+      console.info("[migrate] mirae final visit categories: " + JSON.stringify(vcat));
+      console.info("[migrate] mirae customers still in Other (manual review): " + JSON.stringify(stillOther));
     }
 
     // Seed Mirae salespeople
