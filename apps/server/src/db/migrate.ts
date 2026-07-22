@@ -601,6 +601,27 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
         `${toOther.length ? `mapped to Other: ${toOther.join(", ")}` : "none mapped to Other"}`);
     }
 
+    // TEMP DIAGNOSTIC (read-only; removed in the follow-up fix) — dump current
+    // Mirae state to the deploy logs so the category/area cleanup can be planned
+    // precisely against real data instead of guessed.
+    {
+      const vcat = await db`select category, count(*)::int n from mirae_visits group by category order by n desc`;
+      const ccat = await db`select category, count(*)::int n from mirae_customers group by category order by n desc`;
+      const oCust = await db`
+        select c.id, c.store_name,
+               (select count(*)::int from mirae_visits v where v.customer_id = c.id) as visits
+        from mirae_customers c where c.category = 'Other' order by c.store_name`;
+      const oVis = await db`
+        select store_name, (customer_id is not null) as linked, count(*)::int n
+        from mirae_visits where category = 'Other' group by store_name, linked order by n desc`;
+      const vArea = await db`select area, count(*)::int n from mirae_visits group by area order by n desc`;
+      console.info("[diag] mirae_visits categories: "    + JSON.stringify(vcat));
+      console.info("[diag] mirae_customers categories: " + JSON.stringify(ccat));
+      console.info("[diag] mirae Other customers: "      + JSON.stringify(oCust));
+      console.info("[diag] mirae Other visits: "         + JSON.stringify(oVis));
+      console.info("[diag] mirae_visits areas: "         + JSON.stringify(vArea));
+    }
+
     // Seed Mirae salespeople
     for (const r of [
       { full_name: "Brilliano", code: "BRL" },
