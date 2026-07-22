@@ -373,6 +373,17 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
     console.error("[migrate] visit_lists seeding failed (non-fatal):", listSeedErr);
   }
 
+  // TEMP DIAGNOSTIC (read-only; removed in the follow-up fix) — dump the distinct
+  // retail area values so the location-typo merge can be planned against real data.
+  try {
+    const cArea = await db`select area, count(*)::int n from customers group by area order by n desc`;
+    const vArea = await db`select area, count(*)::int n from visits group by area order by n desc`;
+    console.info("[diag] retail customers areas: " + JSON.stringify(cArea));
+    console.info("[diag] retail visits areas: "    + JSON.stringify(vArea));
+  } catch (diagErr) {
+    console.error("[diag] retail area dump failed (non-fatal):", diagErr);
+  }
+
   // Seed initial roster (inferred from workbook tabs). Handler can extend.
   try {
     for (const r of [
