@@ -10,6 +10,7 @@
 import type { FastifyInstance } from "fastify";
 import * as XLSX from "xlsx";
 import { getSql } from "../db/client.js";
+import { normalizeRetailArea } from "../util/retailArea.js";
 
 const CUSTOMER_TYPES = new Set(["new", "old"]);
 
@@ -32,7 +33,7 @@ export async function visitsRoutes(app: FastifyInstance): Promise<void> {
     const customer_type = String(b.customer_type ?? "").trim().toLowerCase();
     const category    = String(b.category    ?? "").trim();
     const address     = b.address     ? String(b.address).trim()     : null;
-    const area        = String(b.area        ?? "").trim().replace(/\b\S+/g, w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+    const area        = normalizeRetailArea(b.area as string | undefined);
     const postal_code = b.postal_code ? String(b.postal_code).trim() : null;
     const notes       = b.notes       ? String(b.notes).trim()       : null;
     const activity_type_raw = b.activity_type ? String(b.activity_type).trim().toLowerCase() : "kunjungan";

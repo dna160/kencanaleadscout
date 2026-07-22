@@ -373,15 +373,38 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
     console.error("[migrate] visit_lists seeding failed (non-fatal):", listSeedErr);
   }
 
-  // TEMP DIAGNOSTIC (read-only; removed in the follow-up fix) — dump the distinct
-  // retail area values so the location-typo merge can be planned against real data.
+  // ── Retail location-typo merge ───────────────────────────────────────────
+  // Planned from the real production area values. Only these exact hand-typed
+  // variants are merged onto their canonical area; every other area is left
+  // untouched. Idempotent; logged. Visits update directly (no constraint);
+  // customers only rename when it won't collide with an existing
+  // (store_name, canonical-area) row — any collision is left in place and
+  // reported for manual review rather than deleting a row.
   try {
-    const cArea = await db`select area, count(*)::int n from customers group by area order by n desc`;
-    const vArea = await db`select area, count(*)::int n from visits group by area order by n desc`;
-    console.info("[diag] retail customers areas: " + JSON.stringify(cArea));
-    console.info("[diag] retail visits areas: "    + JSON.stringify(vArea));
-  } catch (diagErr) {
-    console.error("[diag] retail area dump failed (non-fatal):", diagErr);
+    const RETAIL_AREA_FIXES: [string, string][] = [
+      ["Bekasi.", "Bekasi"],
+      ["Jaktim", "Jakarta Timur"],
+      ["Tabgerang", "Tangerang"],
+      ["Tangsel", "Tangerang Selatan"],
+    ];
+    for (const [from, to] of RETAIL_AREA_FIXES) {
+      const v = await db`update visits set area = ${to} where area = ${from}`;
+      const c = await db`
+        update customers set area = ${to}
+        where area = ${from}
+          and not exists (
+            select 1 from customers c2
+            where lower(trim(c2.store_name)) = lower(trim(customers.store_name)) and c2.area = ${to}
+          )`;
+      const stuck = await db<{ id: number }[]>`select id from customers where area = ${from}`;
+      if (v.count || c.count || stuck.length) {
+        console.info(`[migrate] retail area merge: "${from}" -> "${to}" ` +
+          `(${v.count} visits, ${c.count} customers` +
+          `${stuck.length ? `; ${stuck.length} customer(s) left — dup store already in "${to}"` : ""})`);
+      }
+    }
+  } catch (areaErr) {
+    console.error("[migrate] retail area merge failed (non-fatal):", areaErr);
   }
 
   // Seed initial roster (inferred from workbook tabs). Handler can extend.
