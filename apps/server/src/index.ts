@@ -40,6 +40,7 @@ import { distributorListsRoutes } from "./routes/distributor-lists.js";
 import { distributorInsightsRoutes } from "./routes/distributor-insights.js";
 import { distributorAccountsRoutes, startDistributorCadenceEngine } from "./routes/distributor-accounts.js";
 import { distributorEscalationsRoutes } from "./routes/distributor-escalations.js";
+import { exportAllRoutes } from "./routes/export-all.js";
 import { colorGatewayRoutes } from "./routes/color-gateway.js";
 import { syHunterRoutes } from "./routes/sy-hunter.js";
 
@@ -150,6 +151,9 @@ async function main(): Promise<void> {
   await app.register(distributorInsightsRoutes);
   await app.register(distributorAccountsRoutes);
   await app.register(distributorEscalationsRoutes);
+
+  // Combined raw XLSX export across all visitation divisions.
+  await app.register(exportAllRoutes);
 
   // [E] Color Gateway APIs.
   await app.register(colorGatewayRoutes);
