@@ -863,6 +863,176 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
     console.error("[migrate] Project module migration failed (non-fatal):", projectErr);
   }
 
+  // ── Distributor Module — full clone of Module D (Retail Visitation Log) ────
+  // Same shape as retail: pipeline accounts, actions, stage history, scheduled
+  // follow-ups, escalations, cadence engine. Isolated distributor_* tables.
+  try {
+    await db`
+      create table if not exists distributor_visit_lists (
+        id     bigserial primary key,
+        type   text not null,
+        value  text not null,
+        active boolean not null default true
+      )
+    `;
+    await db`
+      create unique index if not exists distributor_visit_lists_type_value_idx
+        on distributor_visit_lists (type, lower(value))
+    `;
+    await db`
+      create table if not exists distributor_salespeople (
+        id           bigserial primary key,
+        full_name    text not null,
+        code         text unique,
+        phone_e164   text,
+        default_area text,
+        active       boolean not null default true,
+        created_at   timestamptz not null default now()
+      )
+    `;
+    await db`
+      create table if not exists distributor_customers (
+        id              bigserial primary key,
+        store_name      text not null,
+        category        text not null,
+        area            text,
+        address         text,
+        postal_code     text,
+        first_seen_at   timestamptz,
+        created_by      bigint references distributor_salespeople(id),
+        account_type    text default 'repeating',
+        stage           text default 'aktif',
+        owner_id        bigint references distributor_salespeople(id),
+        last_contact_at timestamptz
+      )
+    `;
+    await db`
+      create unique index if not exists distributor_customers_norm
+        on distributor_customers (lower(trim(store_name)), lower(coalesce(area, '')))
+    `;
+    await db`
+      create table if not exists distributor_visits (
+        id             bigserial primary key,
+        salesperson_id bigint not null references distributor_salespeople(id),
+        customer_id    bigint references distributor_customers(id),
+        pic_name       text,
+        store_name     text not null,
+        customer_type  text not null check (customer_type in ('new','old')),
+        category       text not null,
+        address        text,
+        area           text not null,
+        postal_code    text check (postal_code is null or postal_code ~ '^\\d{5}$'),
+        notes          text,
+        activity_type  text not null default 'kunjungan',
+        visited_at     timestamptz not null default now(),
+        created_at     timestamptz not null default now(),
+        source         text not null default 'app'
+      )
+    `;
+    await db`create index if not exists distributor_visits_rep_time on distributor_visits (salesperson_id, visited_at desc)`;
+    await db`create index if not exists distributor_visits_area     on distributor_visits (area)`;
+    await db`create index if not exists distributor_visits_type     on distributor_visits (customer_type)`;
+    await db`
+      create table if not exists distributor_visit_audits (
+        id         bigserial primary key,
+        visit_id   bigint not null references distributor_visits(id),
+        field      text not null,
+        old_value  text,
+        new_value  text,
+        changed_by text,
+        changed_at timestamptz not null default now()
+      )
+    `;
+    await db`
+      create table if not exists distributor_visit_photos (
+        id         bigserial primary key,
+        visit_id   bigint not null references distributor_visits(id) on delete cascade,
+        file_data  bytea not null,
+        mime_type  text not null default 'image/jpeg',
+        filename   text,
+        file_size  int not null,
+        created_at timestamptz not null default now()
+      )
+    `;
+    await db`create index if not exists distributor_visit_photos_visit_idx on distributor_visit_photos (visit_id)`;
+    await db`
+      create table if not exists distributor_actions (
+        id             bigserial primary key,
+        account_id     bigint not null references distributor_customers(id),
+        salesperson_id bigint references distributor_salespeople(id),
+        action_type    text not null,
+        invoice_number text,
+        notes          text,
+        actioned_at    timestamptz not null default now(),
+        created_at     timestamptz not null default now()
+      )
+    `;
+    await db`create index if not exists distributor_actions_account_idx on distributor_actions (account_id, actioned_at desc)`;
+    await db`create index if not exists distributor_actions_rep_idx     on distributor_actions (salesperson_id, actioned_at desc)`;
+    await db`
+      create table if not exists distributor_stage_history (
+        id          bigserial primary key,
+        account_id  bigint not null references distributor_customers(id),
+        old_stage   text,
+        new_stage   text not null,
+        changed_by  bigint references distributor_salespeople(id),
+        changed_at  timestamptz not null default now()
+      )
+    `;
+    await db`create index if not exists distributor_stage_history_account_idx on distributor_stage_history (account_id, changed_at desc)`;
+    await db`
+      create table if not exists distributor_scheduled_actions (
+        id             bigserial primary key,
+        account_id     bigint not null references distributor_customers(id),
+        salesperson_id bigint references distributor_salespeople(id),
+        action_type    text not null default 'followup',
+        scheduled_for  timestamptz not null,
+        notes          text,
+        completed_at   timestamptz,
+        created_at     timestamptz not null default now()
+      )
+    `;
+    await db`create index if not exists distributor_scheduled_actions_rep_idx  on distributor_scheduled_actions (salesperson_id, scheduled_for)`;
+    await db`create index if not exists distributor_scheduled_actions_acct_idx on distributor_scheduled_actions (account_id, scheduled_for)`;
+    await db`
+      create table if not exists distributor_escalations (
+        id                     bigserial primary key,
+        salesperson_id         bigint not null references distributor_salespeople(id),
+        store_name             text not null,
+        category               text,
+        area                   text,
+        address                text,
+        notes                  text,
+        status                 text not null default 'pending',
+        resolved_contact_name  text,
+        resolved_contact_phone text,
+        resolved_notes         text,
+        resolved_at            timestamptz,
+        resolved_by            text,
+        followed_up_at         timestamptz,
+        created_at             timestamptz not null default now()
+      )
+    `;
+    await db`create index if not exists distributor_escalations_rep_idx    on distributor_escalations (salesperson_id, created_at desc)`;
+    await db`create index if not exists distributor_escalations_status_idx on distributor_escalations (status, created_at desc)`;
+
+    // Seed categories + areas (clone of the retail starter set).
+    for (const v of ["Toko", "Workshop", "Aplikator", "Kontraktor", "Distributor", "Advertising/Signage", "Project", "Other"]) {
+      await db`insert into distributor_visit_lists (type, value) values ('category', ${v}) on conflict do nothing`;
+    }
+    for (const v of [
+      "Bekasi Barat", "Bekasi Timur", "Bekasi Utara", "Bekasi Selatan", "Bekasi Kota",
+      "Cikarang", "Karawang", "Depok", "Tangerang Selatan",
+      "Jakarta Timur", "Jakarta Selatan", "Jakarta Pusat", "Jakarta Barat", "Jakarta Utara",
+      "Bogor",
+    ]) {
+      await db`insert into distributor_visit_lists (type, value) values ('area', ${v}) on conflict do nothing`;
+    }
+    // Roster starts empty — distributor reps are added via /distributor-salespeople.
+  } catch (distributorErr) {
+    console.error("[migrate] Distributor module migration failed (non-fatal):", distributorErr);
+  }
+
   // ── SY Hunter Module — BCI factory/warehouse pipeline tracker ─────────────
   try {
     await db`

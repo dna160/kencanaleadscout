@@ -1,0 +1,827 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+    <title>Distributor · Catat Kunjungan · Kencana LeadScout</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --ink: #14213d; --ink-2: #1b2949; --red: #9b2226; --gold: #bb9457; --green: #2c6e49;
+        --paper: #f5f2ec; --muted: #8a96ad; --line: rgba(255,255,255,.09);
+        --display: "Space Grotesk","Inter",system-ui,sans-serif;
+        --sans: "Inter",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+      }
+      * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+      html, body { margin: 0; min-height: 100%; }
+      body {
+        font-family: var(--sans); color: var(--paper); background: var(--ink);
+        -webkit-font-smoothing: antialiased; overscroll-behavior-y: contain;
+      }
+      .app { max-width: 560px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; }
+
+      /* ── Top bar ─────────────────────────────────────────────────── */
+      .top {
+        position: sticky; top: 0; z-index: 5; background: rgba(20,33,61,.92);
+        backdrop-filter: blur(10px); border-bottom: 1px solid var(--line);
+        padding: 12px 18px; display: flex; align-items: center; gap: 12px;
+      }
+      .mark {
+        width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; flex-shrink: 0;
+        background: linear-gradient(135deg, var(--red), #7a1a1d);
+        font-family: var(--display); font-weight: 700; color: #fff; font-size: 16px;
+      }
+      .top-title { font-family: var(--display); font-weight: 600; font-size: 15px; }
+      .top-sub   { color: var(--muted); font-size: 12px; }
+
+      /* ── Form ────────────────────────────────────────────────────── */
+      form { padding: 22px 18px 100px; display: flex; flex-direction: column; gap: 18px; }
+      .field { display: flex; flex-direction: column; gap: 7px; }
+      .field label {
+        font-size: 11.5px; font-weight: 600; letter-spacing: .7px; text-transform: uppercase;
+        color: var(--muted);
+      }
+      .field label .opt { font-weight: 400; text-transform: none; letter-spacing: 0; font-size: 11px; }
+      .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+      input, select, textarea {
+        background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12);
+        border-radius: 12px; padding: 13px 14px; color: var(--paper); font-family: var(--sans);
+        font-size: 15px; width: 100%; appearance: none; -webkit-appearance: none;
+        outline: none; transition: border-color .15s;
+      }
+      input:focus, select:focus, textarea:focus { border-color: var(--gold); }
+      input.bad, select.bad { border-color: #e05252 !important; }
+      textarea { resize: vertical; min-height: 100px; }
+      select option { background: #1e2d50; color: var(--paper); }
+      input::placeholder, textarea::placeholder { color: var(--muted); }
+      .divider { height: 1px; background: var(--line); margin: 2px 0; }
+
+      .btn-save {
+        background: linear-gradient(135deg, var(--red), #7a1a1d);
+        border: none; border-radius: 14px; padding: 18px; color: #fff;
+        font-family: var(--display); font-weight: 600; font-size: 18px; cursor: pointer;
+        box-shadow: 0 10px 28px rgba(155,34,38,.38); transition: opacity .15s; width: 100%;
+      }
+      .btn-save:disabled { opacity: .5; cursor: not-allowed; }
+
+      .err { color: #e05252; font-size: 13px; display: none; }
+
+      /* ── Activity-type toggle ─────────────────────────────────────── */
+      .act-toggle { display: flex; gap: 8px; }
+      .act-seg {
+        flex: 1; border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.05);
+        color: var(--muted); border-radius: 14px; padding: 13px 16px;
+        font-family: var(--display); font-weight: 600; font-size: 16px; cursor: pointer;
+        transition: background .15s, border-color .15s, color .15s; text-align: center;
+      }
+      .act-seg.active {
+        background: rgba(187,148,87,.18); border-color: rgba(187,148,87,.55); color: var(--gold);
+      }
+      .act-seg:not(.active):hover { background: rgba(255,255,255,.09); }
+
+      .toast {
+        position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
+        background: #1e3a1e; color: #7ee87e; border: 1px solid #3e9b4f;
+        border-radius: 12px; padding: 12px 22px; font-weight: 600; font-size: 14px;
+        z-index: 99; opacity: 0; transition: opacity .3s; pointer-events: none; white-space: nowrap;
+      }
+      .toast.show { opacity: 1; }
+
+      /* ── Prefill banner ─────────────────────────────────────────────── */
+      .prefill-banner {
+        background: rgba(46,111,214,.1); border: 1px solid rgba(46,111,214,.3);
+        border-radius: 12px; padding: 10px 14px; font-size: 13px; color: #9ec8fb;
+        display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      }
+      .prefill-banner a { color: var(--muted); font-size: 12px; cursor: pointer; }
+
+      /* ── Success panel ──────────────────────────────────────────────── */
+      .success-panel {
+        display: none; padding: 32px 18px 100px; flex-direction: column;
+        align-items: center; gap: 18px; text-align: center;
+      }
+      .success-icon { font-size: 56px; }
+      .success-title { font-family: var(--display); font-size: 24px; font-weight: 700; }
+      .success-sub { color: var(--muted); font-size: 14px; }
+      .success-time {
+        background: rgba(255,255,255,.06); border: 1px solid var(--line);
+        border-radius: 12px; padding: 14px 22px; font-family: var(--display);
+        font-size: 20px; font-weight: 600; color: var(--gold);
+      }
+      .success-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-top: 4px; }
+      .btn-logagain {
+        background: linear-gradient(135deg, var(--red), #7a1a1d); border: none; border-radius: 12px;
+        padding: 14px 24px; color: #fff; font-family: var(--display); font-weight: 600; font-size: 16px;
+        cursor: pointer; box-shadow: 0 8px 20px rgba(155,34,38,.32);
+      }
+      .btn-logagain:hover { opacity: .9; }
+      .btn-rackup {
+        background: rgba(255,255,255,.07); border: 1px solid var(--line); border-radius: 12px;
+        padding: 14px 24px; color: var(--paper); font-family: var(--display); font-weight: 600;
+        font-size: 16px; cursor: pointer; text-decoration: none; display: inline-block;
+      }
+      .btn-rackup:hover { background: rgba(255,255,255,.12); }
+
+      .wa-preview {
+        width: 100%; background: rgba(37,211,102,.07); border: 1px solid rgba(37,211,102,.3);
+        border-radius: 14px; padding: 16px 18px; color: #d4f5e0;
+        font-family: var(--sans); font-size: 13px; line-height: 1.65;
+        white-space: pre-wrap; text-align: left; cursor: pointer;
+        transition: background .15s; position: relative;
+      }
+      .wa-preview:hover { background: rgba(37,211,102,.12); }
+      .wa-preview:active { background: rgba(37,211,102,.18); }
+      .wa-copy-hint {
+        display: block; margin-top: 10px; text-align: center; color: #25d366;
+        font-size: 12px; font-weight: 600; letter-spacing: .4px;
+      }
+
+      /* ── Eskalasi callout ────────────────────────────────────────────── */
+      .eskalasi-note {
+        background: rgba(187,148,87,.08); border: 1px solid rgba(187,148,87,.3);
+        border-radius: 12px; padding: 12px 14px; font-size: 13px; color: #e0c88a;
+        display: none;
+      }
+      .eskalasi-note b { display: block; margin-bottom: 4px; font-size: 13.5px; }
+
+      /* ── Inline stage update ──────────────────────────────────────────── */
+      .stage-current {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 4px 11px; border-radius: 99px; font-size: 12px; font-weight: 600;
+        background: rgba(187,148,87,.13); color: var(--gold); border: 1px solid rgba(187,148,87,.28);
+      }
+
+      /* ── Photo section ───────────────────────────────────────────────── */
+      .photo-grid { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 2px; }
+      .photo-add {
+        width: 78px; height: 78px; border-radius: 12px; flex-shrink: 0;
+        border: 2px dashed rgba(255,255,255,.18); background: rgba(255,255,255,.04);
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        cursor: pointer; color: var(--muted); gap: 3px;
+        transition: border-color .15s, color .15s, background .15s;
+      }
+      .photo-add:hover { border-color: var(--gold); color: var(--gold); background: rgba(187,148,87,.07); }
+      .photo-add .plus { font-size: 26px; line-height: 1; }
+      .photo-add .lbl  { font-size: 10.5px; font-weight: 600; letter-spacing: .3px; }
+      .photo-wrap {
+        position: relative; width: 78px; height: 78px; flex-shrink: 0;
+      }
+      .photo-wrap img {
+        width: 78px; height: 78px; border-radius: 12px; object-fit: cover; display: block;
+        border: 1px solid rgba(255,255,255,.1);
+      }
+      .photo-wrap .del-btn {
+        position: absolute; top: -6px; right: -6px; width: 22px; height: 22px;
+        border-radius: 99px; background: #9b2226; color: #fff; border: 2px solid var(--ink);
+        cursor: pointer; display: flex; align-items: center; justify-content: center;
+        font-size: 13px; line-height: 1; padding: 0;
+      }
+      .photo-wrap .status-ov {
+        position: absolute; inset: 0; border-radius: 12px;
+        display: flex; align-items: center; justify-content: center;
+        background: rgba(0,0,0,.55); font-size: 24px; pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <div class="top">
+        <div class="mark">K</div>
+        <div>
+          <div class="top-title">Catat Kunjungan</div>
+          <div class="top-sub">Distributor Visitation Log</div>
+        </div>
+        <div style="margin-left:auto;display:flex;gap:10px;font-size:12px">
+          <a href="/distributor-myday" style="color:var(--muted);text-decoration:none">My Day</a>
+          <a href="/distributor-rack" style="color:var(--muted);text-decoration:none">Rack-up</a>
+        </div>
+      </div>
+
+      <!-- Success panel (shown post-submit instead of resetting) -->
+      <div class="success-panel" id="success-panel">
+        <div class="success-icon" id="success-icon">✓</div>
+        <div class="success-title" id="success-title">Kunjungan Tersimpan</div>
+        <div class="success-sub" id="success-sub"></div>
+        <div class="success-time" id="success-time"></div>
+        <div id="wa-preview" class="wa-preview" onclick="copyWaFormat()" style="display:none"></div>
+        <div class="success-actions">
+          <button class="btn-logagain" onclick="logAgain()">+ Log Lagi</button>
+          <a class="btn-rackup" id="btn-acct-link" href="#" style="display:none">Lihat Akun →</a>
+          <a class="btn-rackup" href="/distributor-rack">Lihat Rack-up →</a>
+        </div>
+      </div>
+
+      <form id="vform" novalidate>
+
+        <div id="prefill-banner" class="prefill-banner" style="display:none">
+          <span id="prefill-text"></span>
+          <a onclick="clearPrefill()">Bersihkan ×</a>
+        </div>
+
+        <div class="act-toggle">
+          <button type="button" class="act-seg active" id="act-kunjungan" onclick="setAct('kunjungan')">Kunjungan</button>
+          <button type="button" class="act-seg"        id="act-telepon"   onclick="setAct('telepon')">Telepon</button>
+          <button type="button" class="act-seg"        id="act-eskalasi"  onclick="setAct('eskalasi')">Eskalasi</button>
+        </div>
+
+        <div class="eskalasi-note" id="eskalasi-note">
+          <b>Tidak bisa mengunjungi lokasi?</b>
+          Isi informasi lead di bawah. Tim Eskalasi akan mencari kontak dan mengirimkan hasilnya ke My Day kamu.
+        </div>
+
+        <div class="field">
+          <label>Sales *</label>
+          <select id="f-sales" required>
+            <option value="">Pilih sales...</option>
+          </select>
+          <div id="sp-status" style="display:none;margin-top:6px;font-size:12.5px"></div>
+        </div>
+
+        <div class="field">
+          <label>Nama PIC <span class="opt">opsional</span></label>
+          <input id="f-pic" type="text" placeholder="mis. Bpk. Yayan" autocomplete="off" />
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="field">
+          <label>Nama Toko *</label>
+          <input id="f-store" type="text" list="store-dl" required placeholder="Nama toko / usaha" autocomplete="off" />
+          <datalist id="store-dl"></datalist>
+        </div>
+
+        <div class="two" id="type-cat-row">
+          <div class="field" id="type-field">
+            <label>Tipe Customer *</label>
+            <select id="f-type" required>
+              <option value="">Pilih tipe</option>
+              <option value="new">Baru (New)</option>
+              <option value="old">Lama (Old)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Kategori *</label>
+            <input id="f-cat" type="text" list="cat-dl" required placeholder="mis. Workshop" autocomplete="off" />
+            <datalist id="cat-dl"></datalist>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="field">
+          <label>Alamat <span class="opt">opsional</span></label>
+          <input id="f-addr" type="text" placeholder="Jl. ..." autocomplete="off" />
+        </div>
+
+        <div class="two">
+          <div class="field">
+            <label>Area *</label>
+            <input id="f-area" type="text" list="area-dl" required placeholder="mis. Bekasi Timur" autocomplete="off" />
+            <datalist id="area-dl"></datalist>
+          </div>
+          <div class="field">
+            <label>Kode Pos <span class="opt">opsional</span></label>
+            <input id="f-postal" type="tel" inputmode="numeric" placeholder="5 digit" maxlength="5" />
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="field">
+          <label>Catatan Kunjungan <span class="opt">opsional</span></label>
+          <textarea id="f-notes" rows="4" placeholder="Topik yang dibahas, kebutuhan, rencana follow-up..."></textarea>
+        </div>
+
+        <!-- Inline stage update — visible only when an existing customer is matched -->
+        <div id="stage-section" style="display:none">
+          <div class="divider"></div>
+          <div class="field">
+            <label>Update Tahap <span class="opt">opsional</span></label>
+            <select id="f-stage">
+              <option value="">— Tidak ada perubahan tahap —</option>
+            </select>
+            <div id="stage-hint" style="font-size:12px;color:var(--muted);margin-top:6px"></div>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="field">
+          <label>Foto <span class="opt">opsional · maks 5 gambar · dikompres otomatis</span></label>
+          <div class="photo-grid" id="photo-grid">
+            <button type="button" class="photo-add" id="photo-add-btn">
+              <span class="plus">+</span>
+              <span class="lbl">Foto</span>
+            </button>
+          </div>
+          <input type="file" id="photo-input" accept="image/*" multiple style="display:none" />
+        </div>
+
+        <div class="err" id="err"></div>
+
+        <button type="submit" class="btn-save" id="btn" disabled>Simpan Kunjungan</button>
+
+      </form>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script>
+    (() => {
+      "use strict";
+      const $ = id => document.getElementById(id);
+      const WIB_MS = 7 * 3600 * 1000;
+
+      // ── Activity type toggle ─────────────────────────────────────────────
+      let activityType = "kunjungan";
+      window.setAct = function(type) {
+        activityType = type;
+        ["kunjungan", "telepon", "eskalasi"].forEach(t => {
+          $("act-" + t).classList.toggle("active", t === type);
+        });
+        const isEsk = type === "eskalasi";
+        $("eskalasi-note").style.display = isEsk ? "" : "none";
+        $("type-field").style.display    = isEsk ? "none" : "";
+        // In eskalasi mode the two-col grid becomes single-col (category only)
+        $("type-cat-row").style.gridTemplateColumns = isEsk ? "1fr" : "";
+        updateBtnLabel();
+        checkRequired();
+      };
+
+      function updateBtnLabel() {
+        if (activityType === "telepon")   $("btn").textContent = "Simpan Telepon";
+        else if (activityType === "eskalasi") $("btn").textContent = "Kirim ke Tim Eskalasi";
+        else                              $("btn").textContent = "Simpan Kunjungan";
+      }
+
+      // ── Reactive submit button ───────────────────────────────────────────
+      function checkRequired() {
+        const needsType = activityType !== "eskalasi";
+        const ok = !!$("f-sales").value && !!$("f-store").value.trim() &&
+                   (!needsType || !!$("f-type").value) &&
+                   !!$("f-cat").value.trim() && !!$("f-area").value.trim();
+        $("btn").disabled = !ok;
+      }
+      ["f-sales","f-type"].forEach(id => $(id).addEventListener("change", checkRequired));
+      ["f-store","f-cat","f-area"].forEach(id => $(id).addEventListener("input", checkRequired));
+
+      // ── Prefill from ?prefill=accountId ─────────────────────────────────
+      let prefillAccountId = null;
+      let matchedCustomer  = null;
+
+      // Stage label map (project + repeating)
+      function stageName(s) {
+        const m = {
+          prospek:'Prospek', penawaran:'Penawaran', negosiasi:'Negosiasi', won:'Won', gugur:'Gugur',
+          aktif:'Aktif', perlu_followup:'Perlu Follow-up', at_risk:'At Risk', hibernasi:'Hibernasi',
+          repeat_order:'Repeat Order',
+        };
+        return m[s] || s;
+      }
+
+      function showStageSection(customer) {
+        const sel = $("f-stage");
+        sel.innerHTML = '<option value="">— Tidak ada perubahan tahap —</option>';
+        const isProject = customer.account_type === 'project';
+        const stages = isProject
+          ? [['prospek','Prospek'],['penawaran','Penawaran'],['negosiasi','Negosiasi'],['won','Won'],['gugur','Gugur']]
+          : [['aktif','Aktif'],['perlu_followup','Perlu Follow-up'],['at_risk','At Risk'],['hibernasi','Hibernasi'],['repeat_order','Repeat Order']];
+        stages.forEach(([val, lbl]) => {
+          const o = document.createElement('option');
+          o.value = val; o.textContent = lbl;
+          if (val === customer.stage) o.selected = true;
+          sel.appendChild(o);
+        });
+        $("stage-hint").innerHTML = customer.stage
+          ? `Tahap saat ini: <span class="stage-current">${stageName(customer.stage)}</span>`
+          : '';
+        $("stage-section").style.display = '';
+      }
+
+      function hideStageSection() {
+        $("stage-section").style.display = 'none';
+        matchedCustomer = null;
+      }
+
+      window.clearPrefill = function() {
+        prefillAccountId = null;
+        $("prefill-banner").style.display = "none";
+        $("f-store").value = "";
+        $("f-type").value  = "";
+        $("f-cat").value   = "";
+        $("f-area").value  = "";
+        hideStageSection();
+        checkRequired();
+      };
+
+      async function applyPrefill(accountId) {
+        const data = await fetch(`/api/distributor/accounts/${accountId}`).then(r => r.json()).catch(() => null);
+        if (!data?.account) return;
+        const a = data.account;
+        prefillAccountId = accountId;
+        $("f-store").value = a.store_name ?? "";
+        $("f-type").value  = "old";
+        $("f-cat").value   = a.category ?? "";
+        $("f-area").value  = a.area ?? "";
+        if (a.address)     $("f-addr").value   = a.address;
+        if (a.postal_code) $("f-postal").value = a.postal_code;
+        const banner = $("prefill-banner");
+        $("prefill-text").textContent = `Melanjutkan dari akun: ${a.store_name}`;
+        banner.style.display = "flex";
+        if (a.stage || a.account_type) {
+          matchedCustomer = { id: a.id, stage: a.stage, account_type: a.account_type };
+          showStageSection(matchedCustomer);
+        }
+        checkRequired();
+      }
+
+      // ── Copy to WhatsApp ─────────────────────────────────────────────────
+      let lastSubmittedVisit = null;
+      let toastTimer = null;
+
+      const CUSTOMER_TYPE_LABELS = { new: "Baru (New)", old: "Lama (Old)" };
+
+      function showToast(msg) {
+        const el = $("toast");
+        el.textContent = msg;
+        el.classList.add("show");
+        if (toastTimer) clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => { el.classList.remove("show"); toastTimer = null; }, 2000);
+      }
+
+      function buildWaText(visit) {
+        const B = "•⁠  ";
+        const d = new Date(new Date(visit.visited_at).getTime() + WIB_MS);
+        const p = n => n.toString().padStart(2, "0");
+        const timeStr = `${p(d.getUTCHours())}:${p(d.getUTCMinutes())} WIB`;
+        const actLabel = visit.activity_type === "telepon" ? "Telepon" : "Kunjungan";
+
+        const lines = [];
+        lines.push(`📋 Laporan ${actLabel} · ${visit.store_name}`);
+        lines.push("");
+        lines.push(`${B}Jenis Customer: ${CUSTOMER_TYPE_LABELS[visit.customer_type] ?? visit.customer_type ?? "-"}`);
+        lines.push(`${B}Kategori: ${visit.category ?? "-"}`);
+        lines.push(`${B}Area: ${visit.area ?? "-"}`);
+        if (visit.address)     lines.push(`${B}Alamat: ${visit.address}`);
+        if (visit.postal_code) lines.push(`${B}Kode Pos: ${visit.postal_code}`);
+        if (visit.pic_name)    lines.push(`${B}PIC: ${visit.pic_name}`);
+
+        if (visit.notes) {
+          const rawLines = visit.notes.split(/\r?\n/).filter(l => l.trim());
+          const noteLines = rawLines.length > 1 ? rawLines : visit.notes.split(/\.\s+/).filter(l => l.trim());
+          lines.push(`${B}Hasil Kunjungan:`);
+          noteLines.forEach(nl => {
+            const t = nl.trim();
+            lines.push(`  ${B}${/[.!?]$/.test(t) ? t : t + "."}`);
+          });
+        }
+
+        lines.push("");
+        lines.push(`Sales: ${visit.salesperson_name} · ${timeStr}`);
+        return lines.join("\n");
+      }
+
+      window.copyWaFormat = async function() {
+        if (!lastSubmittedVisit) return;
+        const text = buildWaText(lastSubmittedVisit);
+        try {
+          await navigator.clipboard.writeText(text);
+        } catch {
+          const ta = document.createElement("textarea");
+          ta.value = text;
+          ta.style.cssText = "position:fixed;opacity:0;pointer-events:none";
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand("copy");
+          document.body.removeChild(ta);
+        }
+        showToast("Pesan di copy ✓");
+      };
+
+      // ── Post-submit state ────────────────────────────────────────────────
+      function showSuccess(payload) {
+        $("vform").style.display = "none";
+        const panel = $("success-panel");
+        panel.style.display = "flex";
+
+        // Reset WA preview + account link
+        const waPreview = $("wa-preview");
+        const acctLink  = $("btn-acct-link");
+        if (waPreview) { waPreview.style.display = "none"; waPreview.textContent = ""; }
+        if (acctLink)  acctLink.style.display = "none";
+
+        if (activityType === "eskalasi") {
+          $("success-icon").textContent  = "📋";
+          $("success-title").textContent = "Eskalasi Terkirim ✓";
+          $("success-sub").textContent   = payload?.store_name ?? "";
+          $("success-time").textContent  = "Tim Eskalasi sedang mencari kontak";
+        } else {
+          $("success-icon").textContent = "✓";
+          const label = activityType === "telepon" ? "Telepon" : "Kunjungan";
+          $("success-title").textContent = `${label} Tersimpan ✓`;
+          // Use API response for time/store-link if available; fall back to lastSubmittedVisit
+          const src = payload ?? lastSubmittedVisit ?? {};
+          if (src.visited_at) {
+            const d = new Date(new Date(src.visited_at).getTime() + WIB_MS);
+            const p = n => n.toString().padStart(2, '0');
+            $("success-time").textContent = `Dicatat: ${p(d.getUTCHours())}:${p(d.getUTCMinutes())} WIB`;
+          }
+          $("success-sub").textContent = src.store_name ?? "";
+          if (src.customer_id && acctLink) {
+            acctLink.href = `/distributor-account?id=${src.customer_id}`;
+            acctLink.style.display = "";
+          }
+          // Show WA text preview — tap to copy
+          if (waPreview && lastSubmittedVisit) {
+            const previewText = buildWaText(lastSubmittedVisit);
+            waPreview.textContent = previewText;
+            waPreview.insertAdjacentHTML("beforeend", '<span class="wa-copy-hint">👆 Tap untuk copy pesan</span>');
+            waPreview.style.display = "";
+          }
+        }
+      }
+
+      window.logAgain = function() {
+        $("success-panel").style.display = "none";
+        $("vform").style.display = "";
+        const savedSales = $("f-sales").value;
+        document.getElementById("vform").reset();
+        $("f-sales").value = savedSales;
+        pendingPhotos = [];
+        renderPhotoGrid();
+        $("prefill-banner").style.display = "none";
+        prefillAccountId = null;
+        hideStageSection();
+        const acctLink = $("btn-acct-link");
+        if (acctLink) acctLink.style.display = "none";
+        const waPreview2 = $("wa-preview");
+        if (waPreview2) { waPreview2.style.display = "none"; waPreview2.textContent = ""; }
+        lastSubmittedVisit = null;
+        checkRequired();
+        updateBtnLabel();
+      };
+
+      // ── Load dropdowns & datalists ───────────────────────────────────────
+      async function boot() {
+        const safeJson = r => r.ok ? r.json() : r.json().then(d => Promise.reject(new Error(d.error || "HTTP " + r.status)));
+        let spError = null;
+        const [spRes, catRes, areaRes] = await Promise.all([
+          fetch("/api/distributor/salespeople?active=true").then(safeJson).catch(e => { spError = e.message; return { salespeople: [] }; }),
+          fetch("/api/distributor/lists/categories").then(safeJson).catch(() => ({ values: [] })),
+          fetch("/api/distributor/lists/areas").then(safeJson).catch(() => ({ values: [] })),
+        ]);
+
+        // Salesperson — stays a <select> (locked registry)
+        const spSel = $("f-sales");
+        (spRes.salespeople ?? []).forEach(sp => {
+          const o = document.createElement("option");
+          o.value = sp.id;
+          o.textContent = `${sp.full_name}${sp.code ? " (" + sp.code + ")" : ""}`;
+          spSel.appendChild(o);
+        });
+
+        if (spSel.options.length <= 1) {
+          const o = document.createElement("option");
+          o.value = ""; o.disabled = true;
+          o.textContent = "⚠ Tidak ada sales terdaftar";
+          spSel.appendChild(o);
+          const detail = spError ? ` — ${spError}` : "";
+          const st = $("sp-status");
+          st.innerHTML = `⚠ Tidak ada sales aktif${detail}. <a href="/distributor-salespeople" style="color:var(--gold)">Daftarkan sales →</a>`;
+          st.style.cssText = "display:block;color:#e05252;margin-top:6px;font-size:12.5px";
+        }
+
+        // Category & Area — free text with datalist suggestions
+        const catDl = $("cat-dl");
+        (catRes.values ?? []).forEach(c => {
+          const o = document.createElement("option"); o.value = c; catDl.appendChild(o);
+        });
+
+        const areaDl = $("area-dl");
+        (areaRes.values ?? []).forEach(a => {
+          const o = document.createElement("option"); o.value = a; areaDl.appendChild(o);
+        });
+
+        // Prefill from URL param
+        const prefillId = new URLSearchParams(location.search).get("prefill");
+        if (prefillId) applyPrefill(Number(prefillId));
+      }
+
+      // Store-name autocomplete — fills all known fields when existing customer matched
+      let acTimer;
+      $("f-store").addEventListener("input", () => {
+        clearTimeout(acTimer);
+        acTimer = setTimeout(async () => {
+          const q = $("f-store").value.trim();
+          if (q.length < 2) return;
+          const repId = $("f-sales").value;
+          const url = `/api/distributor/customers/suggest?q=${encodeURIComponent(q)}${repId ? `&rep_id=${repId}` : ''}`;
+          const res = await fetch(url)
+            .then(r => r.json()).catch(() => ({ suggestions: [] }));
+          const dl = $("store-dl");
+          dl.innerHTML = "";
+          (res.suggestions ?? []).forEach(s => {
+            const o = document.createElement("option"); o.value = s.store_name; dl.appendChild(o);
+          });
+          const match = (res.suggestions ?? []).find(
+            s => s.store_name.toLowerCase() === q.toLowerCase()
+          );
+          if (match) {
+            // Auto-set tipe to "lama" and fill all known fields
+            if (!$("f-type").value)  $("f-type").value  = "old";
+            if (match.category && !$("f-cat").value)   $("f-cat").value   = match.category;
+            if (match.area     && !$("f-area").value)  $("f-area").value  = match.area;
+            if (match.address  && !$("f-addr").value)  $("f-addr").value  = match.address;
+            if (match.postal_code && !$("f-postal").value) $("f-postal").value = match.postal_code;
+            if (match.last_pic_name && !$("f-pic").value)  $("f-pic").value    = match.last_pic_name;
+            matchedCustomer = match;
+            showStageSection(match);
+            checkRequired();
+          } else {
+            hideStageSection();
+          }
+        }, 280);
+      });
+
+      // ── Photo handling ──────────────────────────────────────────────────
+      const MAX_PHOTOS = 5;
+      let pendingPhotos = []; // { blob, dataUrl, wrapEl }
+
+      function renderPhotoGrid() {
+        const grid = $("photo-grid");
+        // Remove old thumb wrappers (keep the add button)
+        grid.querySelectorAll(".photo-wrap").forEach(el => el.remove());
+        const addBtn = $("photo-add-btn");
+        pendingPhotos.forEach((p, i) => {
+          const wrap = document.createElement("div");
+          wrap.className = "photo-wrap";
+          const img = document.createElement("img");
+          img.src = p.dataUrl;
+          const del = document.createElement("button");
+          del.type = "button"; del.className = "del-btn"; del.textContent = "×";
+          del.onclick = () => { pendingPhotos.splice(i, 1); renderPhotoGrid(); };
+          wrap.appendChild(img); wrap.appendChild(del);
+          p.wrapEl = wrap;
+          grid.insertBefore(wrap, addBtn);
+        });
+        addBtn.style.display = pendingPhotos.length >= MAX_PHOTOS ? "none" : "";
+      }
+
+      async function compressPhoto(file) {
+        return new Promise(resolve => {
+          const reader = new FileReader();
+          reader.onload = ev => {
+            const img = new Image();
+            img.onload = () => {
+              let w = img.width, h = img.height;
+              const MAX = 1600;
+              if (w > MAX || h > MAX) {
+                if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
+                else       { w = Math.round(w * MAX / h); h = MAX; }
+              }
+              const canvas = document.createElement("canvas");
+              canvas.width = w; canvas.height = h;
+              canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+              canvas.toBlob(blob => resolve(blob ?? file), "image/jpeg", 0.82);
+            };
+            img.src = ev.target.result;
+          };
+          reader.readAsDataURL(file);
+        });
+      }
+
+      $("photo-add-btn").addEventListener("click", () => $("photo-input").click());
+
+      $("photo-input").addEventListener("change", async e => {
+        const files = [...e.target.files];
+        e.target.value = "";
+        for (const file of files) {
+          if (pendingPhotos.length >= MAX_PHOTOS) break;
+          if (!file.type.startsWith("image/")) continue;
+          const blob = await compressPhoto(file);
+          const dataUrl = await new Promise(res => {
+            const r = new FileReader();
+            r.onload = ev => res(ev.target.result);
+            r.readAsDataURL(blob);
+          });
+          pendingPhotos.push({ blob, dataUrl, wrapEl: null });
+        }
+        renderPhotoGrid();
+      });
+
+      async function uploadPendingPhotos(visitId) {
+        for (const p of pendingPhotos) {
+          const ov = document.createElement("div");
+          ov.className = "status-ov"; ov.textContent = "⏳";
+          if (p.wrapEl) { p.wrapEl.querySelector(".del-btn")?.remove(); p.wrapEl.appendChild(ov); }
+          const fd = new FormData();
+          fd.append("file", p.blob, "photo.jpg");
+          try {
+            const r = await fetch(`/api/distributor/visits/${visitId}/photos`, { method: "POST", body: fd });
+            const data = await r.json();
+            if (ov) ov.textContent = data.ok ? "✓" : "✗";
+          } catch {
+            if (ov) ov.textContent = "✗";
+          }
+        }
+        pendingPhotos = [];
+        setTimeout(renderPhotoGrid, 1400);
+      }
+
+      // ── Submit ───────────────────────────────────────────────────────────
+      document.getElementById("vform").addEventListener("submit", async function(e) {
+        e.preventDefault();
+        const errEl = $("err");
+        errEl.style.display = "none";
+
+        const salesperson_id = Number($("f-sales").value);
+        const store_name     = $("f-store").value.trim();
+        const customer_type  = $("f-type").value;
+        const category       = $("f-cat").value;
+        const area           = $("f-area").value;
+        const pic_name       = $("f-pic").value.trim() || null;
+        const address        = $("f-addr").value.trim() || null;
+        const postal_code    = $("f-postal").value.trim() || null;
+        const notes          = $("f-notes").value.trim() || null;
+
+        // Validate required fields
+        const missing = [];
+        if (!salesperson_id) missing.push("Sales");
+        if (!store_name)     missing.push("Nama Toko");
+        if (activityType !== "eskalasi" && !customer_type) missing.push("Tipe Customer");
+        if (!category)       missing.push("Kategori");
+        if (!area)           missing.push("Area");
+        if (missing.length) {
+          errEl.textContent = "Lengkapi: " + missing.join(", ");
+          errEl.style.display = "block"; return;
+        }
+        if (postal_code && !/^\d{5}$/.test(postal_code)) {
+          errEl.textContent = "Kode pos harus 5 digit angka.";
+          errEl.style.display = "block"; return;
+        }
+
+        const btn = $("btn");
+        btn.disabled = true;
+        btn.textContent = "Menyimpan...";
+
+        let res;
+        if (activityType === "eskalasi") {
+          res = await fetch("/api/distributor/escalations", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ salesperson_id, store_name, category, area, address, notes }),
+          }).then(r => r.json()).catch(() => ({ error: "Koneksi gagal." }));
+        } else {
+          const new_stage = matchedCustomer ? ($("f-stage")?.value || null) : null;
+          res = await fetch("/api/distributor/visits", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ salesperson_id, store_name, customer_type, category,
+              area, pic_name, address, postal_code, notes, activity_type: activityType,
+              ...(new_stage ? { new_stage } : {}) }),
+          }).then(r => r.json()).catch(() => ({ error: "Koneksi gagal." }));
+        }
+
+        btn.disabled = false;
+        updateBtnLabel();
+
+        if (res.error) {
+          errEl.textContent = res.error;
+          errEl.style.display = "block"; return;
+        }
+
+        if (activityType === "eskalasi") {
+          showSuccess(res.escalation);
+          return;
+        }
+
+        // Capture visit data for WA copy from form fields (not relying on API response shape)
+        const spOption = $("f-sales").selectedOptions[0];
+        const salesperson_name = spOption
+          ? spOption.textContent.replace(/\s*\([A-Z0-9]+\)\s*$/, "").trim()
+          : "";
+        lastSubmittedVisit = {
+          store_name, customer_type, category, area, pic_name, notes, address, postal_code,
+          activity_type: activityType,
+          visited_at: (res.visit?.visited_at) ?? new Date().toISOString(),
+          customer_id: res.visit?.customer_id ?? null,
+          salesperson_name,
+        };
+
+        const visitId = res.visit?.id;
+        if (pendingPhotos.length && visitId) {
+          await uploadPendingPhotos(visitId);
+        }
+        showSuccess(res.visit);
+      });
+
+      boot().catch(console.error);
+    })();
+    </script>
+  </body>
+</html>

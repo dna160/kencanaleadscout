@@ -1,0 +1,661 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Distributor · Akun · Kencana LeadScout</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --ink: #14213d; --ink-2: #1b2949; --red: #9b2226; --gold: #bb9457; --green: #2c6e49;
+      --paper: #f5f2ec; --muted: #8a96ad; --line: rgba(255,255,255,.09);
+      --blue: #2E6FD6; --old: #3E9B4F;
+      --display: "Space Grotesk","Inter",system-ui,sans-serif;
+      --sans: "Inter",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      font-family: var(--sans); color: var(--paper);
+      background: radial-gradient(1200px 600px at 80% -10%, rgba(187,148,87,.12), transparent 60%), var(--ink);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── Nav ──────────────────────────────────────────────────── */
+    .nav {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 20px; border-bottom: 1px solid var(--line);
+      background: rgba(20,33,61,.92); position: sticky; top: 0; z-index: 10;
+      backdrop-filter: blur(10px); gap: 12px; flex-wrap: wrap;
+    }
+    .nav-brand { display: flex; align-items: center; gap: 10px; }
+    .mark {
+      width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center;
+      background: linear-gradient(135deg, var(--red), #7a1a1d);
+      font-family: var(--display); font-weight: 700; color: #fff; font-size: 16px;
+    }
+    .nav-brand b { font-family: var(--display); font-size: 15px; }
+    .nav-brand span { color: var(--muted); font-size: 12px; }
+    .nav-links { display: flex; align-items: center; gap: 10px; }
+    .nav-links a { color: var(--muted); font-size: 13px; text-decoration: none; }
+    .nav-links a:hover { color: var(--paper); }
+    .nav-links a.gold { color: var(--gold); font-weight: 600; }
+
+    /* ── Page ─────────────────────────────────────────────────── */
+    .page { max-width: 860px; margin: 0 auto; padding: 24px 20px 80px; }
+
+    /* ── Panel ────────────────────────────────────────────────── */
+    .panel {
+      border: 1px solid var(--line); border-radius: 18px; padding: 20px 22px;
+      background: linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.015));
+      margin-bottom: 14px;
+    }
+    .panel h3 {
+      font-family: var(--display); font-size: 13px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: .7px; color: var(--muted); margin: 0 0 16px;
+    }
+
+    /* ── Pipeline Position ────────────────────────────────────── */
+    .pipeline-panel { margin-bottom: 14px; }
+    .stepper {
+      display: flex; align-items: center; gap: 0; overflow-x: auto;
+      scrollbar-width: none; -webkit-overflow-scrolling: touch;
+    }
+    .stepper::-webkit-scrollbar { display: none; }
+    .step {
+      flex-shrink: 0; font-size: 12.5px; font-weight: 600; padding: 8px 16px;
+      border: 1px solid rgba(255,255,255,.12); border-radius: 99px;
+      color: var(--muted); background: rgba(255,255,255,.04); white-space: nowrap;
+    }
+    .step.active {
+      background: rgba(187,148,87,.18); border-color: rgba(187,148,87,.5); color: var(--gold);
+      box-shadow: 0 0 0 3px rgba(187,148,87,.12);
+    }
+    .step.past { background: rgba(255,255,255,.07); color: var(--paper); border-color: rgba(255,255,255,.18); }
+    .step.end-won { background: rgba(44,110,73,.18); border-color: rgba(44,110,73,.4); color: #9fe0b9; }
+    .step.end-won.active { background: rgba(44,110,73,.3); border-color: rgba(44,110,73,.6); box-shadow: 0 0 0 3px rgba(44,110,73,.15); }
+    .step.end-gugur { background: rgba(155,34,38,.12); border-color: rgba(155,34,38,.3); color: #f8a0a0; }
+    .step.end-gugur.active { background: rgba(155,34,38,.22); border-color: rgba(155,34,38,.5); box-shadow: 0 0 0 3px rgba(155,34,38,.12); }
+    .step-arrow { flex-shrink: 0; color: rgba(255,255,255,.25); padding: 0 4px; font-size: 16px; }
+    .step-sep { flex-shrink: 0; color: rgba(255,255,255,.2); padding: 0 8px; font-size: 14px; }
+
+    .health-bar-wrap { margin: 6px 0 10px; }
+    .health-track { height: 10px; background: rgba(255,255,255,.08); border-radius: 99px; overflow: hidden; }
+    .health-fill { height: 100%; border-radius: 99px; transition: width .5s ease; }
+    .health-aktif    { background: linear-gradient(90deg, var(--green), #5cb85c); }
+    .health-perlu    { background: linear-gradient(90deg, #b45309, var(--amber)); }
+    .health-at_risk  { background: linear-gradient(90deg, #7a1a1d, var(--red)); }
+    .health-hibernasi { background: rgba(255,255,255,.2); }
+    .health-info { font-size: 12.5px; color: var(--muted); margin-top: 8px; }
+    .health-info strong { color: var(--paper); }
+    .health-info .overdue-txt { color: #f8a0a0; font-weight: 600; }
+
+    /* ── Account header ───────────────────────────────────────── */
+    .acct-name { font-family: var(--display); font-size: 26px; font-weight: 700; margin: 0 0 8px; line-height: 1.2; }
+    .acct-meta { display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--muted); font-size: 13px; margin-bottom: 14px; }
+    .acct-meta strong { color: var(--paper); }
+    .acct-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+
+    /* ── Stage badges ─────────────────────────────────────────── */
+    .stg {
+      display: inline-block; font-size: 12px; font-weight: 700; padding: 4px 12px;
+      border-radius: 99px; text-transform: uppercase; letter-spacing: .5px;
+    }
+    .stg-aktif     { background: rgba(44,110,73,.25); color: #9fe0b9; }
+    .stg-perlu     { background: rgba(187,148,87,.22); color: var(--gold); }
+    .stg-at_risk   { background: rgba(155,34,38,.25); color: #f8a0a0; }
+    .stg-hibernasi { background: rgba(255,255,255,.1); color: var(--muted); }
+    .stg-prospek   { background: rgba(46,111,214,.2); color: #7eb8f7; }
+    .stg-penawaran { background: rgba(128,90,213,.2); color: #c4b5fd; }
+    .stg-negosiasi { background: rgba(221,107,32,.2); color: #f6b87a; }
+    .stg-won       { background: rgba(44,110,73,.3); color: #9fe0b9; }
+    .stg-gugur     { background: rgba(155,34,38,.2); color: #f8a0a0; }
+
+    /* ── Stage changer ────────────────────────────────────────── */
+    .stage-row { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+    .stage-row label { font-size: 11.5px; font-weight: 600; letter-spacing: .5px; text-transform: uppercase; color: var(--muted); }
+    .stage-row select, .stage-row .rep-sel {
+      background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.13); border-radius: 9px;
+      padding: 7px 10px; color: var(--paper); font-family: var(--sans); font-size: 13px;
+      outline: none; cursor: pointer; color-scheme: dark;
+    }
+    .stage-row select:focus, .stage-row .rep-sel:focus { border-color: var(--gold); }
+    .stage-row select option, .stage-row .rep-sel option { background: #1e2d50; }
+    .btn-apply {
+      background: rgba(187,148,87,.18); border: 1px solid rgba(187,148,87,.45); color: var(--gold);
+      border-radius: 9px; padding: 7px 14px; cursor: pointer; font-weight: 700; font-size: 12.5px;
+    }
+    .btn-apply:hover { background: rgba(187,148,87,.28); }
+    .stage-msg { font-size: 12px; color: var(--muted); }
+    .stage-msg.ok { color: #9fe0b9; }
+    .stage-msg.err { color: #f8a0a0; }
+
+    /* ── Action bar ───────────────────────────────────────────── */
+    .action-btns { display: flex; gap: 9px; flex-wrap: wrap; }
+    .abn {
+      border: 1px solid var(--line); background: rgba(255,255,255,.06); color: var(--paper);
+      border-radius: 10px; padding: 10px 16px; cursor: pointer; font-family: var(--sans);
+      font-size: 13.5px; font-weight: 600; transition: background .15s, border-color .15s;
+    }
+    .abn:hover { background: rgba(255,255,255,.11); border-color: rgba(255,255,255,.22); }
+    .abn-red    { background: rgba(155,34,38,.14); border-color: rgba(155,34,38,.35); color: #f8a0a0; }
+    .abn-red:hover    { background: rgba(155,34,38,.22); }
+    .abn-green  { background: rgba(44,110,73,.14); border-color: rgba(44,110,73,.35); color: #9fe0b9; }
+    .abn-green:hover  { background: rgba(44,110,73,.22); }
+    .abn-gold   { background: rgba(187,148,87,.14); border-color: rgba(187,148,87,.35); color: var(--gold); }
+    .abn-gold:hover   { background: rgba(187,148,87,.22); }
+
+    /* ── Scheduled items ──────────────────────────────────────── */
+    .sched-item {
+      display: flex; align-items: flex-start; gap: 12px; padding: 10px 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .sched-item:last-child { border-bottom: none; }
+    .si-info { flex: 1; }
+    .si-type { font-weight: 600; font-size: 13.5px; }
+    .si-meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
+    .si-notes { font-size: 12px; color: #b8c4d8; margin-top: 3px; }
+    .done-btn {
+      font-size: 11.5px; padding: 4px 12px; border-radius: 99px; cursor: pointer; font-weight: 600;
+      border: 1px solid rgba(44,110,73,.45); color: #9fe0b9; background: rgba(44,110,73,.1); white-space: nowrap;
+    }
+    .done-btn:hover { background: rgba(44,110,73,.2); }
+
+    /* ── Timeline ─────────────────────────────────────────────── */
+    .timeline { display: flex; flex-direction: column; }
+    .tl-item { display: flex; gap: 14px; padding: 11px 0; border-bottom: 1px solid var(--line); }
+    .tl-item:last-child { border-bottom: none; }
+    .tl-dot { flex-shrink: 0; padding-top: 5px; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; display: block; }
+    .dot-kunjungan     { background: #7eb8f7; }
+    .dot-telepon       { background: #c4b5fd; }
+    .dot-received_order { background: #9fe0b9; }
+    .dot-note          { background: var(--muted); }
+    .dot-stage         { background: var(--gold); }
+    .tl-body { flex: 1; }
+    .tl-who  { font-size: 13.5px; font-weight: 600; }
+    .tl-type { color: var(--muted); font-size: 12px; font-weight: 400; }
+    .tl-notes { font-size: 13px; color: #b8c4d8; margin-top: 3px; }
+    .tl-inv {
+      display: inline-block; margin-top: 4px; font-size: 11.5px; font-weight: 600;
+      background: rgba(44,110,73,.2); color: #9fe0b9; border-radius: 6px; padding: 2px 8px;
+    }
+    .tl-time { font-size: 11.5px; color: var(--muted); padding-top: 3px; white-space: nowrap; }
+
+    /* ── Modal ────────────────────────────────────────────────── */
+    .overlay {
+      display: none; position: fixed; inset: 0; z-index: 100;
+      background: rgba(0,0,0,.65); backdrop-filter: blur(4px);
+      align-items: center; justify-content: center; padding: 16px;
+    }
+    .overlay.open { display: flex; }
+    .modal {
+      background: #1b2949; border: 1px solid rgba(255,255,255,.12); border-radius: 18px;
+      padding: 24px; width: 100%; max-width: 440px;
+      box-shadow: 0 20px 60px rgba(0,0,0,.5);
+    }
+    .modal h3 { font-family: var(--display); font-size: 17px; margin: 0 0 18px; }
+    .modal label {
+      display: block; font-size: 11px; font-weight: 600; letter-spacing: .7px;
+      text-transform: uppercase; color: var(--muted); margin-bottom: 5px;
+    }
+    .modal input, .modal select, .modal textarea {
+      background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.13); border-radius: 10px;
+      padding: 11px 13px; color: var(--paper); font-family: var(--sans); font-size: 14px;
+      width: 100%; outline: none; margin-bottom: 14px; color-scheme: dark;
+    }
+    .modal input:focus, .modal select:focus, .modal textarea:focus { border-color: var(--gold); }
+    .modal select option { background: #1e2d50; }
+    .modal input::placeholder, .modal textarea::placeholder { color: var(--muted); }
+    .modal textarea { resize: vertical; min-height: 72px; }
+    .modal-footer { display: flex; gap: 9px; justify-content: flex-end; margin-top: 4px; }
+    .btn-cancel {
+      border: 1px solid var(--line); background: rgba(255,255,255,.06); color: var(--paper);
+      border-radius: 9px; padding: 10px 18px; cursor: pointer; font-size: 13px; font-weight: 600;
+    }
+    .btn-cancel:hover { background: rgba(255,255,255,.1); }
+    .btn-save {
+      background: linear-gradient(135deg, var(--red), #7a1a1d); border: none; color: #fff;
+      border-radius: 9px; padding: 10px 20px; cursor: pointer; font-size: 13px; font-weight: 700;
+      box-shadow: 0 4px 14px rgba(155,34,38,.35);
+    }
+    .btn-save:hover { opacity: .9; }
+    .modal-err { color: #f8a0a0; font-size: 12.5px; min-height: 18px; margin-bottom: 8px; }
+
+    .empty { color: var(--muted); font-size: 13.5px; text-align: center; padding: 24px 0; }
+    .spinner { color: var(--muted); font-size: 13px; text-align: center; padding: 40px; }
+  </style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-brand">
+    <div class="mark">K</div>
+    <div><b>Akun</b><span>Distributor · pipeline</span></div>
+  </div>
+  <div class="nav-links">
+    <a href="/distributor-visits">Catat ↗</a>
+    <a href="/distributor-rack">Rack-up ↗</a>
+    <a href="/distributor-myday">My Day ↗</a>
+    <a href="/distributor-insights">Insights ↗</a>
+    <a class="gold" href="javascript:history.back()">← Kembali</a>
+  </div>
+</nav>
+
+<div class="page" id="page">
+  <div class="spinner">Memuat akun…</div>
+</div>
+
+<!-- Action modal -->
+<div class="overlay" id="action-overlay">
+  <div class="modal">
+    <h3 id="m-title">Catat Aktivitas</h3>
+    <label>Sales rep</label>
+    <select id="m-rep"><option value="">— Pilih —</option></select>
+    <div id="m-inv-wrap">
+      <label>Nomor Invoice <span style="color:#f8a0a0">*</span></label>
+      <input type="text" id="m-invoice" placeholder="INV-2025-001">
+    </div>
+    <label>Catatan</label>
+    <textarea id="m-notes" placeholder="Catatan tambahan (opsional)"></textarea>
+    <div class="modal-err" id="m-err"></div>
+    <div class="modal-footer">
+      <button class="btn-cancel" onclick="closeModal('action-overlay')">Batal</button>
+      <button class="btn-save" onclick="saveAction()">Simpan</button>
+    </div>
+  </div>
+</div>
+
+<!-- Schedule modal -->
+<div class="overlay" id="sched-overlay">
+  <div class="modal">
+    <h3>Jadwalkan Follow-up</h3>
+    <label>Sales rep</label>
+    <select id="s-rep"><option value="">— Pilih —</option></select>
+    <label>Jenis aktivitas</label>
+    <select id="s-type">
+      <option value="followup">Follow-up</option>
+      <option value="kunjungan">Kunjungan</option>
+      <option value="telepon">Telepon</option>
+    </select>
+    <label>Waktu (WIB) <span style="color:#f8a0a0">*</span></label>
+    <input type="datetime-local" id="s-when">
+    <label>Catatan</label>
+    <textarea id="s-notes" placeholder="Catatan (opsional)"></textarea>
+    <div class="modal-err" id="s-err"></div>
+    <div class="modal-footer">
+      <button class="btn-cancel" onclick="closeModal('sched-overlay')">Batal</button>
+      <button class="btn-save" onclick="saveSchedule()">Simpan</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const params = new URLSearchParams(location.search);
+const ACCT_ID = Number(params.get('id'));
+let salespeople = [];
+let pendingActionType = null;
+
+function esc(s) {
+  if (s == null) return "";
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function stageBadge(s) {
+  const cls = {aktif:'stg-aktif',perlu_followup:'stg-perlu',at_risk:'stg-at_risk',hibernasi:'stg-hibernasi',
+    prospek:'stg-prospek',penawaran:'stg-penawaran',negosiasi:'stg-negosiasi',won:'stg-won',gugur:'stg-gugur'};
+  const lbl = {aktif:'Aktif',perlu_followup:'Perlu Follow-up',at_risk:'At Risk',hibernasi:'Hibernasi',
+    prospek:'Prospek',penawaran:'Penawaran',negosiasi:'Negosiasi',won:'Won',gugur:'Gugur'};
+  return `<span class="stg ${cls[s]??''}">${lbl[s]??s}</span>`;
+}
+
+function fmtWib(iso) {
+  if (!iso) return '—';
+  const d = new Date(new Date(iso).getTime() + 7*3600*1000);
+  const pad = n => n.toString().padStart(2,'0');
+  return `${pad(d.getUTCDate())}/${pad(d.getUTCMonth()+1)}/${d.getUTCFullYear()} ${pad(d.getUTCHours())}.${pad(d.getUTCMinutes())}`;
+}
+
+function actionLabel(t) {
+  return {kunjungan:'Kunjungan',telepon:'Telepon',received_order:'Terima Order',note:'Catatan',followup:'Follow-up'}[t]??t;
+}
+
+function stagesFor(type) {
+  return type === 'project'
+    ? ['prospek','penawaran','negosiasi','won','gugur']
+    : ['aktif','perlu_followup','at_risk','hibernasi'];
+}
+
+function stageLabel(s) {
+  return {aktif:'Aktif',perlu_followup:'Perlu Follow-up',at_risk:'At Risk',hibernasi:'Hibernasi',
+    prospek:'Prospek',penawaran:'Penawaran',negosiasi:'Negosiasi',won:'Won',gugur:'Gugur'}[s]??s;
+}
+
+function dotClass(t) {
+  return {kunjungan:'dot-kunjungan',telepon:'dot-telepon',received_order:'dot-received_order',note:'dot-note'}[t]??'dot-note';
+}
+
+// ── Pipeline Position ─────────────────────────────────────────────────────────
+
+function renderPipelinePosition(account) {
+  const { account_type, stage, last_contact_at } = account;
+
+  if (account_type === 'project') {
+    const stages = ['prospek','penawaran','negosiasi'];
+    const ends   = ['won','gugur'];
+    const idx    = stages.indexOf(stage);
+    // Build steps
+    const stepsHtml = stages.map((s, i) => {
+      const cls = s === stage ? 'active' : (i < idx ? 'past' : '');
+      return `<span class="step ${cls}">${stageLabel(s)}</span><span class="step-arrow">›</span>`;
+    }).join('') +
+    `<span class="step-sep">→</span>` +
+    `<span class="step end-won${stage==='won'?' active':''}">${stageLabel('won')}</span>` +
+    `<span style="color:rgba(255,255,255,.18);padding:0 6px;font-size:12px">|</span>` +
+    `<span class="step end-gugur${stage==='gugur'?' active':''}">${stageLabel('gugur')}</span>`;
+
+    return `
+      <div class="panel pipeline-panel">
+        <h3>Posisi Pipeline · Project</h3>
+        <div class="stepper">${stepsHtml}</div>
+      </div>`;
+  }
+
+  // Repeating
+  const days = last_contact_at
+    ? Math.floor((Date.now() - new Date(last_contact_at).getTime()) / (24*3600*1000))
+    : null;
+  const target = 14;
+  const overdue = days !== null ? Math.max(0, days - target) : null;
+
+  let fillPct, fillClass, infoHtml;
+  if (days === null) {
+    fillPct = 100; fillClass = 'health-at_risk';
+    infoHtml = '<strong class="overdue-txt">Belum pernah dikunjungi</strong>';
+  } else if (stage === 'aktif') {
+    fillPct = Math.min(100, Math.round((days / target) * 100));
+    fillClass = 'health-aktif';
+    infoHtml = `Terakhir kontak: <strong>${days} hari lalu</strong> · Target cadence: ${target} hari`;
+  } else if (stage === 'perlu_followup') {
+    fillPct = Math.min(100, Math.round((days / 28) * 100));
+    fillClass = 'health-perlu';
+    infoHtml = `Belum dikunjungi: <strong>${days} hari</strong> · Target: ${target} hari · <span class="overdue-txt">Terlambat: +${overdue} hari</span>`;
+  } else if (stage === 'at_risk') {
+    fillPct = 100; fillClass = 'health-at_risk';
+    infoHtml = `Belum dikunjungi: <strong>${days} hari</strong> · Target: ${target} hari · <span class="overdue-txt">Terlambat: +${overdue} hari</span>`;
+  } else {
+    fillPct = 0; fillClass = 'health-hibernasi';
+    infoHtml = days !== null ? `Terakhir kontak: <strong>${days} hari lalu</strong>` : 'Tidak aktif';
+  }
+
+  return `
+    <div class="panel pipeline-panel">
+      <h3>Kesehatan Akun · Repeating</h3>
+      <div class="health-bar-wrap">
+        <div class="health-track">
+          <div class="health-fill ${fillClass}" style="width:${fillPct}%"></div>
+        </div>
+      </div>
+      <div class="health-info">${infoHtml}</div>
+    </div>`;
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+
+function renderPage({account, actions, stage_history, scheduled}) {
+  document.title = `${account.store_name} · Kencana LeadScout`;
+
+  const stages = stagesFor(account.account_type);
+  const stageOpts = stages.map(s =>
+    `<option value="${s}"${s===account.stage?' selected':''}>${stageLabel(s)}</option>`
+  ).join('');
+
+  const typeLabel = account.account_type === 'project' ? 'Project' : 'Repeating';
+
+  $('page').innerHTML = `
+    <!-- Account header -->
+    <div class="panel">
+      <div class="acct-row">
+        <div>
+          <div class="acct-name">${account.store_name}</div>
+          <div class="acct-meta">
+            <span>${account.area??'—'}</span>
+            <span>${account.category??'—'}</span>
+            <span>Tipe: <strong>${typeLabel}</strong></span>
+            ${account.owner_name?`<span>Owner: <strong>${account.owner_name} (${account.owner_code??'—'})</strong></span>`:''}
+          </div>
+          <div class="acct-meta">
+            <span>Pertama dicatat: ${fmtWib(account.first_seen_at)}</span>
+            <span>Terakhir kontak: ${fmtWib(account.last_contact_at)}</span>
+          </div>
+        </div>
+        <div style="text-align:right">
+          ${stageBadge(account.stage)}
+          ${account.owner_name ? `<div style="font-size:11px;color:var(--muted);margin-top:4px">oleh ${esc(account.owner_name)}</div>` : ''}
+        </div>
+      </div>
+      <div class="stage-row">
+        <label>Ubah stage</label>
+        <select id="stage-sel" class="rep-sel">${stageOpts}</select>
+        <select id="stage-rep" class="rep-sel">
+          <option value="">— Oleh —</option>
+          ${salespeople.map(sp=>`<option value="${sp.id}">${sp.full_name}</option>`).join('')}
+        </select>
+        <button class="btn-apply" onclick="changeStage()">Terapkan</button>
+        <span class="stage-msg" id="stage-msg"></span>
+      </div>
+    </div>
+
+    ${renderPipelinePosition(account)}
+
+    <!-- Action bar -->
+    <div class="panel">
+      <h3>Catat Aktivitas</h3>
+      <div class="action-btns">
+        <button class="abn abn-red"   onclick="openAction('kunjungan')">+ Kunjungan</button>
+        <button class="abn"           onclick="openAction('telepon')">📞 Telepon</button>
+        <button class="abn abn-green" onclick="openAction('received_order')">📦 Terima Order</button>
+        <button class="abn"           onclick="openAction('note')">📝 Catatan</button>
+        <button class="abn abn-gold"  onclick="openSchedule()">📅 Jadwal Follow-up</button>
+      </div>
+    </div>
+
+    ${renderScheduled(scheduled)}
+
+    <!-- Timeline -->
+    <div class="panel">
+      <h3>Timeline Aktivitas <span style="font-weight:400;opacity:.5">(${actions.length})</span></h3>
+      <div class="timeline">
+        ${!actions.length ? '<div class="empty">Belum ada aktivitas.</div>' :
+          actions.map(a=>`
+            <div class="tl-item">
+              <div class="tl-dot"><span class="dot ${dotClass(a.action_type)}"></span></div>
+              <div class="tl-body">
+                <div class="tl-who">${a.salesperson_name??'—'} <span class="tl-type">· ${actionLabel(a.action_type)}</span></div>
+                ${a.notes?`<div class="tl-notes">${a.notes}</div>`:''}
+                ${a.invoice_number?`<div class="tl-inv">Invoice: ${a.invoice_number}</div>`:''}
+              </div>
+              <div class="tl-time">${fmtWib(a.actioned_at)}</div>
+            </div>
+          `).join('')}
+      </div>
+    </div>
+
+    <!-- Stage history -->
+    <div class="panel">
+      <h3>Riwayat Stage</h3>
+      <div class="timeline">
+        ${!stage_history.length ? '<div class="empty">Belum ada perubahan stage.</div>' :
+          stage_history.map(h=>`
+            <div class="tl-item">
+              <div class="tl-dot"><span class="dot dot-stage"></span></div>
+              <div class="tl-body">
+                <div class="tl-who">${h.changed_by_name??'Sistem'}</div>
+                <div class="tl-type">${stageBadge(h.old_stage??'—')} → ${stageBadge(h.new_stage)}</div>
+              </div>
+              <div class="tl-time">${fmtWib(h.changed_at)}</div>
+            </div>
+          `).join('')}
+      </div>
+    </div>
+  `;
+
+  populateRepDropdowns();
+}
+
+function renderScheduled(scheduled) {
+  if (!scheduled?.length) return '';
+  return `
+    <div class="panel">
+      <h3>Follow-up Terjadwal <span style="font-weight:400;opacity:.5">(${scheduled.length})</span></h3>
+      ${scheduled.map(sa=>`
+        <div class="sched-item">
+          <div class="si-info">
+            <div class="si-type">${actionLabel(sa.action_type)}</div>
+            <div class="si-meta">${fmtWib(sa.scheduled_for)} WIB · ${sa.salesperson_name??'—'}</div>
+            ${sa.notes?`<div class="si-notes">${sa.notes}</div>`:''}
+          </div>
+          <button class="done-btn" onclick="markDone(${sa.id})">✓ Selesai</button>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+// ── Stage change ──────────────────────────────────────────────────────────────
+
+async function changeStage() {
+  const stage = $('stage-sel')?.value;
+  const repId = $('stage-rep')?.value || null;
+  const msg = $('stage-msg');
+  if (!msg) return;
+  msg.className = 'stage-msg'; msg.textContent = '';
+  try {
+    const r = await fetch(`/api/distributor/accounts/${ACCT_ID}/stage`, {
+      method: 'PATCH', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({stage, changed_by: repId ? Number(repId) : null}),
+    });
+    const d = await r.json();
+    if (!r.ok) { msg.className = 'stage-msg err'; msg.textContent = d.error; return; }
+    msg.className = 'stage-msg ok'; msg.textContent = 'Stage diperbarui ✓';
+    await load();
+  } catch(e) { msg.className = 'stage-msg err'; msg.textContent = e.message; }
+}
+
+// ── Action modal ──────────────────────────────────────────────────────────────
+
+function openAction(type) {
+  pendingActionType = type;
+  $('m-title').textContent = {kunjungan:'Catat Kunjungan',telepon:'Catat Telepon',received_order:'Catat Terima Order',note:'Tambah Catatan'}[type]??'Catat Aktivitas';
+  $('m-inv-wrap').style.display = type === 'received_order' ? 'block' : 'none';
+  $('m-invoice').value = ''; $('m-notes').value = ''; $('m-err').textContent = '';
+  $('action-overlay').classList.add('open');
+}
+
+function closeModal(id) { $(id).classList.remove('open'); }
+
+async function saveAction() {
+  const rep_id = $('m-rep').value;
+  const inv    = $('m-invoice').value.trim();
+  const notes  = $('m-notes').value.trim();
+  $('m-err').textContent = '';
+  if (pendingActionType === 'received_order' && !inv) {
+    $('m-err').textContent = 'Nomor invoice wajib diisi.'; return;
+  }
+  const body = {action_type: pendingActionType, salesperson_id: rep_id ? Number(rep_id) : null, notes: notes || null};
+  if (pendingActionType === 'received_order') body.invoice_number = inv;
+  try {
+    const r = await fetch(`/api/distributor/accounts/${ACCT_ID}/actions`, {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (!r.ok) { $('m-err').textContent = d.error; return; }
+    closeModal('action-overlay'); await load();
+  } catch(e) { $('m-err').textContent = e.message; }
+}
+
+// ── Schedule modal ────────────────────────────────────────────────────────────
+
+function openSchedule() {
+  $('s-notes').value = ''; $('s-err').textContent = '';
+  const pad = n => n.toString().padStart(2,'0');
+  const tom = new Date(Date.now() + 24*3600*1000);
+  $('s-when').value = `${tom.getFullYear()}-${pad(tom.getMonth()+1)}-${pad(tom.getDate())}T09:00`;
+  $('sched-overlay').classList.add('open');
+}
+
+async function saveSchedule() {
+  const rep_id = $('s-rep').value, type = $('s-type').value;
+  const when = $('s-when').value, notes = $('s-notes').value.trim();
+  $('s-err').textContent = '';
+  if (!when) { $('s-err').textContent = 'Pilih waktu jadwal.'; return; }
+  // datetime-local input has no timezone info — treat it as WIB (UTC+7)
+  const utc = new Date(new Date(when).getTime() - 7*3600*1000);
+  try {
+    const r = await fetch(`/api/distributor/accounts/${ACCT_ID}/schedule`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({salesperson_id: rep_id ? Number(rep_id) : null, action_type: type, scheduled_for: utc.toISOString(), notes: notes||null}),
+    });
+    const d = await r.json();
+    if (!r.ok) { $('s-err').textContent = d.error; return; }
+    closeModal('sched-overlay'); await load();
+  } catch(e) { $('s-err').textContent = e.message; }
+}
+
+// ── Mark done ─────────────────────────────────────────────────────────────────
+
+async function markDone(sid) {
+  await fetch(`/api/distributor/scheduled/${sid}/done`, {method:'PATCH'});
+  await load();
+}
+
+// ── Populate reps ─────────────────────────────────────────────────────────────
+
+function populateRepDropdowns() {
+  for (const id of ['m-rep','s-rep']) {
+    const sel = $(id); if (!sel) continue;
+    sel.innerHTML = '<option value="">— Pilih rep —</option>';
+    salespeople.forEach(sp => {
+      const o = document.createElement('option');
+      o.value = sp.id; o.textContent = `${sp.full_name} (${sp.code??'—'})`;
+      sel.appendChild(o);
+    });
+  }
+}
+
+// ── Data ──────────────────────────────────────────────────────────────────────
+
+async function load() {
+  if (!ACCT_ID) {
+    $('page').innerHTML = '<div class="empty" style="color:#f8a0a0;padding-top:60px">ID akun tidak ditemukan di URL (?id=...).</div>';
+    return;
+  }
+  try {
+    const r = await fetch(`/api/distributor/accounts/${ACCT_ID}`);
+    if (!r.ok) {
+      const d = await r.json().catch(()=>({}));
+      $('page').innerHTML = `<div class="empty" style="color:#f8a0a0;padding-top:60px">Error: ${d.error??r.statusText}</div>`;
+      return;
+    }
+    renderPage(await r.json());
+  } catch(e) {
+    $('page').innerHTML = `<div class="empty" style="color:#f8a0a0;padding-top:60px">Gagal memuat: ${e.message}</div>`;
+  }
+}
+
+async function loadReps() {
+  try {
+    const d = await fetch('/api/distributor/salespeople').then(r=>r.json());
+    salespeople = d.salespeople ?? [];
+  } catch {}
+}
+
+loadReps().then(load);
+</script>
+</body>
+</html>

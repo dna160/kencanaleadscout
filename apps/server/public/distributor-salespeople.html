@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Distributor · Kelola Sales · Kencana LeadScout</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --ink: #14213d; --ink-2: #1b2949; --red: #9b2226; --gold: #bb9457;
+        --paper: #f5f2ec; --muted: #8a96ad; --line: rgba(255,255,255,.09);
+        --blue: #2E6FD6; --old: #3E9B4F;
+        --display: "Space Grotesk","Inter",system-ui,sans-serif;
+        --sans: "Inter",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; }
+      body {
+        font-family: var(--sans); color: var(--paper); background: var(--ink);
+        -webkit-font-smoothing: antialiased;
+      }
+      .app { max-width: 700px; margin: 0 auto; padding-bottom: 80px; }
+
+      /* ── Header ─────────────────────────────────── */
+      .top {
+        position: sticky; top: 0; z-index: 5; background: rgba(20,33,61,.93);
+        backdrop-filter: blur(10px); border-bottom: 1px solid var(--line);
+        padding: 13px 20px; display: flex; align-items: center; gap: 12px;
+      }
+      .mark { width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center;
+        background: linear-gradient(135deg, var(--red), #7a1a1d);
+        font-family: var(--display); font-weight: 700; color: #fff; font-size: 15px; flex-shrink: 0; }
+      .top-info { flex: 1; }
+      .top-name { font-family: var(--display); font-size: 15px; font-weight: 700; }
+      .top-sub  { color: var(--muted); font-size: 12px; }
+      .nav { display: flex; gap: 12px; }
+      .nav a { color: var(--muted); text-decoration: none; font-size: 13px; white-space: nowrap; }
+      .nav a:hover { color: var(--paper); }
+
+      /* ── Content ─────────────────────────────────── */
+      .content { padding: 22px 20px; display: flex; flex-direction: column; gap: 22px; }
+
+      /* ── Add form panel ──────────────────────────── */
+      .panel { border: 1px solid var(--line); border-radius: 18px; padding: 20px;
+        background: linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.015)); }
+      .panel h3 { font-family: var(--display); font-size: 16px; margin: 0 0 4px; }
+      .panel .cap { color: var(--muted); font-size: 12.5px; margin: 0 0 18px; }
+
+      .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+      @media (max-width: 500px) { .two { grid-template-columns: 1fr; } }
+      .field { display: flex; flex-direction: column; gap: 6px; }
+      .field label { font-size: 11px; font-weight: 600; letter-spacing: .7px; text-transform: uppercase; color: var(--muted); }
+      .field label .opt { text-transform: none; letter-spacing: 0; font-weight: 400; font-size: 11px; }
+      input {
+        background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12);
+        border-radius: 10px; padding: 11px 13px; color: var(--paper); font-family: var(--sans);
+        font-size: 15px; width: 100%; outline: none; appearance: none;
+      }
+      input:focus { border-color: var(--gold); }
+      .btn {
+        background: linear-gradient(135deg, var(--red), #7a1a1d);
+        border: none; border-radius: 12px; padding: 13px 24px; color: #fff;
+        font-family: var(--display); font-weight: 600; font-size: 15px; cursor: pointer;
+        margin-top: 6px; transition: opacity .15s;
+      }
+      .btn:disabled { opacity: .5; cursor: not-allowed; }
+      .err { color: #e05252; font-size: 13px; display: none; margin-top: 8px; }
+      .ok  { color: #7ee87e; font-size: 13px; display: none; margin-top: 8px; }
+
+      /* ── Rep list ────────────────────────────────── */
+      .rep-list { display: flex; flex-direction: column; gap: 10px; }
+      .rep-card {
+        display: flex; align-items: center; justify-content: space-between; gap: 12px;
+        padding: 13px 16px; border: 1px solid var(--line); border-radius: 14px;
+        background: rgba(255,255,255,.03);
+      }
+      .rep-card.inactive { opacity: .45; }
+      .rep-card .nm { font-weight: 600; font-size: 15px; }
+      .rep-card .code { display: inline-block; margin-left: 8px; font-size: 11.5px;
+        background: rgba(255,255,255,.1); border-radius: 6px; padding: 2px 7px;
+        color: var(--muted); font-weight: 600; letter-spacing: .5px; }
+      .rep-card .meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
+      .rep-actions { display: flex; gap: 8px; flex-shrink: 0; }
+      .act-btn {
+        border: 1px solid var(--line); background: rgba(255,255,255,.06); color: var(--paper);
+        border-radius: 8px; padding: 6px 13px; cursor: pointer; font-size: 12.5px; font-weight: 600;
+        white-space: nowrap;
+      }
+      .act-btn.deactivate { border-color: rgba(155,34,38,.4); color: #e07070; background: rgba(155,34,38,.1); }
+      .act-btn.activate   { border-color: rgba(62,155,79,.4); color: #9fe0b9; background: rgba(62,155,79,.1); }
+      .act-btn:hover { opacity: .8; }
+      .badge-active   { display: inline-block; border-radius: 6px; padding: 2px 8px; font-size: 11px; font-weight: 700;
+        background: rgba(62,155,79,.18); color: #9fe0b9; }
+      .badge-inactive { display: inline-block; border-radius: 6px; padding: 2px 8px; font-size: 11px; font-weight: 700;
+        background: rgba(255,255,255,.08); color: var(--muted); }
+      .empty { color: var(--muted); font-size: 13.5px; text-align: center; padding: 28px 0; }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <div class="top">
+        <div class="mark">K</div>
+        <div class="top-info">
+          <div class="top-name">Kelola Sales</div>
+          <div class="top-sub">Daftar & manajemen perwakilan sales</div>
+        </div>
+        <nav class="nav">
+          <a href="/distributor-visits">← Catat</a>
+          <a href="/distributor-rack">Rack-up ↗</a>
+        </nav>
+      </div>
+
+      <div class="content">
+        <!-- Add form -->
+        <div class="panel">
+          <h3>Daftarkan Sales Baru</h3>
+          <p class="cap">Isi nama lengkap. Kode unik (opsional) digunakan sebagai singkatan.</p>
+          <div class="two">
+            <div class="field">
+              <label>Nama Lengkap *</label>
+              <input id="f-name" type="text" placeholder="mis. Budi Santoso" autocomplete="off" />
+            </div>
+            <div class="field">
+              <label>Kode <span class="opt">opsional</span></label>
+              <input id="f-code" type="text" placeholder="mis. BDS" maxlength="6" autocomplete="off" />
+            </div>
+          </div>
+          <div class="two" style="margin-top:12px">
+            <div class="field">
+              <label>No. HP <span class="opt">opsional</span></label>
+              <input id="f-phone" type="tel" placeholder="+628..." autocomplete="off" />
+            </div>
+            <div class="field">
+              <label>Area Default <span class="opt">opsional</span></label>
+              <input id="f-area" type="text" placeholder="mis. Bekasi Timur" autocomplete="off" />
+            </div>
+          </div>
+          <button class="btn" id="addBtn" onclick="addSales()">Daftarkan</button>
+          <div class="err" id="addErr"></div>
+          <div class="ok"  id="addOk"></div>
+        </div>
+
+        <!-- List -->
+        <div class="panel">
+          <h3>Daftar Sales</h3>
+          <p class="cap">Klik "Nonaktifkan" untuk menyembunyikan dari dropdown tanpa menghapus data kunjungan.</p>
+          <div class="rep-list" id="repList"><div class="empty">Memuat…</div></div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+    (() => {
+      "use strict";
+      const $ = id => document.getElementById(id);
+      const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+      async function loadList() {
+        const el = $("repList");
+        try {
+          const res  = await fetch("/api/distributor/salespeople?active=false");
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          const data = await res.json();
+          const reps = data.salespeople ?? [];
+          if (!reps.length) {
+            el.innerHTML = '<div class="empty">Belum ada sales terdaftar.</div>';
+            return;
+          }
+          el.innerHTML = reps.map(r => `
+            <div class="rep-card ${r.active ? "" : "inactive"}">
+              <div>
+                <div>
+                  <span class="nm">${esc(r.full_name)}</span>
+                  ${r.code ? `<span class="code">${esc(r.code)}</span>` : ""}
+                  &nbsp;<span class="${r.active ? "badge-active" : "badge-inactive"}">${r.active ? "Aktif" : "Nonaktif"}</span>
+                </div>
+                <div class="meta">${r.default_area ? "Area: " + esc(r.default_area) + "  " : ""}${r.phone_e164 ? esc(r.phone_e164) : ""}</div>
+              </div>
+              <div class="rep-actions">
+                ${r.active
+                  ? `<button class="act-btn deactivate" onclick="toggle(${r.id}, false)">Nonaktifkan</button>`
+                  : `<button class="act-btn activate"   onclick="toggle(${r.id}, true)">Aktifkan</button>`
+                }
+              </div>
+            </div>
+          `).join("");
+        } catch (err) {
+          let msg = "Gagal memuat daftar sales.";
+          const s = String(err);
+          if (s.includes("503")) msg = "Database belum terhubung — pastikan DATABASE_URL dikonfigurasi di Railway.";
+          else if (s.includes("500")) msg = "Server error membaca daftar sales. Railway sedang deploy ulang — tunggu sebentar lalu reload.";
+          el.innerHTML = `<div class="empty" style="color:#e05252">${msg}</div>`;
+        }
+      }
+
+      window.addSales = async function() {
+        const btn    = $("addBtn");
+        const errEl  = $("addErr");
+        const okEl   = $("addOk");
+        errEl.style.display = "none";
+        okEl.style.display  = "none";
+
+        const full_name    = $("f-name").value.trim();
+        const code         = $("f-code").value.trim().toUpperCase() || null;
+        const phone_e164   = $("f-phone").value.trim() || null;
+        const default_area = $("f-area").value.trim() || null;
+
+        if (!full_name) {
+          errEl.textContent = "Nama lengkap wajib diisi.";
+          errEl.style.display = "block"; return;
+        }
+
+        btn.disabled = true; btn.textContent = "Menyimpan…";
+        try {
+          const res  = await fetch("/api/distributor/salespeople", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ full_name, code, phone_e164, default_area }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error ?? "Gagal menyimpan.");
+          $("f-name").value = ""; $("f-code").value = "";
+          $("f-phone").value = ""; $("f-area").value = "";
+          okEl.textContent = `${data.salesperson.full_name} berhasil didaftarkan.`;
+          okEl.style.display = "block";
+          loadList();
+        } catch (err) {
+          errEl.textContent = String(err.message ?? err);
+          errEl.style.display = "block";
+        }
+        btn.disabled = false; btn.textContent = "Daftarkan";
+      };
+
+      window.toggle = async function(id, active) {
+        try {
+          const res = await fetch(`/api/distributor/salespeople/${id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ active }),
+          });
+          if (!res.ok) throw new Error("Gagal mengubah status.");
+          loadList();
+        } catch (err) {
+          alert(String(err.message ?? err));
+        }
+      };
+
+      loadList();
+    })();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,694 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Distributor · Visitation Rack-up · Kencana LeadScout</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --ink: #14213d; --ink-2: #1b2949; --red: #9b2226; --gold: #bb9457; --green: #2c6e49;
+        --paper: #f5f2ec; --muted: #8a96ad; --line: rgba(255,255,255,.09);
+        --blue: #2E6FD6; --old: #3E9B4F;
+        --display: "Space Grotesk","Inter",system-ui,sans-serif;
+        --sans: "Inter",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; }
+      body {
+        font-family: var(--sans); color: var(--paper);
+        background: radial-gradient(1200px 600px at 90% -10%, rgba(187,148,87,.14), transparent 60%), var(--ink);
+        -webkit-font-smoothing: antialiased;
+      }
+      .wrap { max-width: 1100px; margin: 0 auto; padding: 22px 22px 70px; }
+
+      /* ── Header ─────────────────────────────────────────────── */
+      header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 26px; flex-wrap: wrap; }
+      .brand { display: flex; align-items: center; gap: 12px; }
+      .mark { width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center;
+        background: linear-gradient(135deg, var(--red), #7a1a1d); font-family: var(--display); font-weight: 700; color: #fff; font-size: 18px; }
+      .brand b { font-family: var(--display); font-size: 17px; }
+      .brand span { color: var(--muted); font-size: 12.5px; display: block; }
+      .sync { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12.5px; }
+      .sync .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--old); box-shadow: 0 0 0 3px rgba(62,155,79,.25); }
+      .sync button { border: 1px solid var(--line); background: rgba(255,255,255,.05); color: var(--paper);
+        border-radius: 9px; padding: 7px 12px; cursor: pointer; font-weight: 600; font-size: 12.5px; }
+      a.back { color: var(--muted); text-decoration: none; font-size: 13px; }
+
+      /* ── KPI cards ───────────────────────────────────────────── */
+      .kpis { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; margin-bottom: 18px; }
+      @media (max-width: 820px) { .kpis { grid-template-columns: repeat(3, 1fr); } }
+      @media (max-width: 540px) { .kpis { grid-template-columns: repeat(2, 1fr); } }
+      .kpi { border: 1px solid var(--line); border-radius: 18px; padding: 20px; position: relative; overflow: hidden;
+        background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02)); }
+      .kpi .l { color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: .8px; text-transform: uppercase; }
+      .kpi .v { font-family: var(--display); font-size: 40px; font-weight: 700; line-height: 1.1; margin-top: 8px; font-variant-numeric: tabular-nums; }
+      .kpi .s { color: var(--muted); font-size: 12.5px; margin-top: 4px; }
+      .kpi.hero { background: linear-gradient(135deg, rgba(187,148,87,.22), rgba(187,148,87,.06)); border-color: rgba(187,148,87,.4); }
+      .kpi.hero .v { color: var(--gold); font-size: 52px; }
+      .kpi.blue-kpi { background: linear-gradient(135deg, rgba(46,111,214,.18), rgba(46,111,214,.05)); border-color: rgba(46,111,214,.35); }
+      .kpi.blue-kpi .v { color: #7eb8f7; }
+      .kpi.green-kpi { background: linear-gradient(135deg, rgba(62,155,79,.18), rgba(62,155,79,.05)); border-color: rgba(62,155,79,.35); }
+      .kpi.green-kpi .v { color: #9fe0b9; }
+
+      /* ── Escalation KPI ─────────────────────────────────────── */
+      .kpi.esk-kpi { background: linear-gradient(135deg, rgba(187,148,87,.18), rgba(187,148,87,.05)); border-color: rgba(187,148,87,.4); cursor: pointer; transition: background .15s; }
+      .kpi.esk-kpi:hover { background: linear-gradient(135deg, rgba(187,148,87,.28), rgba(187,148,87,.1)); }
+      .kpi.esk-kpi .v { color: var(--gold); }
+      .kpi.esk-kpi .s { color: rgba(187,148,87,.7); }
+
+      /* ── Escalation panel ────────────────────────────────────── */
+      .esk-panel { display: none; border: 1px solid rgba(187,148,87,.3); border-radius: 18px; padding: 20px; margin-bottom: 14px;
+        background: linear-gradient(180deg, rgba(187,148,87,.07), rgba(187,148,87,.02)); }
+      .esk-panel.open { display: block; }
+      .esk-panel h3 { font-family: var(--display); font-size: 16px; margin: 0 0 4px; color: var(--gold); }
+      .esk-panel .cap { color: var(--muted); font-size: 12.5px; margin: 0 0 16px; }
+      .esk-list { display: flex; flex-direction: column; gap: 10px; }
+      .esk-item { border: 1px solid var(--line); border-radius: 13px; padding: 14px 16px; background: rgba(255,255,255,.03); }
+      .esk-item .ei-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+      .esk-item .ei-name { font-weight: 700; font-size: 14px; }
+      .esk-item .ei-meta { color: var(--muted); font-size: 12px; margin-top: 3px; }
+      .esk-item .ei-rep  { font-size: 12px; color: rgba(187,148,87,.8); margin-top: 2px; }
+      .esk-item .ei-notes { font-size: 12.5px; color: #aeb8cc; margin-top: 8px; font-style: italic; }
+      .esk-item .ei-age { font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+      .btn-resolve { border: 1px solid rgba(187,148,87,.45); background: rgba(187,148,87,.12); color: var(--gold);
+        border-radius: 8px; padding: 6px 14px; cursor: pointer; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+      .btn-resolve:hover { background: rgba(187,148,87,.22); }
+      .resolve-form { display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line);
+        display: none; flex-direction: column; gap: 9px; }
+      .resolve-form.open { display: flex; }
+      .resolve-form input, .resolve-form textarea {
+        background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12);
+        border-radius: 10px; padding: 10px 12px; color: var(--paper); font-family: var(--sans);
+        font-size: 13.5px; width: 100%; box-sizing: border-box; outline: none;
+      }
+      .resolve-form input:focus, .resolve-form textarea:focus { border-color: var(--gold); }
+      .resolve-form textarea { resize: vertical; min-height: 60px; }
+      .resolve-form .rf-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+      @media (max-width: 540px) { .resolve-form .rf-row { grid-template-columns: 1fr; } }
+      .btn-send-resolve { background: linear-gradient(135deg, rgba(187,148,87,.7), rgba(187,148,87,.4)); border: none;
+        border-radius: 10px; padding: 11px; color: #fff; font-family: var(--display); font-weight: 600;
+        font-size: 14px; cursor: pointer; width: 100%; }
+      .btn-send-resolve:hover { opacity: .9; }
+      .esk-empty { color: var(--muted); font-size: 13.5px; text-align: center; padding: 26px 0; }
+
+      /* ── Layout ──────────────────────────────────────────────── */
+      .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+      @media (max-width: 820px) { .cols { grid-template-columns: 1fr; } }
+      .mt { margin-top: 14px; }
+      .panel { border: 1px solid var(--line); border-radius: 18px; padding: 20px;
+        background: linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.015)); }
+      .panel h3 { font-family: var(--display); font-size: 16px; margin: 0 0 4px; }
+      .panel .cap { color: var(--muted); font-size: 12.5px; margin: 0 0 16px; }
+
+      /* ── Per-rep bars ────────────────────────────────────────── */
+      .bars { display: flex; flex-direction: column; gap: 14px; }
+      .barrow .top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+      .barrow .nm { font-weight: 600; font-size: 14px; }
+      .rep-link { color: inherit; text-decoration: none; border-bottom: 1px dashed rgba(255,255,255,.25); }
+      .rep-link:hover { color: var(--gold); border-bottom-color: var(--gold); }
+      .barrow .rt { font-family: var(--display); font-size: 15px; font-variant-numeric: tabular-nums; }
+      .barrow .track { height: 11px; border-radius: 99px; background: rgba(255,255,255,.07); overflow: hidden; }
+      .barrow .track > div { height: 100%; border-radius: 99px; transition: width .6s cubic-bezier(.2,.8,.2,1); }
+      .barrow .sub { color: var(--muted); font-size: 11.5px; margin-top: 5px; font-variant-numeric: tabular-nums; }
+      .empty { color: var(--muted); font-size: 13.5px; text-align: center; padding: 26px 0; }
+
+      /* ── Live feed ───────────────────────────────────────────── */
+      .feed { display: flex; flex-direction: column; gap: 9px; max-height: 380px; overflow-y: auto; }
+      .item { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+        padding: 11px 13px; border: 1px solid var(--line); border-radius: 12px;
+        background: rgba(255,255,255,.03); border-left-width: 3px; }
+      .item.type-new { border-left-color: var(--blue); }
+      .item.type-old { border-left-color: var(--old); }
+      .item.fresh.type-new { animation: pop-new 1.8s ease; }
+      .item.fresh.type-old { animation: pop-old 1.8s ease; }
+      @keyframes pop-new { 0% { background: rgba(46,111,214,.28); } 100% { background: rgba(255,255,255,.03); } }
+      @keyframes pop-old { 0% { background: rgba(62,155,79,.28); } 100% { background: rgba(255,255,255,.03); } }
+      .item .co { font-weight: 600; font-size: 14px; }
+      .item .rep { color: var(--muted); font-size: 12px; margin-top: 2px; }
+      .item .ago { color: var(--muted); font-size: 11.5px; white-space: nowrap; margin-top: 3px; }
+
+      /* ── Badges ──────────────────────────────────────────────── */
+      .badge-new { display: inline-block; border-radius: 99px; padding: 2px 8px; font-size: 11px; font-weight: 700;
+        background: rgba(46,111,214,.18); color: #7eb8f7; }
+      .badge-old { display: inline-block; border-radius: 99px; padding: 2px 8px; font-size: 11px; font-weight: 700;
+        background: rgba(62,155,79,.18); color: #9fe0b9; }
+      .badge-tel { display: inline-block; border-radius: 99px; padding: 1px 7px; font-size: 10.5px; font-weight: 700;
+        background: rgba(187,148,87,.16); color: var(--gold); margin-left: 4px; }
+
+      /* ── Spark chart ─────────────────────────────────────────── */
+      .spark { display: flex; align-items: flex-end; gap: 6px; height: 110px; padding-top: 8px; }
+      .spark .col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; justify-content: flex-end; }
+      .spark .bar { width: 100%; border-radius: 6px 6px 2px 2px; min-height: 3px;
+        background: linear-gradient(180deg, var(--gold), #9a7230); transition: height .5s ease; }
+      .spark .dv { font-size: 11px; font-weight: 600; }
+      .spark .dn { color: var(--muted); font-size: 10.5px; }
+      .spark .ds { color: var(--muted); font-size: 9.5px; opacity: .6; }
+
+      /* ── Count bar ───────────────────────────────────────────── */
+      .count-bar {
+        display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+        padding: 10px 16px; margin-bottom: 4px;
+        background: rgba(255,255,255,.03); border: 1px solid var(--line); border-radius: 12px;
+        font-size: 13px;
+      }
+      .count-bar .cb-sep { color: var(--line); font-size: 18px; font-weight: 300; }
+      .count-bar .cb-label { font-size: 11px; font-weight: 700; letter-spacing: .7px; text-transform: uppercase; color: var(--muted); margin-right: 6px; }
+      .count-bar .cb-val  { font-family: var(--display); font-weight: 700; font-variant-numeric: tabular-nums; }
+      .count-bar .cb-new  { color: #7eb8f7; }
+      .count-bar .cb-old  { color: #9fe0b9; }
+      .count-bar .cb-won  { color: var(--gold); }
+
+      /* ── Table section ───────────────────────────────────────── */
+      .head-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+      .exportBtn { border: 1px solid rgba(187,148,87,.45); background: rgba(187,148,87,.12); color: var(--gold);
+        border-radius: 9px; padding: 8px 14px; cursor: pointer; font-weight: 700; font-size: 12.5px; white-space: nowrap; }
+      .exportBtn:disabled { opacity: .4; cursor: not-allowed; }
+
+      .range-row { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; margin: 14px 0 8px; padding: 14px 16px;
+        background: rgba(255,255,255,.03); border: 1px solid var(--line); border-radius: 12px; }
+      .range-group { display: flex; flex-direction: column; gap: 5px; }
+      .range-group label { font-size: 11px; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; color: var(--muted); }
+      .range-group input[type="date"] {
+        background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.13); border-radius: 9px;
+        padding: 9px 12px; color: var(--paper); font-family: var(--sans); font-size: 14px;
+        outline: none; color-scheme: dark; cursor: pointer; min-width: 150px;
+      }
+      .range-group input[type="date"]:focus { border-color: var(--gold); }
+      .range-sep { color: var(--muted); font-size: 14px; align-self: flex-end; padding-bottom: 10px; }
+      .range-btn { border: 1px solid var(--line); background: rgba(255,255,255,.06); color: var(--paper);
+        border-radius: 9px; padding: 9px 14px; cursor: pointer; font-size: 13px; font-weight: 600;
+        align-self: flex-end; white-space: nowrap; }
+      .range-btn:hover { background: rgba(255,255,255,.11); }
+      .range-btn.primary { background: rgba(187,148,87,.18); border-color: rgba(187,148,87,.45); color: var(--gold); }
+      .range-btn.primary:hover { background: rgba(187,148,87,.28); }
+      .range-count { color: var(--muted); font-size: 12.5px; align-self: center; margin-left: auto; }
+
+      .tableWrap { overflow-x: auto; margin-top: 4px; }
+      table.vtable { width: 100%; border-collapse: collapse; font-size: 13px; }
+      table.vtable th { text-align: left; color: var(--muted); font-size: 11px; letter-spacing: .6px; text-transform: uppercase;
+        font-weight: 600; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+      table.vtable td { padding: 9px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; vertical-align: middle; }
+      table.vtable tr:last-child td { border-bottom: none; }
+      table.vtable .co { font-weight: 600; }
+      table.vtable .pic { color: var(--muted); font-weight: 400; }
+      table.vtable .note { max-width: 220px; overflow: hidden; text-overflow: ellipsis; color: #aeb8cc; white-space: nowrap; }
+      table.vtable tr.row-new td:first-child { border-left: 3px solid var(--blue); }
+      table.vtable tr.row-old td:first-child { border-left: 3px solid var(--old); }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <div class="brand">
+          <div class="mark">K</div>
+          <div><b>Visitation Rack-up</b><span>Distributor · live</span></div>
+        </div>
+        <div class="sync">
+          <span class="dot"></span>
+          <span id="syncLabel">menghubungkan…</span>
+          <button id="refresh">Refresh</button>
+          <a class="back" href="/distributor-visits">Catat ↗</a>
+          <a class="back" href="/distributor-myday" style="margin-left:4px">My Day ↗</a>
+          <a class="back" href="/distributor-salespeople" style="margin-left:4px">Kelola Sales ↗</a>
+          <a class="back" href="/distributor-insights" style="margin-left:4px">Insights ↗</a>
+        </div>
+      </header>
+
+      <div class="kpis">
+        <div class="kpi hero">
+          <div class="l">Kunjungan Hari Ini</div>
+          <div class="v" id="kToday">—</div>
+          <div class="s" id="kWeek">— minggu ini</div>
+        </div>
+        <div class="kpi blue-kpi">
+          <div class="l">Baru (New)</div>
+          <div class="v" id="kNew">—</div>
+          <div class="s">pelanggan baru hari ini</div>
+        </div>
+        <div class="kpi green-kpi">
+          <div class="l">Lama (Old)</div>
+          <div class="v" id="kOld">—</div>
+          <div class="s">kunjungan ulang hari ini</div>
+        </div>
+        <div class="kpi">
+          <div class="l">Sales Aktif</div>
+          <div class="v" id="kReps">—</div>
+          <div class="s">bergerak hari ini</div>
+        </div>
+        <div class="kpi esk-kpi" onclick="toggleEskPanel()" title="Klik untuk lihat eskalasi">
+          <div class="l">Eskalasi</div>
+          <div class="v" id="kEsk">—</div>
+          <div class="s">menunggu kontak ↓</div>
+        </div>
+      </div>
+
+      <!-- Escalation panel — toggle via KPI card click -->
+      <div class="esk-panel" id="esk-panel">
+        <h3>Eskalasi Pending</h3>
+        <p class="cap">Lead yang tidak bisa dikunjungi sales — cari kontak dan kirimkan ke rep yang bersangkutan.</p>
+        <div class="esk-list" id="esk-list"><div class="esk-empty">Memuat…</div></div>
+      </div>
+
+      <div class="cols mt">
+        <div class="panel">
+          <h3>Per Sales · Hari Ini</h3>
+          <p class="cap">Jumlah kunjungan per perwakilan sales.</p>
+          <div class="bars" id="byRep"><div class="empty">Memuat…</div></div>
+        </div>
+        <div class="panel">
+          <h3>Live Feed</h3>
+          <p class="cap">15 kunjungan terakhir — biru = baru, hijau = lama.</p>
+          <div class="feed" id="feed"><div class="empty">Menunggu kunjungan pertama…</div></div>
+        </div>
+      </div>
+
+      <div class="panel mt">
+        <h3>7 Hari Terakhir</h3>
+        <p class="cap">Total kunjungan per hari (WIB). Hover untuk detail baru/lama.</p>
+        <div class="spark" id="byDay"></div>
+      </div>
+
+      <div class="panel mt">
+        <div class="head-row">
+          <div>
+            <h3>Rack-up Kunjungan</h3>
+            <p class="cap" id="tableCaption">Hari ini · diperbarui otomatis.</p>
+          </div>
+          <button class="exportBtn" id="exportBtn" disabled>Export XLSX</button>
+        </div>
+
+        <div class="count-bar" id="count-bar">
+          <span><span class="cb-label">Hari Ini</span><span class="cb-val" id="cb-today">—</span> kunjungan · <span class="cb-val cb-old" id="cb-today-old">—</span> lama · <span class="cb-val cb-new" id="cb-today-new">—</span> baru</span>
+          <span class="cb-sep">|</span>
+          <span><span class="cb-label">Bulan Ini</span><span class="cb-val" id="cb-month">—</span> · <span class="cb-val cb-new" id="cb-month-new">—</span> baru · <span class="cb-val cb-won" id="cb-month-won">—</span> won</span>
+        </div>
+
+        <div class="range-row">
+          <div class="range-group">
+            <label>Dari</label>
+            <input type="date" id="fromDate" />
+          </div>
+          <span class="range-sep">—</span>
+          <div class="range-group">
+            <label>Sampai</label>
+            <input type="date" id="toDate" />
+          </div>
+          <button class="range-btn" id="presetToday">Hari Ini</button>
+          <button class="range-btn primary" id="showBtn">Tampilkan</button>
+          <span class="range-count" id="tableCount"></span>
+        </div>
+
+        <div class="tableWrap">
+          <table class="vtable">
+            <thead>
+              <tr>
+                <th id="timeColHead">Waktu</th><th>Sales</th><th>Toko / PIC</th>
+                <th>Tipe</th><th>Aktivitas</th><th>Kategori</th><th>Area</th><th>Catatan</th>
+              </tr>
+            </thead>
+            <tbody id="tableBody">
+              <tr><td colspan="8" style="text-align:center;padding:26px;color:var(--muted)">Memuat…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <script>
+    (() => {
+      "use strict";
+      const $ = id => document.getElementById(id);
+      const POLL_MS = 8000;
+      const DAY_ID  = ["Min","Sen","Sel","Rab","Kam","Jum","Sab"];
+      const WIB_MS  = 7 * 3600 * 1000;
+
+      let lastSync  = Date.now();
+      let firstLoad = true;
+      let knownIds  = new Set();
+      let tableFrom = "";
+      let tableTo   = "";
+
+      const esc = s => String(s == null ? "" : s)
+        .replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
+
+      function wibDateStr() {
+        return new Date(Date.now() + WIB_MS).toISOString().slice(0, 10);
+      }
+      function isRangeToday() {
+        const t = wibDateStr();
+        return tableFrom === t && tableTo === t;
+      }
+
+      function ago(iso) {
+        const sec = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+        if (sec < 60)  return sec + "d lalu";
+        const m = Math.floor(sec / 60);  if (m < 60)  return m + "m lalu";
+        const h = Math.floor(m  / 60);   if (h < 24)  return h + "j lalu";
+        return Math.floor(h / 24) + "hr lalu";
+      }
+      function wibTime(iso) {
+        return new Date(iso).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Jakarta" });
+      }
+      function wibDateTime(iso) {
+        return new Date(iso).toLocaleDateString("id-ID", {
+          day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Jakarta"
+        });
+      }
+
+      // ── KPIs ───────────────────────────────────────────────────────────────
+      function renderKPIs(t) {
+        $("kToday").textContent = t.today;
+        $("kWeek").textContent  = t.week_total + " minggu ini";
+        $("kNew").textContent   = t.today_new;
+        $("kOld").textContent   = t.today_old;
+        $("kReps").textContent  = t.active_reps_today;
+      }
+
+      // ── Per-rep bars ────────────────────────────────────────────────────────
+      function renderReps(reps) {
+        const el = $("byRep");
+        if (!reps.length) { el.innerHTML = '<div class="empty">Belum ada kunjungan hari ini.</div>'; return; }
+        const max = Math.max(1, ...reps.map(r => Number(r.total)));
+        el.innerHTML = reps.map(r => {
+          const total = Number(r.total);
+          const nw    = Number(r.new_count);
+          const old   = Number(r.old_count);
+          const w     = Math.round((total / max) * 100);
+          return `<div class="barrow">
+            <div class="top"><span class="nm"><a href="/distributor-rep?id=${esc(r.salesperson_id)}" class="rep-link">${esc(r.full_name)}</a></span><span class="rt">${total}</span></div>
+            <div class="track"><div style="width:${w}%;background:linear-gradient(90deg,var(--blue),#1a52b0)"></div></div>
+            <div class="sub"><span style="color:#7eb8f7">${nw} baru</span> · <span style="color:#9fe0b9">${old} lama</span></div>
+          </div>`;
+        }).join("");
+      }
+
+      // ── Live feed ────────────────────────────────────────────────────────────
+      function renderFeed(recent) {
+        const el = $("feed");
+        if (!recent.length) { el.innerHTML = '<div class="empty">Belum ada kunjungan tercatat.</div>'; return; }
+        el.innerHTML = recent.map(r => {
+          const isNew  = !firstLoad && !knownIds.has(String(r.id));
+          const typeC  = r.customer_type === "new" ? "type-new" : "type-old";
+          const freshC = isNew ? "fresh" : "";
+          const badge  = r.customer_type === "new"
+            ? '<span class="badge-new">BARU</span>'
+            : '<span class="badge-old">LAMA</span>';
+          const actBadge = r.activity_type === "telepon"
+            ? '<span class="badge-tel">Telepon</span>' : "";
+          return `<div class="item ${typeC} ${freshC}">
+            <div>
+              <div class="co">${esc(r.store_name)}</div>
+              <div class="rep">${esc(r.salesperson_name)} · ${esc(r.area)} · ${esc(r.category)}</div>
+            </div>
+            <div style="text-align:right">
+              ${badge}${actBadge}
+              <div class="ago">${ago(r.visited_at)}</div>
+            </div>
+          </div>`;
+        }).join("");
+        knownIds = new Set(recent.map(r => String(r.id)));
+      }
+
+      // ── 7-day spark ─────────────────────────────────────────────────────────
+      function renderSpark(days) {
+        const dayMap = {};
+        // postgres.js parses date OID as Date objects; JSON-serialized as ISO strings like
+        // "2026-06-27T00:00:00.000Z" — slice to "YYYY-MM-DD" so lookup matches client keys.
+        days.forEach(d => { dayMap[String(d.day).slice(0, 10)] = d; });
+        const shifted  = new Date(Date.now() + WIB_MS);
+        const todayWIB = new Date(Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate()));
+        const sparks   = [];
+        for (let i = 6; i >= 0; i--) {
+          const d   = new Date(todayWIB.getTime() - i * 24 * 3600 * 1000);
+          const key = d.toISOString().slice(0, 10);
+          sparks.push({ ...(dayMap[key] ?? { day: key, total: 0, new_count: 0 }), dateObj: d });
+        }
+        const maxT = Math.max(1, ...sparks.map(d => Number(d.total)));
+        $("byDay").innerHTML = sparks.map(d => {
+          const total = Number(d.total);
+          const nw    = Number(d.new_count);
+          const h     = Math.max(3, Math.round((total / maxT) * 88));
+          return `<div class="col" title="${nw} baru · ${total - nw} lama">
+            <div class="dv">${total || ""}</div>
+            <div class="bar" style="height:${h}px"></div>
+            <div class="dn">${DAY_ID[d.dateObj.getUTCDay()]}</div>
+            <div class="ds">${(d.dateObj.getUTCMonth()+1)}/${d.dateObj.getUTCDate()}</div>
+          </div>`;
+        }).join("");
+      }
+
+      // ── Table caption ────────────────────────────────────────────────────────
+      function updateTableCaption() {
+        const cap = $("tableCaption");
+        if (isRangeToday()) {
+          cap.textContent = "Hari ini · diperbarui otomatis.";
+          $("timeColHead").textContent = "Waktu";
+        } else if (tableFrom === tableTo) {
+          cap.textContent = tableFrom;
+          $("timeColHead").textContent = "Waktu";
+        } else {
+          cap.textContent = `${tableFrom} — ${tableTo}`;
+          $("timeColHead").textContent = "Tanggal & Waktu";
+        }
+      }
+
+      // ── Rack-up table ────────────────────────────────────────────────────────
+      function renderTable(visits) {
+        const tbody    = $("tableBody");
+        const expBtn   = $("exportBtn");
+        const countEl  = $("tableCount");
+        const multiDay = tableFrom !== tableTo;
+
+        expBtn.disabled  = !visits.length;
+        countEl.textContent = visits.length ? visits.length + " kunjungan" : "";
+
+        if (!visits.length) {
+          tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:26px;color:var(--muted)">Tidak ada kunjungan untuk periode ini.</td></tr>';
+          return;
+        }
+        tbody.innerHTML = visits.map(v => {
+          const rowC  = v.customer_type === "new" ? "row-new" : "row-old";
+          const badge = v.customer_type === "new"
+            ? '<span class="badge-new">BARU</span>'
+            : '<span class="badge-old">LAMA</span>';
+          const actBadge = v.activity_type === "telepon"
+            ? '<span class="badge-tel">Telepon</span>'
+            : '<span style="color:var(--muted);font-size:11.5px">Kunjungan</span>';
+          const pic   = v.pic_name ? `<span class="pic"> · ${esc(v.pic_name)}</span>` : "";
+          const note  = v.notes
+            ? (v.notes.length > 45 ? esc(v.notes.slice(0, 45)) + "…" : esc(v.notes))
+            : "—";
+          const timeStr = multiDay ? esc(wibDateTime(v.visited_at)) : esc(wibTime(v.visited_at));
+          return `<tr class="${rowC}">
+            <td>${timeStr}</td>
+            <td>${esc(v.salesperson_name)}</td>
+            <td class="co">${esc(v.store_name)}${pic}</td>
+            <td>${badge}</td>
+            <td>${actBadge}</td>
+            <td>${esc(v.category)}</td>
+            <td>${esc(v.area)}</td>
+            <td class="note">${note}</td>
+          </tr>`;
+        }).join("");
+      }
+
+      // ── Escalation panel ─────────────────────────────────────────────────────
+      let eskPanelOpen = false;
+
+      window.toggleEskPanel = function() {
+        eskPanelOpen = !eskPanelOpen;
+        $("esk-panel").classList.toggle("open", eskPanelOpen);
+        if (eskPanelOpen) loadEskPanel();
+      };
+
+      async function loadEskPanel() {
+        $("esk-list").innerHTML = '<div class="esk-empty">Memuat…</div>';
+        const data = await fetch("/api/distributor/escalations?status=pending").then(r => r.json()).catch(() => ({ escalations: [] }));
+        const items = data.escalations ?? [];
+        $("kEsk").textContent = items.length;
+        if (!items.length) {
+          $("esk-list").innerHTML = '<div class="esk-empty">Tidak ada eskalasi pending ✓</div>';
+          return;
+        }
+        $("esk-list").innerHTML = items.map(e => {
+          const ago = Math.floor((Date.now() - new Date(e.created_at).getTime()) / (3600*1000));
+          const agoStr = ago < 1 ? 'baru saja' : ago < 24 ? `${ago}j lalu` : `${Math.floor(ago/24)}h lalu`;
+          return `
+          <div class="esk-item" id="esk-${e.id}">
+            <div class="ei-top">
+              <div>
+                <div class="ei-name">${esc(e.store_name)}</div>
+                <div class="ei-meta">${esc(e.category??'')}${e.area ? ' · ' + esc(e.area) : ''}${e.address ? ' · ' + esc(e.address) : ''}</div>
+                <div class="ei-rep">↑ ${esc(e.salesperson_name)} (${esc(e.salesperson_code)}) · ${agoStr}</div>
+                ${e.notes ? `<div class="ei-notes">"${esc(e.notes)}"</div>` : ''}
+              </div>
+              <button class="btn-resolve" onclick="openResolveForm(${e.id})">Temukan Kontak</button>
+            </div>
+            <div class="resolve-form" id="rf-${e.id}">
+              <div class="rf-row">
+                <input id="rf-name-${e.id}"  type="text" placeholder="Nama Kontak *" />
+                <input id="rf-phone-${e.id}" type="tel"  placeholder="No. HP / WA *" />
+              </div>
+              <textarea id="rf-notes-${e.id}" placeholder="Catatan tambahan (opsional)"></textarea>
+              <input id="rf-by-${e.id}" type="text" placeholder="Nama petugas eskalasi *" />
+              <button class="btn-send-resolve" onclick="submitResolve(${e.id})">Kirim ke Sales ↗</button>
+              <div id="rf-err-${e.id}" style="color:#e05252;font-size:12.5px;display:none"></div>
+            </div>
+          </div>`;
+        }).join('');
+      }
+
+      window.openResolveForm = function(id) {
+        const rf = $(`rf-${id}`);
+        rf.classList.toggle("open");
+      };
+
+      window.submitResolve = async function(id) {
+        const contact_name  = $(`rf-name-${id}`).value.trim();
+        const contact_phone = $(`rf-phone-${id}`).value.trim();
+        const notes         = $(`rf-notes-${id}`).value.trim();
+        const resolved_by   = $(`rf-by-${id}`).value.trim();
+        const errEl = $(`rf-err-${id}`);
+        errEl.style.display = "none";
+
+        if (!contact_name || !contact_phone || !resolved_by) {
+          errEl.textContent = "Nama kontak, nomor HP, dan nama petugas harus diisi.";
+          errEl.style.display = "block"; return;
+        }
+        const res = await fetch(`/api/distributor/escalations/${id}/resolve`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            resolved_contact_name: contact_name,
+            resolved_contact_phone: contact_phone,
+            resolved_notes: notes || null,
+            resolved_by,
+          }),
+        }).then(r => r.json()).catch(() => ({ error: "Koneksi gagal." }));
+
+        if (res.error) { errEl.textContent = res.error; errEl.style.display = "block"; return; }
+
+        // Animate out
+        const el = $(`esk-${id}`);
+        if (el) { el.style.opacity = "0"; el.style.transition = "opacity .3s"; setTimeout(() => el.remove(), 320); }
+        const remaining = $("esk-list").querySelectorAll(".esk-item").length - 1;
+        $("kEsk").textContent = remaining;
+        if (remaining === 0) $("esk-list").innerHTML = '<div class="esk-empty">Semua eskalasi selesai ✓</div>';
+      };
+
+      // ── Load table from /api/distributor/visits ──────────────────────────────
+      async function loadTable() {
+        const from = `${tableFrom}T00:00:00+07:00`;
+        const to   = `${tableTo}T23:59:59+07:00`;
+        $("tableBody").innerHTML = '<tr><td colspan="8" style="text-align:center;padding:26px;color:var(--muted)">Memuat…</td></tr>';
+        try {
+          const res  = await fetch(`/api/distributor/visits?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&limit=500`);
+          const data = await res.json();
+          renderTable(data.visits ?? []);
+        } catch {
+          $("tableBody").innerHTML = '<tr><td colspan="8" style="text-align:center;padding:26px;color:#e05252">Gagal memuat data.</td></tr>';
+        }
+      }
+
+      // ── Escalation count on load ─────────────────────────────────────────────
+      async function loadEskCount() {
+        const data = await fetch("/api/distributor/escalations?status=pending").then(r => r.json()).catch(() => ({ count: 0 }));
+        $("kEsk").textContent = data.count ?? 0;
+        // Do NOT call loadEskPanel() here — rebuilding the list on every 8s poll
+        // blanks the panel mid-view and destroys any open "Temukan Kontak" resolve
+        // form the user is filling in. The panel refreshes fresh on each manual open.
+      }
+
+      // ── Count bar (today + month summary) ──────────────────────────────────
+      async function loadCountBar() {
+        const WIB_OFF = 7 * 3600 * 1000;
+        const now     = new Date(Date.now() + WIB_OFF);
+        const todayStr   = now.toISOString().slice(0, 10);
+        const monthStart = `${now.toISOString().slice(0, 7)}-01`;
+        try {
+          const [todayS, monthS] = await Promise.all([
+            fetch(`/api/distributor/visits/summary?from=${todayStr}T00:00:00%2B07:00&to=${todayStr}T23:59:59%2B07:00`).then(r => r.json()),
+            fetch(`/api/distributor/visits/summary?from=${monthStart}T00:00:00%2B07:00&to=${todayStr}T23:59:59%2B07:00`).then(r => r.json()),
+          ]);
+          $("cb-today").textContent     = todayS.total_visits ?? '—';
+          $("cb-today-old").textContent = todayS.old_visits   ?? '—';
+          $("cb-today-new").textContent = todayS.new_visits   ?? '—';
+          $("cb-month").textContent     = monthS.total_visits ?? '—';
+          $("cb-month-new").textContent = monthS.new_visits   ?? '—';
+          $("cb-month-won").textContent = monthS.won_accounts ?? '—';
+        } catch { /* non-fatal */ }
+      }
+
+      // ── Main stats poll ──────────────────────────────────────────────────────
+      async function load() {
+        let data;
+        try {
+          const res = await fetch("/api/distributor/visits/stats");
+          if (!res.ok) throw new Error();
+          data = await res.json();
+        } catch {
+          $("syncLabel").textContent = "offline — mencoba kembali";
+          return;
+        }
+        lastSync = Date.now();
+        renderKPIs(data.totals);
+        renderReps(data.by_rep_today);
+        renderFeed(data.recent);
+        renderSpark(data.by_day_7);
+        // Auto-refresh the table only when showing today
+        if (isRangeToday()) renderTable(data.today_visits);
+        firstLoad = false;
+        loadCountBar();
+        loadEskCount();
+      }
+
+      function tickSync() {
+        const s = Math.floor((Date.now() - lastSync) / 1000);
+        $("syncLabel").textContent = s < 2 ? "baru saja disinkronkan" : `disinkronkan ${s}d lalu`;
+      }
+
+      // ── Init date pickers ────────────────────────────────────────────────────
+      const today = wibDateStr();
+      tableFrom = today; tableTo = today;
+      $("fromDate").value = today;
+      $("toDate").value   = today;
+
+      $("showBtn").addEventListener("click", () => {
+        const f = $("fromDate").value || wibDateStr();
+        let   t = $("toDate").value   || wibDateStr();
+        if (t < f) { t = f; $("toDate").value = f; }
+        tableFrom = f; tableTo = t;
+        updateTableCaption();
+        loadTable();
+      });
+
+      $("presetToday").addEventListener("click", () => {
+        const t = wibDateStr();
+        tableFrom = t; tableTo = t;
+        $("fromDate").value = t;
+        $("toDate").value   = t;
+        updateTableCaption();
+        loadTable();
+      });
+
+      $("refresh").addEventListener("click", load);
+
+      $("exportBtn").addEventListener("click", () => {
+        const from = `${tableFrom}T00:00:00+07:00`;
+        const to   = `${tableTo}T23:59:59+07:00`;
+        window.location.href = `/api/distributor/visits/export?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+      });
+
+      load();
+      setInterval(load, POLL_MS);
+      setInterval(tickSync, 1000);
+    })();
+    </script>
+  </body>
+</html>

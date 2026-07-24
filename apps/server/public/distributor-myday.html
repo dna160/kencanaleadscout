@@ -1,0 +1,901 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Distributor · My Day · Kencana LeadScout</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --ink: #14213d; --ink-2: #1b2949; --red: #9b2226; --gold: #bb9457; --green: #2c6e49;
+      --paper: #f5f2ec; --muted: #8a96ad; --line: rgba(255,255,255,.09);
+      --blue: #2E6FD6; --old: #3E9B4F; --amber: #d97706;
+      --display: "Space Grotesk","Inter",system-ui,sans-serif;
+      --sans: "Inter",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      font-family: var(--sans); color: var(--paper);
+      background: radial-gradient(1200px 600px at 90% -10%, rgba(187,148,87,.14), transparent 60%), var(--ink);
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 0 22px 70px; }
+
+    /* ── Nav ──────────────────────────────────────────────────────────── */
+    nav {
+      display: flex; align-items: center; justify-content: space-between; gap: 14px;
+      padding: 12px 22px; border-bottom: 1px solid var(--line);
+      background: rgba(20,33,61,.92); position: sticky; top: 0; z-index: 10;
+      backdrop-filter: blur(10px); flex-wrap: wrap;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .mark { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center;
+      background: linear-gradient(135deg, var(--red), #7a1a1d);
+      font-family: var(--display); font-weight: 700; color: #fff; font-size: 17px; }
+    .brand b { font-family: var(--display); font-size: 16px; }
+    .brand span { color: var(--muted); font-size: 12px; display: block; }
+    .nav-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .nav-right select {
+      background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.13); border-radius: 9px;
+      padding: 7px 12px; color: var(--paper); font-family: var(--sans); font-size: 13.5px;
+      outline: none; cursor: pointer; color-scheme: dark;
+    }
+    .nav-right select:focus { border-color: var(--gold); }
+    .nav-right select option { background: #1e2d50; }
+    .nav-right a { color: var(--muted); text-decoration: none; font-size: 13px; }
+    .nav-right a:hover { color: var(--paper); }
+    .btn-refresh {
+      border: 1px solid var(--line); background: rgba(255,255,255,.05); color: var(--paper);
+      border-radius: 9px; padding: 6px 12px; cursor: pointer; font-weight: 600; font-size: 12.5px;
+    }
+    .btn-refresh:hover { background: rgba(255,255,255,.09); }
+
+    /* ── Zone 1: Portfolio Summary Bar ───────────────────────────────── */
+    .portfolio-bar {
+      display: flex; gap: 8px; padding: 16px 0 12px;
+      overflow-x: auto; -webkit-overflow-scrolling: touch;
+      scrollbar-width: none; border-bottom: 1px solid var(--line);
+    }
+    .portfolio-bar::-webkit-scrollbar { display: none; }
+    .chip {
+      flex-shrink: 0; display: flex; align-items: center; gap: 7px;
+      border: 1px solid rgba(255,255,255,.13); background: rgba(255,255,255,.05);
+      border-radius: 99px; padding: 7px 14px; cursor: pointer; white-space: nowrap;
+      font-family: var(--display); font-weight: 600; font-size: 12px;
+      letter-spacing: .4px; color: var(--muted);
+      transition: background .15s, border-color .15s, color .15s;
+    }
+    .chip:hover { background: rgba(255,255,255,.1); color: var(--paper); }
+    .chip.active { background: rgba(187,148,87,.18); border-color: rgba(187,148,87,.5); color: var(--gold); }
+    .chip .cnt {
+      background: rgba(255,255,255,.12); border-radius: 99px; padding: 1px 8px;
+      font-size: 11.5px; font-variant-numeric: tabular-nums;
+      transition: background .15s;
+    }
+    .chip.active .cnt { background: rgba(187,148,87,.25); }
+    .chip-red.active  { background: rgba(155,34,38,.2); border-color: rgba(155,34,38,.5); color: #f8a0a0; }
+    .chip-red.active .cnt { background: rgba(155,34,38,.3); }
+    .chip-amber.active { background: rgba(217,119,6,.2); border-color: rgba(217,119,6,.5); color: #fbbf24; }
+    .chip-amber.active .cnt { background: rgba(217,119,6,.25); }
+    .chip-green.active { background: rgba(44,110,73,.2); border-color: rgba(44,110,73,.5); color: #9fe0b9; }
+    .chip-green.active .cnt { background: rgba(44,110,73,.3); }
+    .chip-blue.active { background: rgba(46,111,214,.2); border-color: rgba(46,111,214,.5); color: #7eb8f7; }
+    .chip-blue.active .cnt { background: rgba(46,111,214,.25); }
+
+    /* ── Zone 2: Today's Actions ─────────────────────────────────────── */
+    .zone2 { padding: 20px 0 0; }
+    .zone2-header {
+      display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px;
+    }
+    .zone2-title { font-family: var(--display); font-size: 15px; font-weight: 700; }
+    .zone2-toggle {
+      border: 1px solid var(--line); background: rgba(255,255,255,.04); color: var(--muted);
+      border-radius: 8px; padding: 5px 12px; cursor: pointer; font-size: 12px; font-weight: 600;
+    }
+    .zone2-toggle:hover { background: rgba(255,255,255,.08); }
+    .zone2-body { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    @media (max-width: 600px) { .zone2-body { grid-template-columns: 1fr; } }
+    .col-label {
+      font-size: 11px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase;
+      margin-bottom: 10px; padding: 6px 12px; border-radius: 8px;
+    }
+    .col-label-red { background: rgba(155,34,38,.15); color: #f8a0a0; }
+    .col-label-blue { background: rgba(46,111,214,.15); color: #7eb8f7; }
+
+    .action-item {
+      display: flex; align-items: flex-start; gap: 10px; padding: 11px 13px;
+      border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.03);
+      margin-bottom: 8px;
+    }
+    .ai-body { flex: 1; }
+    .ai-store { font-weight: 600; font-size: 13.5px; }
+    .ai-store a { color: inherit; text-decoration: none; }
+    .ai-store a:hover { color: var(--gold); }
+    .ai-meta { color: var(--muted); font-size: 12px; margin-top: 3px; }
+    .ai-time { font-size: 12px; color: var(--muted); white-space: nowrap; }
+    .done-btn {
+      flex-shrink: 0; font-size: 11.5px; padding: 4px 11px; border-radius: 99px;
+      cursor: pointer; font-weight: 600; border: 1px solid rgba(44,110,73,.45);
+      color: #9fe0b9; background: rgba(44,110,73,.1); white-space: nowrap; margin-top: 3px;
+    }
+    .done-btn:hover { background: rgba(44,110,73,.2); }
+    .zone2-empty { color: var(--muted); font-size: 13px; text-align: center; padding: 20px 0; }
+
+    /* ── Zone 2b: Resolved Escalations ──────────────────────────────── */
+    .zone2b { padding: 16px 0 0; display: none; }
+    .zone2b.has-items { display: block; }
+    .zone2b-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+    .zone2b-title { font-family: var(--display); font-size: 15px; font-weight: 700; color: var(--gold); }
+    .zone2b-badge { background: rgba(187,148,87,.2); color: var(--gold); border-radius: 99px;
+      font-size: 11px; font-weight: 700; padding: 2px 9px; }
+    .esk-card { border: 1px solid rgba(187,148,87,.3); border-radius: 14px; padding: 14px 16px;
+      background: rgba(187,148,87,.05); margin-bottom: 10px; }
+    .esk-card .ec-store { font-family: var(--display); font-size: 14.5px; font-weight: 700; }
+    .esk-card .ec-meta { color: var(--muted); font-size: 12px; margin-top: 3px; }
+    .esk-card .ec-contact { margin-top: 10px; padding: 10px 12px; background: rgba(255,255,255,.04);
+      border: 1px solid rgba(255,255,255,.08); border-radius: 10px; }
+    .esk-card .ec-contact-label { font-size: 10.5px; font-weight: 700; letter-spacing: .6px;
+      text-transform: uppercase; color: var(--gold); margin-bottom: 5px; }
+    .esk-card .ec-contact-name  { font-weight: 700; font-size: 14px; }
+    .esk-card .ec-contact-phone { font-size: 13px; color: #9ec8fb; margin-top: 2px; }
+    .esk-card .ec-contact-notes { font-size: 12.5px; color: var(--muted); margin-top: 4px; font-style: italic; }
+    .esk-card .ec-by { font-size: 11.5px; color: rgba(187,148,87,.7); margin-top: 5px; }
+    .esk-card .ec-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+    .btn-followup { border: 1px solid rgba(44,110,73,.45); background: rgba(44,110,73,.1); color: #9fe0b9;
+      border-radius: 8px; padding: 7px 16px; cursor: pointer; font-size: 12.5px; font-weight: 600; }
+    .btn-followup:hover { background: rgba(44,110,73,.2); }
+    .btn-call-wa { border: 1px solid rgba(46,111,214,.35); background: rgba(46,111,214,.1); color: #7eb8f7;
+      border-radius: 8px; padding: 7px 16px; cursor: pointer; font-size: 12.5px; font-weight: 600;
+      text-decoration: none; display: inline-block; }
+
+    /* ── Zone: Kunjungan Hari Ini ────────────────────────────────────── */
+    .zone-hari-ini { padding: 16px 0 0; display: none; }
+    .zone-hari-ini.has-items { display: block; }
+    .zhi-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+    .zhi-title { font-family: var(--display); font-size: 15px; font-weight: 700; }
+    .zhi-badge {
+      background: rgba(46,111,214,.2); color: #7eb8f7; border-radius: 99px;
+      font-size: 11px; font-weight: 700; padding: 2px 9px; letter-spacing: .3px;
+    }
+    .vlog-item {
+      border: 1px solid var(--line); border-radius: 12px; padding: 12px 15px;
+      background: rgba(255,255,255,.03); margin-bottom: 8px;
+      display: flex; align-items: flex-start; gap: 10px;
+    }
+    .vlog-dot {
+      width: 9px; height: 9px; border-radius: 50%; margin-top: 5px; flex-shrink: 0;
+      background: #7eb8f7;
+    }
+    .vlog-dot.telepon { background: #c4b5fd; }
+    .vlog-body { flex: 1; }
+    .vlog-store { font-weight: 600; font-size: 13.5px; }
+    .vlog-store a { color: inherit; text-decoration: none; }
+    .vlog-store a:hover { color: var(--gold); }
+    .vlog-meta { color: var(--muted); font-size: 12px; margin-top: 3px; }
+    .vlog-notes { font-size: 12.5px; color: #b8c4d8; margin-top: 4px; font-style: italic; }
+    .vlog-time { font-size: 11.5px; color: var(--muted); white-space: nowrap; padding-top: 2px; }
+    .vlog-item { cursor: pointer; }
+    .vlog-wa { display: none; margin-top: 10px; }
+    .vlog-wa.open { display: block; }
+    .vlog-wa-preview {
+      background: rgba(37,211,102,.07); border: 1px solid rgba(37,211,102,.3);
+      border-radius: 12px; padding: 14px 16px; color: #d4f5e0;
+      font-family: var(--sans); font-size: 12px; line-height: 1.65;
+      white-space: pre-wrap; text-align: left; cursor: pointer;
+      transition: background .15s;
+    }
+    .vlog-wa-preview:hover { background: rgba(37,211,102,.12); }
+    .vlog-wa-preview:active { background: rgba(37,211,102,.18); }
+    .vlog-wa-hint {
+      display: block; margin-top: 8px; text-align: center; color: #25d366;
+      font-size: 11px; font-weight: 600; letter-spacing: .4px;
+    }
+    .toast {
+      position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
+      background: #1e3a1e; color: #7ee87e; border: 1px solid #3e9b4f;
+      border-radius: 12px; padding: 12px 22px; font-weight: 600; font-size: 14px;
+      z-index: 99; opacity: 0; transition: opacity .3s; pointer-events: none; white-space: nowrap;
+    }
+    .toast.show { opacity: 1; }
+
+    /* ── Zone 3: Full Account List ───────────────────────────────────── */
+    .zone3 { padding-top: 24px; }
+    .zone3-header {
+      display: flex; align-items: baseline; gap: 12px; margin-bottom: 14px; flex-wrap: wrap;
+    }
+    .zone3-title { font-family: var(--display); font-size: 15px; font-weight: 700; }
+    .zone3-count { color: var(--muted); font-size: 13px; }
+
+    .acct-card {
+      border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px;
+      background: rgba(255,255,255,.03); margin-bottom: 10px;
+      transition: border-color .15s;
+    }
+    .acct-card:hover { border-color: rgba(255,255,255,.18); }
+    .acct-card.card-at_risk { border-left: 3px solid rgba(155,34,38,.6); }
+    .acct-card.card-perlu_followup { border-left: 3px solid rgba(217,119,6,.6); }
+    .acct-card.card-aktif { border-left: 3px solid rgba(44,110,73,.5); }
+    .acct-card.card-hibernasi { border-left: 3px solid rgba(255,255,255,.15); }
+    .acct-card.card-prospek,
+    .acct-card.card-penawaran,
+    .acct-card.card-negosiasi { border-left: 3px solid rgba(46,111,214,.5); }
+    .acct-card.card-won { border-left: 3px solid rgba(44,110,73,.7); }
+    .acct-card.card-repeat_order { border-left: 3px solid rgba(44,110,73,.85); }
+    .acct-row1 { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+    .acct-name { font-family: var(--display); font-size: 15px; font-weight: 700; }
+    .acct-name a { color: inherit; text-decoration: none; }
+    .acct-name a:hover { color: var(--gold); }
+    .acct-row2 { display: flex; align-items: center; gap: 12px; margin-top: 5px; flex-wrap: wrap; }
+    .acct-meta-txt { color: var(--muted); font-size: 12.5px; }
+    .acct-days { font-size: 12px; font-weight: 600; }
+    .days-ok    { color: #9fe0b9; }
+    .days-warn  { color: #fbbf24; }
+    .days-crit  { color: #f8a0a0; }
+    .acct-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+    .btn-sm {
+      font-size: 12px; font-weight: 600; padding: 5px 12px; border-radius: 8px; cursor: pointer;
+      border: 1px solid; transition: background .12s;
+    }
+    .btn-visit {
+      border-color: rgba(155,34,38,.4); background: rgba(155,34,38,.12); color: #f8a0a0;
+    }
+    .btn-visit:hover { background: rgba(155,34,38,.2); }
+    .btn-view {
+      border-color: rgba(255,255,255,.15); background: rgba(255,255,255,.05); color: var(--muted);
+    }
+    .btn-view:hover { background: rgba(255,255,255,.1); color: var(--paper); }
+    .btn-sched {
+      border-color: rgba(187,148,87,.3); background: rgba(187,148,87,.1); color: var(--gold);
+    }
+    .btn-sched:hover { background: rgba(187,148,87,.2); }
+
+    /* ── Stage badges ───────────────────────────────────────────────── */
+    .stg {
+      display: inline-block; font-size: 11px; font-weight: 700; padding: 3px 10px;
+      border-radius: 99px; text-transform: uppercase; letter-spacing: .4px; white-space: nowrap;
+    }
+    .stg-aktif     { background: rgba(44,110,73,.25); color: #9fe0b9; }
+    .stg-perlu     { background: rgba(217,119,6,.22); color: #fbbf24; }
+    .stg-at_risk   { background: rgba(155,34,38,.25); color: #f8a0a0; }
+    .stg-hibernasi { background: rgba(255,255,255,.1); color: var(--muted); }
+    .stg-prospek   { background: rgba(46,111,214,.2); color: #7eb8f7; }
+    .stg-penawaran { background: rgba(128,90,213,.2); color: #c4b5fd; }
+    .stg-negosiasi { background: rgba(221,107,32,.2); color: #f6b87a; }
+    .stg-won       { background: rgba(44,110,73,.3); color: #9fe0b9; }
+    .stg-gugur     { background: rgba(155,34,38,.2); color: #f8a0a0; }
+    .stg-repeat    { background: rgba(44,110,73,.35); color: #6ee7b7; }
+
+    /* ── Zone 2 urgent panel ────────────────────────────────────────── */
+    .zone-urgent { display: none; padding: 16px 0 0; }
+    .zone-urgent.visible { display: block; }
+    .zone-urgent-header {
+      display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
+    }
+    .zone-urgent-title { font-family: var(--display); font-size: 15px; font-weight: 700; }
+    .zone-urgent-badge {
+      border-radius: 99px; font-size: 11px; font-weight: 700; padding: 2px 9px;
+    }
+    .badge-red   { background: rgba(155,34,38,.25); color: #f8a0a0; }
+    .badge-amber { background: rgba(217,119,6,.25); color: #fbbf24; }
+    .urgent-item {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      padding: 11px 14px; border: 1px solid var(--line); border-radius: 12px;
+      background: rgba(255,255,255,.03); margin-bottom: 8px;
+    }
+    .urgent-item.item-at_risk    { border-left: 3px solid rgba(155,34,38,.6); }
+    .urgent-item.item-perlu      { border-left: 3px solid rgba(217,119,6,.6); }
+    .urgent-store { font-weight: 600; font-size: 13.5px; }
+    .urgent-store a { color: inherit; text-decoration: none; }
+    .urgent-store a:hover { color: var(--gold); }
+    .urgent-meta { color: var(--muted); font-size: 12px; margin-top: 3px; }
+    .urgent-actions { display: flex; gap: 7px; flex-shrink: 0; }
+    .btn-urgent-visit {
+      font-size: 12px; font-weight: 600; padding: 5px 11px; border-radius: 8px; cursor: pointer;
+      border: 1px solid rgba(155,34,38,.4); background: rgba(155,34,38,.12); color: #f8a0a0;
+    }
+    .btn-urgent-visit:hover { background: rgba(155,34,38,.22); }
+
+    /* Always-visible follow-up notice (at-risk / perlu follow-up) */
+    .zone-followup { display: none; padding: 16px 0 0; }
+    .zone-followup.visible { display: block; }
+    .zone-followup-hint { color: var(--muted); font-size: 12px; margin: -4px 0 12px; }
+
+    .spinner { color: var(--muted); font-size: 13px; text-align: center; padding: 40px 0; }
+    .list-empty { color: var(--muted); font-size: 13.5px; text-align: center; padding: 40px 0; }
+  </style>
+</head>
+<body>
+
+<nav>
+  <div class="brand">
+    <div class="mark">K</div>
+    <div><b>My Day</b><span>Distributor · pipeline</span></div>
+  </div>
+  <div class="nav-right">
+    <select id="rep-sel"><option value="">— Pilih Sales —</option></select>
+    <button class="btn-refresh" id="btn-refresh" onclick="load()">↻ Refresh</button>
+    <a href="/distributor-visits">Catat ↗</a>
+    <a href="/distributor-rack">Rack-up ↗</a>
+    <a href="/distributor-insights">Insights ↗</a>
+  </div>
+</nav>
+
+<div class="wrap">
+
+  <!-- Zone 1: Portfolio Summary Bar -->
+  <div class="portfolio-bar" id="portfolio-bar">
+    <button class="chip active" data-filter="semua"       onclick="setFilter('semua',this)">SEMUA<span class="cnt" id="cnt-total">—</span></button>
+    <button class="chip chip-red"   data-filter="at_risk" onclick="setFilter('at_risk',this)">AT RISK<span class="cnt" id="cnt-ar">—</span></button>
+    <button class="chip chip-amber" data-filter="perlu_followup" onclick="setFilter('perlu_followup',this)">PERLU FOLLOW-UP<span class="cnt" id="cnt-pf">—</span></button>
+    <button class="chip chip-green" data-filter="aktif"   onclick="setFilter('aktif',this)">AKTIF<span class="cnt" id="cnt-aktif">—</span></button>
+    <button class="chip chip-blue"  data-filter="project_active" onclick="setFilter('project_active',this)">PROJECT AKTIF<span class="cnt" id="cnt-pa">—</span></button>
+    <button class="chip chip-green" data-filter="won"     onclick="setFilter('won',this)">MENANG BLN INI<span class="cnt" id="cnt-won">—</span></button>
+    <button class="chip"            data-filter="hibernasi" onclick="setFilter('hibernasi',this)">HIBERNASI<span class="cnt" id="cnt-hib">—</span></button>
+  </div>
+
+  <!-- Zone 2: Today's Actions (kept at the top, directly below the chips) -->
+  <div class="zone2" id="zone2">
+    <div class="zone2-header">
+      <div class="zone2-title" id="z2-title">Aksi Hari Ini</div>
+      <button class="zone2-toggle" id="z2-toggle" onclick="toggleZone2()">Sembunyikan ↑</button>
+    </div>
+    <div class="zone2-body" id="z2-body">
+      <div>
+        <div class="col-label col-label-red">TERLAMBAT</div>
+        <div id="overdue-list"><div class="zone2-empty">Memuat…</div></div>
+      </div>
+      <div>
+        <div class="col-label col-label-blue">HARI INI</div>
+        <div id="today-list"><div class="zone2-empty">Memuat…</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Zone 1b: Perlu Tindak Lanjut — always-visible at-risk / follow-up notice -->
+  <div class="zone-followup" id="zone-followup">
+    <div class="zone-urgent-header">
+      <div class="zone-urgent-title">⚠ Perlu Tindak Lanjut</div>
+      <span class="zone-urgent-badge badge-red" id="followup-badge">0</span>
+    </div>
+    <div class="zone-followup-hint">Akun repeating yang sudah lama tidak dikunjungi — segera jadwalkan kunjungan.</div>
+    <div id="followup-notice-list"></div>
+  </div>
+
+  <!-- Zone 1c: Pipeline Perlu Tindak Lanjut — stale project/pipeline deals -->
+  <div class="zone-followup" id="zone-pipeline-stale">
+    <div class="zone-urgent-header">
+      <div class="zone-urgent-title">◆ Pipeline Perlu Tindak Lanjut</div>
+      <span class="zone-urgent-badge badge-amber" id="pipeline-stale-badge">0</span>
+    </div>
+    <div class="zone-followup-hint">Deal pipeline yang belum ada progres ≥14 hari — tindak lanjuti sebelum dingin.</div>
+    <div id="pipeline-stale-list"></div>
+  </div>
+
+  <!-- Zone urgent: At Risk / Perlu Follow-up attention panel (shown when chip active) -->
+  <div class="zone-urgent" id="zone-urgent">
+    <div class="zone-urgent-header">
+      <div class="zone-urgent-title" id="urgent-title">Butuh Perhatian</div>
+      <span class="zone-urgent-badge" id="urgent-badge">0</span>
+    </div>
+    <div id="urgent-list"></div>
+  </div>
+
+  <!-- Zone 2b: Resolved Escalations (shown only when there are items) -->
+  <div class="zone2b" id="zone2b">
+    <div class="zone2b-header">
+      <div class="zone2b-title">Eskalasi Kembali</div>
+      <span class="zone2b-badge" id="z2b-count">0</span>
+    </div>
+    <div id="esk-resolved-list"></div>
+  </div>
+
+  <!-- Zone: Kunjungan Hari Ini (today's logged visits) -->
+  <div class="zone-hari-ini" id="zone-hari-ini">
+    <div class="zhi-header">
+      <div class="zhi-title">Kunjungan Hari Ini</div>
+      <span class="zhi-badge" id="zhi-count">0</span>
+    </div>
+    <div id="hari-ini-list"></div>
+  </div>
+
+  <!-- Zone 3: Full Account List -->
+  <div class="zone3">
+    <div class="zone3-header">
+      <div class="zone3-title">Portfolio Akun</div>
+      <div class="zone3-count" id="z3-count"></div>
+    </div>
+    <div id="account-list"><div class="spinner">Pilih sales untuk memuat portfolio…</div></div>
+  </div>
+
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+(() => {
+  "use strict";
+  const $ = id => document.getElementById(id);
+  const WIB_MS = 7 * 3600 * 1000;
+
+  let allAccounts = [];
+  let activeFilter = "semua";
+  let zone2Visible = true;
+  let currentRepId = null;
+  let visitDataMap = {};
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+
+  function esc(s) {
+    if (s == null) return "";
+    return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  }
+
+  function showToast(msg) {
+    const t = $("toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    setTimeout(() => t.classList.remove("show"), 2500);
+  }
+
+  function buildWaText(v) {
+    const B = "•⁠  ";
+    const CTYPE = { new: "Baru", old: "Lama" };
+    const wib = iso => {
+      if (!iso) return "";
+      const d = new Date(new Date(iso).getTime() + WIB_MS);
+      const p = n => n.toString().padStart(2, "0");
+      return `${p(d.getUTCDate())}/${p(d.getUTCMonth()+1)}/${d.getUTCFullYear()} ${p(d.getUTCHours())}.${p(d.getUTCMinutes())} WIB`;
+    };
+    const lines = [];
+    lines.push("*Laporan Kunjungan*");
+    lines.push(`${B}Toko: ${v.store_name ?? ""}`);
+    lines.push(`${B}Jenis Customer: ${CTYPE[v.customer_type] ?? v.customer_type ?? ""}`);
+    lines.push(`${B}Kategori: ${v.category ?? ""}`);
+    lines.push(`${B}Area: ${v.area ?? ""}`);
+    if (v.address)     lines.push(`${B}Alamat: ${v.address}`);
+    if (v.postal_code) lines.push(`${B}Kode Pos: ${v.postal_code}`);
+    if (v.pic_name)    lines.push(`${B}PIC: ${v.pic_name}`);
+    if (v.notes) {
+      lines.push(`${B}Hasil Kunjungan:`);
+      v.notes.split("\n").forEach(l => lines.push(`    ${l}`));
+    }
+    lines.push(`Sales: ${v.salesperson_name ?? ""} · ${wib(v.visited_at)}`);
+    return lines.join("\n");
+  }
+
+  window.toggleWaCard = function(event, item) {
+    if (event.target.tagName === "A") return;
+    const waDiv = item.querySelector(".vlog-wa");
+    if (!waDiv) return;
+    const isOpen = waDiv.classList.toggle("open");
+    if (isOpen) {
+      const v = visitDataMap[item.dataset.id];
+      if (!v) return;
+      waDiv.querySelector(".vlog-wa-preview").textContent = buildWaText(v);
+    }
+  };
+
+  window.copyWaCard = async function(event, el) {
+    event.stopPropagation();
+    const v = visitDataMap[el.closest(".vlog-item").dataset.id];
+    if (!v) return;
+    const text = buildWaText(v);
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (_) {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.cssText = "position:fixed;opacity:0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
+    showToast("Pesan di copy ✓");
+  };
+
+  function fmtWib(iso) {
+    if (!iso) return null;
+    const d = new Date(new Date(iso).getTime() + WIB_MS);
+    const p = n => n.toString().padStart(2,'0');
+    return `${p(d.getUTCDate())}/${p(d.getUTCMonth()+1)} ${p(d.getUTCHours())}.${p(d.getUTCMinutes())}`;
+  }
+
+  function daysAgo(iso) {
+    if (!iso) return null;
+    return Math.floor((Date.now() - new Date(iso).getTime()) / (24*3600*1000));
+  }
+
+  function relDays(iso) {
+    const d = daysAgo(iso);
+    if (d === null) return null;
+    if (d === 0) return "hari ini";
+    if (d === 1) return "kemarin";
+    return `${d} hari lalu`;
+  }
+
+  function stageBadge(s) {
+    const cls = {aktif:'stg-aktif',perlu_followup:'stg-perlu',at_risk:'stg-at_risk',
+      hibernasi:'stg-hibernasi',prospek:'stg-prospek',penawaran:'stg-penawaran',
+      negosiasi:'stg-negosiasi',won:'stg-won',gugur:'stg-gugur',repeat_order:'stg-repeat'};
+    const lbl = {aktif:'Aktif',perlu_followup:'Perlu Follow-up',at_risk:'At Risk',
+      hibernasi:'Hibernasi',prospek:'Prospek',penawaran:'Penawaran',negosiasi:'Negosiasi',
+      won:'Won',gugur:'Gugur',repeat_order:'Repeat Order'};
+    return `<span class="stg ${cls[s]??''}">${lbl[s]??s}</span>`;
+  }
+
+  function actionLabel(t) {
+    return {kunjungan:'Kunjungan',telepon:'Telepon',received_order:'Terima Order',
+            note:'Catatan',followup:'Follow-up'}[t]??t;
+  }
+
+  function daysClass(days) {
+    if (days === null) return 'days-crit';
+    if (days <= 14)  return 'days-ok';
+    if (days <= 28)  return 'days-warn';
+    return 'days-crit';
+  }
+
+  // ── Zone 1: Portfolio chips ────────────────────────────────────────────────
+
+  function updateChipCounts(pc) {
+    if (!pc) return;
+    $("cnt-total").textContent = pc.total ?? '—';
+    $("cnt-aktif").textContent = pc.aktif ?? '—';
+    $("cnt-pf").textContent    = pc.perlu_followup ?? '—';
+    $("cnt-ar").textContent    = pc.at_risk ?? '—';
+    $("cnt-pa").textContent    = pc.project_active ?? '—';
+    $("cnt-won").textContent   = pc.won_this_month ?? '—';
+    $("cnt-hib").textContent   = pc.hibernasi ?? '—';
+  }
+
+  // Always-visible notice: repeating accounts that have gone quiet (at-risk /
+  // perlu follow-up), derived live from visit recency by the myday endpoint.
+  function renderFollowupNotice(items) {
+    const zone = $("zone-followup");
+    const list = $("followup-notice-list");
+    if (!items.length) { zone.classList.remove("visible"); return; }
+    // At-risk first, then perlu follow-up; each group oldest-contact first.
+    const ordered = [...items].sort((a, b) =>
+      (a.stage === b.stage ? 0 : a.stage === "at_risk" ? -1 : 1));
+    zone.classList.add("visible");
+    $("followup-badge").textContent = ordered.length;
+    list.innerHTML = ordered.map(a => {
+      const isRisk = a.stage === "at_risk";
+      const days = daysAgo(a.last_contact_at);
+      const daysStr = days === null ? 'Belum pernah dikunjungi'
+        : days === 0 ? 'Dikunjungi hari ini'
+        : `Terakhir ${days} hari lalu`;
+      const tag = isRisk ? 'AT RISK' : 'PERLU FOLLOW-UP';
+      return `
+        <div class="urgent-item item-${isRisk ? 'at_risk' : 'perlu'}">
+          <div>
+            <div class="urgent-store"><a href="/distributor-account?id=${a.id}">${esc(a.store_name)}</a></div>
+            <div class="urgent-meta">${esc(a.category??'')} · ${esc(a.area??'')} · ${daysStr} · ${tag}</div>
+          </div>
+          <div class="urgent-actions">
+            <button class="btn-urgent-visit" onclick="location.href='/distributor-visits?prefill=${a.id}'">+ Log Kunjungan</button>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  // Stale pipeline deals (project-type accounts untouched >=14 days), surfaced
+  // in their own lane so they don't blend into the repeating store cadence.
+  function renderPipelineStale(items) {
+    const zone = $("zone-pipeline-stale");
+    const list = $("pipeline-stale-list");
+    if (!items || !items.length) { zone.classList.remove("visible"); return; }
+    zone.classList.add("visible");
+    $("pipeline-stale-badge").textContent = items.length;
+    list.innerHTML = items.map(a => {
+      const days = (a.days_stale != null) ? a.days_stale : daysAgo(a.last_contact_at);
+      const daysStr = days === null ? 'Belum pernah dikunjungi' : `Terakhir ${days} hari lalu`;
+      return `
+        <div class="urgent-item item-perlu">
+          <div>
+            <div class="urgent-store"><a href="/distributor-account?id=${a.id}">${esc(a.store_name)}</a></div>
+            <div class="urgent-meta">${stageBadge(a.stage)} · ${esc(a.category??'')} · ${esc(a.area??'')} · ${daysStr}</div>
+          </div>
+          <div class="urgent-actions">
+            <button class="btn-urgent-visit" onclick="location.href='/distributor-visits?prefill=${a.id}'">+ Log Kunjungan</button>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  function renderUrgentZone(filter) {
+    const zone = $("zone-urgent");
+    const URGENT = ["at_risk", "perlu_followup"];
+    if (!URGENT.includes(filter) || !allAccounts.length) {
+      zone.classList.remove("visible");
+      return;
+    }
+    const isRisk = filter === "at_risk";
+    const matches = allAccounts.filter(a => a.stage === filter);
+    if (!matches.length) { zone.classList.remove("visible"); return; }
+    zone.classList.add("visible");
+    $("urgent-title").textContent = isRisk ? "Akun At Risk" : "Perlu Follow-up";
+    const badge = $("urgent-badge");
+    badge.className = `zone-urgent-badge ${isRisk ? "badge-red" : "badge-amber"}`;
+    badge.textContent = matches.length;
+    $("urgent-list").innerHTML = matches.map(a => {
+      const days = daysAgo(a.last_contact_at);
+      const daysStr = days === null ? 'Belum pernah dikunjungi'
+        : days === 0 ? 'Dikunjungi hari ini'
+        : `Terakhir ${days} hari lalu`;
+      return `
+        <div class="urgent-item item-${isRisk ? 'at_risk' : 'perlu'}">
+          <div>
+            <div class="urgent-store"><a href="/distributor-account?id=${a.id}">${esc(a.store_name)}</a></div>
+            <div class="urgent-meta">${esc(a.category??'')} · ${esc(a.area??'')} · ${daysStr}</div>
+          </div>
+          <div class="urgent-actions">
+            <button class="btn-urgent-visit" onclick="location.href='/distributor-visits?prefill=${a.id}'">+ Log Kunjungan</button>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  window.setFilter = function(filter, chipEl) {
+    activeFilter = filter;
+    document.querySelectorAll(".chip").forEach(c => c.classList.remove("active"));
+    if (chipEl) chipEl.classList.add("active");
+    renderUrgentZone(filter);
+    renderAccountList();
+  };
+
+  // ── Zone 2: Today's Actions ────────────────────────────────────────────────
+
+  window.toggleZone2 = function() {
+    zone2Visible = !zone2Visible;
+    $("z2-body").style.display  = zone2Visible ? "" : "none";
+    $("z2-toggle").textContent  = zone2Visible ? "Sembunyikan ↑" : "Tampilkan ↓";
+  };
+
+  function renderScheduledList(items, elId, isOverdue) {
+    const el = $(elId);
+    if (!items.length) {
+      el.innerHTML = `<div class="zone2-empty">${isOverdue ? 'Tidak ada aksi terlambat ✓' : 'Tidak ada jadwal hari ini'}</div>`;
+      return;
+    }
+    el.innerHTML = items.map(item => {
+      const timeLabel = isOverdue
+        ? `${daysAgo(item.scheduled_for)} hari terlambat`
+        : fmtWib(item.scheduled_for) + ' WIB';
+      return `
+        <div class="action-item" id="sched-${item.id}">
+          <div class="ai-body">
+            <div class="ai-store"><a href="/distributor-account?id=${item.account_id}">${esc(item.store_name)}</a></div>
+            <div class="ai-meta">${actionLabel(item.action_type)} · ${esc(item.area??'')} · ${esc(item.category??'')}</div>
+            ${item.notes ? `<div class="ai-meta" style="margin-top:2px">${esc(item.notes)}</div>` : ''}
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px">
+            <div class="ai-time">${esc(timeLabel)}</div>
+            <button class="done-btn" onclick="markDone(${item.id})">Selesai ✓</button>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  window.markDone = async function(sid) {
+    const res = await fetch(`/api/distributor/scheduled/${sid}/done`, { method: 'PATCH' })
+      .then(r => r.json()).catch(() => null);
+    if (res?.ok) {
+      const el = $(`sched-${sid}`);
+      if (el) el.remove();
+    }
+  };
+
+  function autoCollapseZone2(overdue, today) {
+    const hasItems = overdue.length > 0 || today.length > 0;
+    if (!hasItems && zone2Visible) {
+      zone2Visible = false;
+      $("z2-body").style.display = "none";
+      $("z2-toggle").textContent = "Tampilkan ↓";
+      $("z2-title").textContent = "Aksi Hari Ini (kosong)";
+    }
+  }
+
+  // ── Zone 3: Account List ───────────────────────────────────────────────────
+
+  function filterAccounts(accounts) {
+    switch (activeFilter) {
+      case "aktif":         return accounts.filter(a => a.stage === 'aktif');
+      case "perlu_followup":return accounts.filter(a => a.stage === 'perlu_followup');
+      case "at_risk":       return accounts.filter(a => a.stage === 'at_risk');
+      case "project_active":return accounts.filter(a => a.account_type === 'project' && a.stage !== 'won' && a.stage !== 'gugur');
+      case "won":           return accounts.filter(a => a.stage === 'won');
+      case "hibernasi":     return accounts.filter(a => a.stage === 'hibernasi');
+      default:              return accounts;
+    }
+  }
+
+  function renderAccountList() {
+    const el = $("account-list");
+    if (!allAccounts.length) {
+      el.innerHTML = `<div class="list-empty">${currentRepId ? 'Belum ada akun dalam portfolio.' : 'Pilih sales untuk memuat portfolio…'}</div>`;
+      $("z3-count").textContent = '';
+      return;
+    }
+    const filtered = filterAccounts(allAccounts);
+    $("z3-count").textContent = `${filtered.length} akun`;
+
+    if (!filtered.length) {
+      el.innerHTML = '<div class="list-empty">Tidak ada akun untuk filter ini.</div>';
+      return;
+    }
+
+    el.innerHTML = filtered.map(a => {
+      const days = daysAgo(a.last_contact_at);
+      const daysStr = days === null ? 'Belum pernah' : (days === 0 ? 'Hari ini' : `${days} hari lalu`);
+      const dClass  = daysClass(days);
+      const showVisitBtn = ['at_risk','perlu_followup'].includes(a.stage);
+      const typeTag = a.account_type === 'project'
+        ? '<span style="font-size:10.5px;color:#7eb8f7;background:rgba(46,111,214,.15);border-radius:4px;padding:1px 7px;font-weight:700">PROJECT</span>'
+        : '';
+      return `
+        <div class="acct-card card-${esc(a.stage)}">
+          <div class="acct-row1">
+            <div class="acct-name"><a href="/distributor-account?id=${a.id}">${esc(a.store_name)}</a>${typeTag ? ' '+typeTag : ''}</div>
+            <div>${stageBadge(a.stage)}</div>
+          </div>
+          <div class="acct-row2">
+            <span class="acct-meta-txt">${esc(a.category??'')} · ${esc(a.area??'')}</span>
+            <span class="acct-days ${dClass}">↻ ${daysStr}</span>
+          </div>
+          <div class="acct-actions">
+            ${showVisitBtn ? `<button class="btn-sm btn-visit" onclick="location.href='/distributor-visits?prefill=${a.id}'">+ Log Kunjungan</button>` : ''}
+            <button class="btn-sm btn-view" onclick="location.href='/distributor-account?id=${a.id}'">Lihat Akun →</button>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  // ── Zone: Kunjungan Hari Ini ───────────────────────────────────────────────
+
+  function renderTodayVisits(visits) {
+    const zone = $("zone-hari-ini");
+    visitDataMap = {};
+    if (!visits || !visits.length) { zone.classList.remove("has-items"); return; }
+    zone.classList.add("has-items");
+    $("zhi-count").textContent = visits.length;
+    $("hari-ini-list").innerHTML = visits.map(v => {
+      visitDataMap[v.id] = v;
+      const isTelepon = v.activity_type === "telepon";
+      const stagePart = v.stage ? ` ${stageBadge(v.stage)}` : "";
+      const metaParts = [esc(v.category ?? ""), esc(v.area ?? "")].filter(Boolean).join(" · ");
+      const picPart   = v.pic_name ? ` · PIC: ${esc(v.pic_name)}` : "";
+      return `
+        <div class="vlog-item" data-id="${v.id}" onclick="toggleWaCard(event, this)">
+          <div class="vlog-dot${isTelepon ? " telepon" : ""}"></div>
+          <div class="vlog-body">
+            <div class="vlog-store">
+              ${v.customer_id ? `<a href="/distributor-account?id=${v.customer_id}">${esc(v.store_name)}</a>` : esc(v.store_name)}${stagePart}
+            </div>
+            <div class="vlog-meta">${isTelepon ? "📞 Telepon" : "🚶 Kunjungan"} · ${metaParts}${picPart}</div>
+            ${v.notes ? `<div class="vlog-notes">${esc(v.notes)}</div>` : ""}
+            <div class="vlog-wa">
+              <div class="vlog-wa-preview" onclick="copyWaCard(event, this)"></div>
+              <span class="vlog-wa-hint">Ketuk untuk copy pesan WA</span>
+            </div>
+          </div>
+          <div class="vlog-time">${fmtWib(v.visited_at)} WIB</div>
+        </div>`;
+    }).join("");
+  }
+
+  // ── Zone 2b: Resolved Escalations ─────────────────────────────────────────
+
+  function renderResolvedEscalations(items) {
+    const zone = $("zone2b");
+    const list = $("esk-resolved-list");
+    if (!items || !items.length) { zone.classList.remove("has-items"); return; }
+    zone.classList.add("has-items");
+    $("z2b-count").textContent = items.length;
+
+    list.innerHTML = items.map(e => {
+      const phone = e.resolved_contact_phone ?? "";
+      const waHref = phone ? `https://wa.me/${phone.replace(/\D/g,'')}` : null;
+      return `
+      <div class="esk-card" id="ec-${e.id}">
+        <div class="ec-store">${esc(e.store_name)}</div>
+        <div class="ec-meta">${[e.category, e.area].filter(Boolean).map(esc).join(' · ')}</div>
+        <div class="ec-contact">
+          <div class="ec-contact-label">Kontak Ditemukan</div>
+          <div class="ec-contact-name">${esc(e.resolved_contact_name ?? '—')}</div>
+          ${phone ? `<div class="ec-contact-phone">📱 ${esc(phone)}</div>` : ''}
+          ${e.resolved_notes ? `<div class="ec-contact-notes">${esc(e.resolved_notes)}</div>` : ''}
+          ${e.resolved_by ? `<div class="ec-by">Ditemukan oleh: ${esc(e.resolved_by)}</div>` : ''}
+        </div>
+        <div class="ec-actions">
+          ${waHref ? `<a class="btn-call-wa" href="${waHref}" target="_blank">💬 WhatsApp</a>` : ''}
+          <button class="btn-followup" onclick="markEskFollowup(${e.id})">✓ Tandai Follow-up</button>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  window.markEskFollowup = async function(id) {
+    const res = await fetch(`/api/distributor/escalations/${id}/followup`, { method: "PATCH" })
+      .then(r => r.json()).catch(() => ({ error: "Koneksi gagal." }));
+    if (res.error) { alert(res.error); return; }
+    const el = $(`ec-${id}`);
+    if (el) { el.style.opacity = "0"; el.style.transition = "opacity .3s"; setTimeout(() => { el.remove(); refreshEskBadge(); }, 320); }
+  };
+
+  function refreshEskBadge() {
+    const remaining = $("esk-resolved-list").querySelectorAll(".esk-card").length;
+    if (remaining === 0) $("zone2b").classList.remove("has-items");
+    else $("z2b-count").textContent = remaining;
+  }
+
+  // ── Main load ──────────────────────────────────────────────────────────────
+
+  window.load = async function() {
+    const repId = currentRepId;
+    if (!repId) {
+      $("account-list").innerHTML = '<div class="list-empty">Pilih sales untuk memuat portfolio…</div>';
+      $("overdue-list").innerHTML = '<div class="zone2-empty">Pilih sales dahulu.</div>';
+      $("today-list").innerHTML   = '<div class="zone2-empty">Pilih sales dahulu.</div>';
+      $("zone-followup").classList.remove("visible");
+      $("zone-pipeline-stale").classList.remove("visible");
+      return;
+    }
+
+    $("account-list").innerHTML = '<div class="spinner">Memuat portfolio…</div>';
+
+    const [myday, accts] = await Promise.all([
+      fetch(`/api/distributor/reps/${repId}/myday`).then(r => r.json()).catch(() => null),
+      fetch(`/api/distributor/accounts?rep_id=${repId}&sort=urgency&limit=200`).then(r => r.json()).catch(() => ({ accounts: [] })),
+    ]);
+
+    if (myday) {
+      updateChipCounts(myday.portfolio_counts);
+      renderFollowupNotice(myday.at_risk ?? []);
+      renderPipelineStale(myday.pipeline_stale ?? []);
+      renderScheduledList(myday.overdue ?? [], 'overdue-list', true);
+      renderScheduledList(myday.today   ?? [], 'today-list',   false);
+      autoCollapseZone2(myday.overdue ?? [], myday.today ?? []);
+      renderResolvedEscalations(myday.resolved_escalations ?? []);
+      renderTodayVisits(myday.today_visits ?? []);
+    }
+
+    allAccounts = accts.accounts ?? [];
+    renderAccountList();
+  };
+
+  // ── Boot ───────────────────────────────────────────────────────────────────
+
+  async function boot() {
+    const res = await fetch("/api/distributor/salespeople?active=true").then(r => r.json()).catch(() => ({ salespeople: [] }));
+    const sel = $("rep-sel");
+    (res.salespeople ?? []).forEach(sp => {
+      const o = document.createElement("option");
+      o.value = sp.id;
+      o.textContent = `${sp.full_name}${sp.code ? ' (' + sp.code + ')' : ''}`;
+      sel.appendChild(o);
+    });
+
+    const savedRep = localStorage.getItem("distributor_myday_rep_id");
+    if (savedRep && sel.querySelector(`option[value="${savedRep}"]`)) {
+      sel.value = savedRep;
+      currentRepId = Number(savedRep);
+      load();
+    }
+
+    sel.addEventListener("change", () => {
+      currentRepId = sel.value ? Number(sel.value) : null;
+      if (currentRepId) localStorage.setItem("distributor_myday_rep_id", String(currentRepId));
+      load();
+    });
+  }
+
+  boot();
+})();
+</script>
+</body>
+</html>

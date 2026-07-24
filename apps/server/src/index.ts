@@ -34,6 +34,12 @@ import { accountsRoutes, startCadenceEngine } from "./routes/accounts.js";
 import { escalationsRoutes } from "./routes/escalations.js";
 import { miraeRoutes } from "./routes/mirae.js";
 import { projectRoutes, startProjectCadenceEngine } from "./routes/project.js";
+import { distributorVisitsRoutes } from "./routes/distributor-visits.js";
+import { distributorSalespeopleRoutes } from "./routes/distributor-salespeople.js";
+import { distributorListsRoutes } from "./routes/distributor-lists.js";
+import { distributorInsightsRoutes } from "./routes/distributor-insights.js";
+import { distributorAccountsRoutes, startDistributorCadenceEngine } from "./routes/distributor-accounts.js";
+import { distributorEscalationsRoutes } from "./routes/distributor-escalations.js";
 import { colorGatewayRoutes } from "./routes/color-gateway.js";
 import { syHunterRoutes } from "./routes/sy-hunter.js";
 
@@ -98,6 +104,13 @@ async function main(): Promise<void> {
   app.get("/project-rack", (_req, reply) => reply.header("Cache-Control", NC).sendFile("project-rack.html"));
   app.get("/project-myday", (_req, reply) => reply.header("Cache-Control", NC).sendFile("project-myday.html"));
   app.get("/project-insights", (_req, reply) => reply.header("Cache-Control", NC).sendFile("project-insights.html"));
+  app.get("/distributor-visits",      (_req, reply) => reply.header("Cache-Control", NC).sendFile("distributor-visits.html"));
+  app.get("/distributor-rack",        (_req, reply) => reply.header("Cache-Control", NC).sendFile("distributor-rack.html"));
+  app.get("/distributor-rep",         (_req, reply) => reply.header("Cache-Control", NC).sendFile("distributor-rep.html"));
+  app.get("/distributor-insights",    (_req, reply) => reply.header("Cache-Control", NC).sendFile("distributor-insights.html"));
+  app.get("/distributor-myday",       (_req, reply) => reply.header("Cache-Control", NC).sendFile("distributor-myday.html"));
+  app.get("/distributor-account",     (_req, reply) => reply.header("Cache-Control", NC).sendFile("distributor-account.html"));
+  app.get("/distributor-salespeople", (_req, reply) => reply.header("Cache-Control", NC).sendFile("distributor-salespeople.html"));
   app.get("/color-gateway", (_req, reply) => reply.header("Cache-Control", NC).sendFile("color-gateway.html"));
   app.get("/sy-hunter",    (_req, reply) => reply.header("Cache-Control", NC).sendFile("sy-hunter.html"));
   app.get("/sy-handler",   (_req, reply) => reply.header("Cache-Control", NC).sendFile("sy-handler.html"));
@@ -130,6 +143,14 @@ async function main(): Promise<void> {
   // [P] Project Visitation Log APIs.
   await app.register(projectRoutes);
 
+  // [DIST] Distributor Visitation Log APIs (full Module D clone).
+  await app.register(distributorVisitsRoutes);
+  await app.register(distributorSalespeopleRoutes);
+  await app.register(distributorListsRoutes);
+  await app.register(distributorInsightsRoutes);
+  await app.register(distributorAccountsRoutes);
+  await app.register(distributorEscalationsRoutes);
+
   // [E] Color Gateway APIs.
   await app.register(colorGatewayRoutes);
 
@@ -139,6 +160,7 @@ async function main(): Promise<void> {
   await bootDatabase(app);
   startCadenceEngine();
   startProjectCadenceEngine();
+  startDistributorCadenceEngine();
 
   try {
     await app.listen({ host: config.host, port: config.port });
