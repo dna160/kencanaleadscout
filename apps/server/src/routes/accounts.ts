@@ -13,7 +13,7 @@ import type { FastifyInstance } from "fastify";
 import { getSql, type Sql } from "../db/client.js";
 
 const VALID_STAGES_PROJECT   = new Set(["prospek", "penawaran", "negosiasi", "won", "gugur"]);
-const VALID_STAGES_REPEATING = new Set(["aktif", "perlu_followup", "at_risk", "hibernasi"]);
+const VALID_STAGES_REPEATING = new Set(["aktif", "perlu_followup", "at_risk", "hibernasi", "repeat_order"]);
 const VALID_ACTION_TYPES     = new Set(["kunjungan", "telepon", "received_order", "note"]);
 
 function allValidStages(): Set<string> {
