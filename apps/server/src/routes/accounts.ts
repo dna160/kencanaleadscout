@@ -37,6 +37,7 @@ function liveStageFragment(db: Sql) {
     case
       when c.id is null                  then null
       when c.account_type <> 'repeating' then c.stage
+      when c.stage = 'repeat_order'      then 'repeat_order'
       when c.last_contact_at is null     then 'hibernasi'
       when extract(epoch from (now() - c.last_contact_at)) / 86400 < 10 then 'aktif'
       when extract(epoch from (now() - c.last_contact_at)) / 86400 < 14 then 'perlu_followup'
@@ -352,6 +353,7 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
         from customers c
         where c.owner_id = ${rep_id}
           and c.account_type = 'repeating'
+          and c.stage <> 'repeat_order'
           and c.last_contact_at is not null
           and extract(epoch from (now() - c.last_contact_at)) / 86400 >= 10
           and extract(epoch from (now() - c.last_contact_at)) / 86400 <  17
@@ -374,6 +376,7 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
           (select count(*) from customers c
            where c.owner_id = ${rep_id}
              and c.account_type = 'repeating'
+             and c.stage <> 'repeat_order'
              and c.last_contact_at is not null
              and extract(epoch from (now() - c.last_contact_at)) / 86400 >= 10
              and extract(epoch from (now() - c.last_contact_at)) / 86400 <  17
@@ -395,6 +398,7 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
           select account_type, stage,
             case
               when account_type <> 'repeating'                                     then null
+              when stage = 'repeat_order'                                          then 'repeat_order'
               when last_contact_at is null                                         then 'hibernasi'
               when extract(epoch from (now() - last_contact_at)) / 86400 < 10       then 'aktif'
               when extract(epoch from (now() - last_contact_at)) / 86400 < 14       then 'perlu_followup'
