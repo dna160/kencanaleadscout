@@ -1028,7 +1028,19 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
     ]) {
       await db`insert into distributor_visit_lists (type, value) values ('area', ${v}) on conflict do nothing`;
     }
-    // Roster starts empty — distributor reps are added via /distributor-salespeople.
+    // Seed Distributor salespeople.
+    for (const r of [
+      { full_name: "Alex",     code: "ALX" },
+      { full_name: "Budi",     code: "BDI" },
+      { full_name: "Gunawan",  code: "GNW" },
+      { full_name: "Frengky",  code: "FRK" },
+    ]) {
+      await db`
+        insert into distributor_salespeople (full_name, code)
+        values (${r.full_name}, ${r.code})
+        on conflict (code) do nothing
+      `;
+    }
   } catch (distributorErr) {
     console.error("[migrate] Distributor module migration failed (non-fatal):", distributorErr);
   }
