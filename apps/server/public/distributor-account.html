@@ -112,6 +112,7 @@
     .stg-negosiasi { background: rgba(221,107,32,.2); color: #f6b87a; }
     .stg-won       { background: rgba(44,110,73,.3); color: #9fe0b9; }
     .stg-gugur     { background: rgba(155,34,38,.2); color: #f8a0a0; }
+    .stg-repeat    { background: rgba(44,110,73,.35); color: #6ee7b7; }
 
     /* ── Stage changer ────────────────────────────────────────── */
     .stage-row { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
@@ -308,7 +309,8 @@ function esc(s) {
 
 function stageBadge(s) {
   const cls = {aktif:'stg-aktif',perlu_followup:'stg-perlu',at_risk:'stg-at_risk',hibernasi:'stg-hibernasi',
-    prospek:'stg-prospek',penawaran:'stg-penawaran',negosiasi:'stg-negosiasi',won:'stg-won',gugur:'stg-gugur'};
+    prospek:'stg-prospek',penawaran:'stg-penawaran',negosiasi:'stg-negosiasi',won:'stg-won',gugur:'stg-gugur',
+    repeat_order:'stg-repeat'};
   const lbl = {aktif:'Aktif',perlu_followup:'Perlu Follow-up',at_risk:'At Risk',hibernasi:'Hibernasi',
     prospek:'Prospek',penawaran:'Penawaran',negosiasi:'Negosiasi',won:'Won',gugur:'Gugur'};
   return `<span class="stg ${cls[s]??''}">${lbl[s]??s}</span>`;
@@ -328,12 +330,13 @@ function actionLabel(t) {
 function stagesFor(type) {
   return type === 'project'
     ? ['prospek','penawaran','negosiasi','won','gugur']
-    : ['aktif','perlu_followup','at_risk','hibernasi'];
+    : ['aktif','perlu_followup','at_risk','hibernasi','repeat_order'];
 }
 
 function stageLabel(s) {
   return {aktif:'Aktif',perlu_followup:'Perlu Follow-up',at_risk:'At Risk',hibernasi:'Hibernasi',
-    prospek:'Prospek',penawaran:'Penawaran',negosiasi:'Negosiasi',won:'Won',gugur:'Gugur'}[s]??s;
+    prospek:'Prospek',penawaran:'Penawaran',negosiasi:'Negosiasi',won:'Won',gugur:'Gugur',
+    repeat_order:'Repeat Order'}[s]??s;
 }
 
 function dotClass(t) {
@@ -388,6 +391,10 @@ function renderPipelinePosition(account) {
   } else if (stage === 'at_risk') {
     fillPct = 100; fillClass = 'health-at_risk';
     infoHtml = `Belum dikunjungi: <strong>${days} hari</strong> · Target: ${target} hari · <span class="overdue-txt">Terlambat: +${overdue} hari</span>`;
+  } else if (stage === 'repeat_order') {
+    fillPct = Math.min(100, Math.round((days / target) * 100));
+    fillClass = 'health-aktif';
+    infoHtml = `Terakhir kontak: <strong>${days} hari lalu</strong> · Repeat order aktif`;
   } else {
     fillPct = 0; fillClass = 'health-hibernasi';
     infoHtml = days !== null ? `Terakhir kontak: <strong>${days} hari lalu</strong>` : 'Tidak aktif';
