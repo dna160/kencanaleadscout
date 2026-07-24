@@ -63,7 +63,7 @@ Master customer/account record. One row per unique `(store_name, area)`
 | id | bigserial PK | |
 | store_name | text | |
 | category | text | free text, drives `account_type` derivation |
-| area | text | Title-cased on write |
+| area | text | normalized on write via `normalizeRetailArea()` (`apps/server/src/util/retailArea.ts`) — Title-Cases and maps known typos/abbreviations (`Jaktim`→`Jakarta Timur`, `Tangsel`→`Tangerang Selatan`, `Bekasi.`→`Bekasi`, etc.) to a canonical name; unrecognized areas are left as-is (Title-Cased only) |
 | address, postal_code | text | |
 | first_seen_at | timestamptz | |
 | created_by | bigint → salespeople | |
@@ -172,20 +172,66 @@ Each type has its own stage set (enforced server-side in both
   reorder pattern — selectable from the visit form's stage picker and shown
   as a distinct badge in My Day / account views)
 
+### Repeating-account stage is live-derived, not just stored
+
+For **repeating** accounts, `customers.stage` is *not* the source of truth
+that pages display — it's a ratcheting cache. The actual stage shown
+everywhere is recomputed live from `last_contact_at` recency, via a shared
+SQL CASE expression, `liveStageFragment()` in `accounts.ts`:
+
+```
+< 10 days since last contact  → aktif
+< 14 days                     → perlu_followup
+< 17 days                     → at_risk
+≥ 17 days / never contacted   → hibernasi
+stored stage = 'repeat_order' → repeat_order (sticky override, ignores recency)
+```
+
+This fragment is substituted for `c.stage` in every read path that displays
+a repeating account's stage: `GET /api/accounts`, `GET /api/accounts/:id`,
+and the scheduled-action / today's-visit sub-queries inside `GET
+/api/reps/:id/myday`. It exists because the stored column used to lag
+behind reality (a rep could visit an `at_risk` account and it would stay
+`at_risk` until the next hourly cadence tick) — live derivation makes My
+Day, the account page, and Insights agree instantly.
+
+`repeat_order` is the one repeating stage that's a genuine manual override
+rather than a recency bucket — set from the visit form's inline stage
+picker or the account page's "Ubah stage" dropdown, and once set it's
+pinned regardless of how long it's been since the last visit (its cadence
+is order-driven, not visit-driven). The My Day at-risk notice, quick stats,
+and Zone 1 portfolio counts (`accounts.ts`) all explicitly exclude
+`stage = 'repeat_order'` accounts from the recency-based at-risk /
+perlu-followup buckets so they aren't misflagged as needing a visit.
+
+Project accounts are unaffected by any of this — `account_type <>
+'repeating'` short-circuits `liveStageFragment()` straight to the stored
+`c.stage`, which only ever changes via the manual `PATCH
+/api/accounts/:id/stage` (or the visit form's project stage picker).
+
 ### Automatic cadence engine (`accounts.ts: startCadenceEngine`)
-Runs once on boot, then hourly, for **repeating** accounts only (never
-touches `hibernasi` or project accounts):
-- `aktif → perlu_followup` if `last_contact_at` is null or > 14 days old
-- `perlu_followup → at_risk` if > 28 days old
+Runs once on boot, then hourly. Its job is to keep the *stored*
+`customers.stage` column (used for `stage_history` audit rows, exports, and
+anything reading `customers` in bulk outside the live-derivation queries
+above) in agreement with the same 10/14/17-day thresholds — display code
+never waits on it, since it derives live itself. For **repeating** accounts
+only (never touches `hibernasi`, `repeat_order`, or project accounts):
+- `aktif → perlu_followup` if `last_contact_at` is null or ≥ 10 days old
+- `perlu_followup → at_risk` if ≥ 14 days old
+- `perlu_followup` or `at_risk` → **back to `aktif`** if a fresh visit lands
+  (`last_contact_at` < 10 days) — the ratchet was originally one-directional
+  and could leave an account showing stale in bulk reads even right after a
+  rep re-visited it; the reverse transition was added to fix that
 
-Each auto-transition writes a `stage_history` row with `changed_by = null`
-(distinguishing system-driven changes from rep-driven ones).
+Each auto-transition writes a `stage_history` row (`changed_by = null` for
+system-driven changes, distinguishing them from rep-driven ones).
 
-Note: `insights.ts` computes a *different*, purely presentational "health"
-bucketing for the heatmap/scorecards (based on `last visit` recency: <10d
-aktif, <14d perlu_followup, <17d at_risk, else hibernasi) — this is not
-written back to `customers.stage`, it's just a display-time recompute with
-tighter thresholds than the cadence engine's stored-stage thresholds.
+`insights.ts` independently recomputes its own, purely presentational
+"health" bucketing for the heatmap/scorecards using the same <10d/<14d/<17d
+thresholds — it does not know about `repeat_order` (a repeat-order account
+there falls through to whatever its recency implies), since it's a rougher
+team-level analytics view rather than the authoritative per-account state
+shown on My Day / the account page.
 
 ---
 
@@ -257,7 +303,11 @@ Team leaderboard (visits, new customers, unique stores, "hunter index" =
 project pipeline stage counts, repeating-account health distribution, and
 per-rep scorecards with a computed **archetype** label
 (`Hunter|Maintainer` / optional `Specialist` / `Anchored|Roamer`, from
-`insights.ts: archetype()`).
+`insights.ts: archetype()`). Clicking a rep row in the leaderboard
+(`toggleRepAccounts()`) drills into that rep's accounts grouped by live
+health (perlu_followup / at_risk / hibernasi), pulled from `GET
+/api/accounts?rep_id=` — the same live-derived stage as My Day, so the two
+views agree.
 
 Backing routes (`insights.ts`):
 - `GET /api/insights/team?from=&to=` — leaderboard, heatmap, team totals,
@@ -280,6 +330,18 @@ The rep's single home screen, structured in zones:
 - **Zone 2 — Aksi Hari Ini**: Terlambat (overdue) / Hari Ini (today)
   scheduled-action columns, from `scheduled_actions`; each has a "Selesai ✓"
   button (`PATCH /api/scheduled/:sid/done`); auto-collapses when empty
+- **Zone 1b — ⚠ Perlu Tindak Lanjut**: always-visible (not chip-gated)
+  notice of repeating accounts sliding into the perlu_followup/at_risk
+  recency window, sourced from `myday.at_risk`
+- **Zone 1c — ◆ Pipeline Perlu Tindak Lanjut**: always-visible notice of
+  stale **project**-type deals — open pipeline stage, no contact in ≥14
+  days — sourced from `myday.pipeline_stale`. Project accounts don't run on
+  the repeating visit-recency clock, so they need their own staleness
+  signal separate from Zone 1b.
+- **Zone urgent — "Butuh Perhatian"**: a *chip-triggered* companion to Zone
+  1b — selecting the AT RISK or PERLU FOLLOW-UP portfolio chip surfaces the
+  full matching account list (not just a summary count) with days-since-
+  contact and a one-tap "Log Kunjungan" shortcut
 - **Zone 2b — Eskalasi Kembali**: resolved escalations awaiting rep
   acknowledgement, with WhatsApp deep-link and "Tandai Follow-up" button
   (`PATCH /api/escalations/:id/followup`)
@@ -290,9 +352,11 @@ The rep's single home screen, structured in zones:
   last contact (color-coded), and quick actions (Log Kunjungan / Lihat Akun)
 
 Backing route: `GET /api/reps/:id/myday` (single aggregate call — overdue,
-today, upcoming, at-risk list, quick stats, portfolio stage counts, won-
-this-month, resolved escalations, today's visits) + `GET
-/api/accounts?rep_id=&sort=urgency&limit=200` for the Zone 3 list.
+today, upcoming, live-recency at-risk list, quick stats, portfolio stage
+counts, won-this-month, resolved escalations, today's visits, stale-pipeline
+deals) + `GET /api/accounts?rep_id=&sort=urgency&limit=200` for the Zone 3
+list. All repeating-account stage/health values returned here go through
+`liveStageFragment()` (§3), not the raw stored column.
 
 ### `account.html` — single account detail
 Pipeline position (project stage stepper, or repeating-account health
@@ -332,9 +396,12 @@ visits.html  ──POST /api/visits──▶  visits (append)
                                      stage_history (if new account, or explicit stage change)
                      │
                      ▼
-        customers.last_contact_at, .stage  ─── read by ───▶  myday.html (Zone 1/3, urgent panel)
+        customers.last_contact_at, .stage  ─── read via liveStageFragment() ───▶
+                                                              myday.html (all zones, urgent panel)
                                                               account.html (pipeline position)
-                                                              accounts.ts cadence engine (hourly re-stage)
+                                                              visits-insights.html (rep drill-down)
+                                              ─── stored column kept in sync by ───▶
+                                                              accounts.ts cadence engine (hourly, both directions)
 
 scheduled_actions  ◀── POST /api/accounts/:id/schedule ── account.html
         │
