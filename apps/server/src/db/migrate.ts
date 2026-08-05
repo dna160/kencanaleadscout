@@ -475,6 +475,19 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
     await db`create index if not exists idx_color_requests_rep    on color_requests(sales_rep_id)`;
     await db`create index if not exists idx_color_requests_eta    on color_requests(eta_date) where status = 'DIPROSES'`;
 
+    // Sales requesters can now come from any team (retail / project / distributor),
+    // whose id sequences collide — so denormalize the team + name onto the request
+    // and drop the retail-only FK. sales_rep_id keeps the id within its own team.
+    await db`alter table color_requests add column if not exists sales_team     text not null default 'retail'`;
+    await db`alter table color_requests add column if not exists sales_rep_name text`;
+    await db`alter table color_requests alter column sales_rep_id drop not null`;
+    await db`alter table color_requests drop constraint if exists color_requests_sales_rep_id_fkey`;
+    await db`
+      update color_requests cr set sales_rep_name = sp.full_name
+      from salespeople sp
+      where sp.id = cr.sales_rep_id and cr.sales_rep_name is null
+    `;
+
     await db`
       create table if not exists color_request_events (
         id           serial primary key,

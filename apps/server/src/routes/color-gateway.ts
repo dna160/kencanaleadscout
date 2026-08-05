@@ -58,16 +58,57 @@ const VALID_COLOR_REFS    = new Set(["KODE_RAL", "NCS", "PANTONE", "SAMPEL_FISIK
 const VALID_ROUTES        = new Set(["LOKAL", "INTERNASIONAL"]);
 const VALID_FULFILLMENT   = new Set(["AMBIL", "KIRIM"]);
 
+const SALES_TEAMS: Record<string, string> = {
+  retail:      "salespeople",
+  project:     "project_salespeople",
+  distributor: "distributor_salespeople",
+};
+
+/**
+ * Parse a composite "team:id" dropdown value (e.g. "project:4"). Falls back to a
+ * bare numeric id, treated as the retail team, so older clients keep working.
+ */
+function parseSalesRef(v: unknown): { team: string; id: number; table: string } | null {
+  const s = str(v);
+  if (!s) return null;
+  const [teamPart, rawId] = s.includes(":") ? s.split(":", 2) : ["retail", s];
+  const team = teamPart ?? "retail";
+  const table = SALES_TEAMS[team];
+  const id = Number(rawId);
+  if (!table || !Number.isInteger(id) || id < 1) return null;
+  return { team, id, table };
+}
+
 export async function colorGatewayRoutes(app: FastifyInstance): Promise<void> {
 
   // ── GET /api/sales-reps ────────────────────────────────────────────────────
+  // Union of every visitation team so a color request can be raised by a Retail,
+  // Project, or Distributor rep. Ids collide across teams, so each option carries
+  // a composite `value` of "team:id".
   app.get("/api/sales-reps", async (_req, reply) => {
     const db = getSql();
     if (!db) return reply.code(503).send({ error: "Database not configured." });
-    const rows = await db`
-      select id, full_name, code from salespeople where active = true order by full_name
-    `;
-    return { sales_reps: rows };
+    let rows: { team: string; id: number; full_name: string; code: string | null }[];
+    try {
+      rows = await db`
+        select 'retail'::text      as team, id, full_name, code from salespeople             where active = true
+        union all
+        select 'project'::text     as team, id, full_name, code from project_salespeople     where active = true
+        union all
+        select 'distributor'::text as team, id, full_name, code from distributor_salespeople where active = true
+        order by team, full_name
+      `;
+    } catch {
+      rows = await db`select 'retail'::text as team, id, full_name, code from salespeople where active = true order by full_name`;
+    }
+    const sales_reps = rows.map((r) => ({
+      value:     `${r.team}:${r.id}`,
+      team:      r.team,
+      id:        r.id,
+      full_name: r.full_name,
+      code:      r.code,
+    }));
+    return { sales_reps };
   });
 
   // ── POST /api/color-requests ───────────────────────────────────────────────
@@ -76,7 +117,9 @@ export async function colorGatewayRoutes(app: FastifyInstance): Promise<void> {
     if (!db) return reply.code(503).send({ error: "Database not configured." });
 
     const b = request.body ?? {};
-    const sales_rep_id    = optInt(b.sales_rep_id);
+    // Accept the composite "team:id" from the roster dropdown, or a bare
+    // sales_rep_id (retail) from older clients.
+    const salesRef        = parseSalesRef(b.sales_rep ?? b.sales_rep_id);
     const customer_name   = str(b.customer_name);
     const project_name    = optStr(b.project_name);
     const product_line    = str(b.product_line).toUpperCase();
@@ -89,8 +132,8 @@ export async function colorGatewayRoutes(app: FastifyInstance): Promise<void> {
     const notes           = optStr(b.notes);
     const actor           = optStr(b.actor) ?? customer_name;
 
-    if (!sales_rep_id || sales_rep_id < 1)
-      return reply.code(400).send({ error: "sales_rep_id diperlukan." });
+    if (!salesRef)
+      return reply.code(400).send({ error: "sales_rep diperlukan." });
     if (!customer_name)
       return reply.code(400).send({ error: "customer_name diperlukan." });
     if (!VALID_PRODUCT_LINES.has(product_line))
@@ -104,6 +147,19 @@ export async function colorGatewayRoutes(app: FastifyInstance): Promise<void> {
     if (qty_panels < 1 || qty_panels > 10)
       return reply.code(400).send({ error: "qty_panels harus 1–10." });
 
+    // Resolve the rep's display name from whichever team table owns the id.
+    const [repRow] = await db`
+      select full_name from ${db(salesRef.table)}
+      where id = ${salesRef.id} and active = true
+    `;
+    if (!repRow)
+      return reply.code(400).send({ error: "sales_rep tidak ditemukan." });
+    const sales_team     = salesRef.team;
+    const sales_rep_name = repRow.full_name as string;
+    // The FK is dropped, so sales_rep_id is now just a plain per-team id; keep it
+    // populated for every team so (sales_team, sales_rep_id) filters unambiguously.
+    const sales_rep_id   = salesRef.id;
+
     try {
       const created = await db.begin(async (sql) => {
         const year = new Date().getFullYear();
@@ -116,11 +172,13 @@ export async function colorGatewayRoutes(app: FastifyInstance): Promise<void> {
 
         const [row] = await sql<[{ id: number }]>`
           insert into color_requests (
-            request_no, sales_rep_id, customer_name, project_name,
+            request_no, sales_rep_id, sales_team, sales_rep_name,
+            customer_name, project_name,
             product_line, coating_type, color_name, color_code, color_reference,
             qty_panels, needed_by, notes
           ) values (
-            ${request_no}, ${sales_rep_id}, ${customer_name}, ${project_name},
+            ${request_no}, ${sales_rep_id}, ${sales_team}, ${sales_rep_name},
+            ${customer_name}, ${project_name},
             ${product_line}, ${coating_type}, ${color_name}, ${color_code}, ${color_reference},
             ${qty_panels}, ${needed_by}, ${notes}
           ) returning *
@@ -161,12 +219,13 @@ export async function colorGatewayRoutes(app: FastifyInstance): Promise<void> {
           and created_at >= now() - interval '90 days'
         group by route
       `,
-      db<{ sales_rep_id: number; full_name: string; cnt: number }[]>`
-        select cr.sales_rep_id, sp.full_name, count(*)::int as cnt
+      db<{ sales_team: string; full_name: string; cnt: number }[]>`
+        select coalesce(cr.sales_team, 'retail') as sales_team,
+               coalesce(cr.sales_rep_name, '—')  as full_name,
+               count(*)::int as cnt
         from color_requests cr
-        join salespeople sp on sp.id = cr.sales_rep_id
         where cr.created_at >= now() - interval '90 days'
-        group by cr.sales_rep_id, sp.full_name
+        group by coalesce(cr.sales_team, 'retail'), coalesce(cr.sales_rep_name, '—')
         order by cnt desc
       `,
       db<{ product_line: string; cnt: number }[]>`
@@ -202,7 +261,8 @@ export async function colorGatewayRoutes(app: FastifyInstance): Promise<void> {
 
     const q           = request.query;
     const status      = q.status      ? str(q.status).toUpperCase()      : null;
-    const rep_id      = q.sales_rep_id ? Number(q.sales_rep_id)           : null;
+    // Filter by a composite "team:id" rep, or a bare retail id for old clients.
+    const repRef      = parseSalesRef(q.sales_rep ?? q.sales_rep_id);
     const overdue_only = q.overdue === "true";
     const search      = q.q           ? `%${q.q}%`                        : null;
     const limit       = Math.min(Number(q.limit) || 100, 500);
@@ -210,13 +270,11 @@ export async function colorGatewayRoutes(app: FastifyInstance): Promise<void> {
 
     const rows = await db`
       select cr.*,
-             sp.full_name as sales_rep_name, sp.code as sales_rep_code,
              (cr.status = 'DIPROSES' and cr.eta_date < current_date)::boolean as is_overdue
       from color_requests cr
-      join salespeople sp on sp.id = cr.sales_rep_id
       where true
         ${status      ? db`and cr.status = ${status}`                 : db``}
-        ${rep_id      ? db`and cr.sales_rep_id = ${rep_id}`           : db``}
+        ${repRef      ? db`and coalesce(cr.sales_team, 'retail') = ${repRef.team} and cr.sales_rep_id = ${repRef.id}` : db``}
         ${overdue_only ? db`and cr.status = 'DIPROSES' and cr.eta_date < current_date` : db``}
         ${search      ? db`and (cr.request_no ilike ${search} or cr.customer_name ilike ${search} or cr.color_name ilike ${search})` : db``}
       order by cr.created_at desc
@@ -235,10 +293,8 @@ export async function colorGatewayRoutes(app: FastifyInstance): Promise<void> {
 
     const [row] = await db`
       select cr.*,
-             sp.full_name as sales_rep_name, sp.code as sales_rep_code,
              (cr.status = 'DIPROSES' and cr.eta_date < current_date)::boolean as is_overdue
       from color_requests cr
-      join salespeople sp on sp.id = cr.sales_rep_id
       where cr.id = ${id}
     `;
     if (!row) return reply.code(404).send({ error: "Tidak ditemukan." });

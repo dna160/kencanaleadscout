@@ -661,7 +661,8 @@
 (function() {
   // ── State ─────────────────────────────────────────────────────────────────
   let currentRole    = localStorage.getItem('cg_role') || 'sales';
-  let currentRepId   = Number(localStorage.getItem('cg_rep_id')) || null;
+  // Composite "team:id" (e.g. "project:4"); legacy numeric values are upgraded on load.
+  let currentRepId   = localStorage.getItem('cg_rep_id') || null;
   let allReps        = [];
   let allRequests    = [];   // PPIC: all fetched requests
   let modalTargetId  = null; // which request the current modal acts on
@@ -755,27 +756,44 @@
     const res = await fetch('/api/sales-reps').then(r => r.json()).catch(() => ({ sales_reps: [] }));
     allReps = res.sales_reps ?? [];
 
+    // Upgrade a legacy numeric stored id ("7") to the composite retail value.
+    if (currentRepId && !String(currentRepId).includes(':')) {
+      const match = allReps.find(r => String(r.id) === String(currentRepId) && r.team === 'retail');
+      currentRepId = match ? match.value : null;
+      if (currentRepId) localStorage.setItem('cg_rep_id', currentRepId);
+    }
+
+    const TEAM_LABEL = { retail: 'Retail', project: 'Project', distributor: 'Distributor' };
+    // Group reps into <optgroup> per team so the same name across teams stays distinct.
+    function fillRepSelect(sel) {
+      const groups = {};
+      allReps.forEach(r => { (groups[r.team] ??= []).push(r); });
+      ['retail', 'project', 'distributor'].forEach(team => {
+        const reps = groups[team];
+        if (!reps || !reps.length) return;
+        const og = document.createElement('optgroup');
+        og.label = TEAM_LABEL[team] || team;
+        reps.forEach(r => {
+          const o = document.createElement('option');
+          o.value = r.value; o.textContent = r.full_name;
+          og.appendChild(o);
+        });
+        sel.appendChild(og);
+      });
+    }
+
     // Populate sales rep selector
     const sel = $('sales-rep-sel');
-    allReps.forEach(r => {
-      const o = document.createElement('option');
-      o.value = r.id; o.textContent = r.full_name;
-      sel.appendChild(o);
-    });
+    fillRepSelect(sel);
     if (currentRepId) sel.value = currentRepId;
 
     // Populate PPIC filter rep selector
-    const psel = $('ppic-filter-rep');
-    allReps.forEach(r => {
-      const o = document.createElement('option');
-      o.value = r.id; o.textContent = r.full_name;
-      psel.appendChild(o);
-    });
+    fillRepSelect($('ppic-filter-rep'));
 
     // Populate new-request form rep (use nav selector, no separate form field)
     sel.addEventListener('change', () => {
-      currentRepId = sel.value ? Number(sel.value) : null;
-      if (currentRepId) localStorage.setItem('cg_rep_id', String(currentRepId));
+      currentRepId = sel.value || null;
+      if (currentRepId) localStorage.setItem('cg_rep_id', currentRepId);
       if (currentRole === 'sales') loadSales();
     });
   }
@@ -789,7 +807,7 @@
       updateSIAPBadge([]);
       return;
     }
-    const res = await fetch(`/api/color-requests?sales_rep_id=${currentRepId}&limit=200`).then(r => r.json()).catch(() => null);
+    const res = await fetch(`/api/color-requests?sales_rep=${encodeURIComponent(currentRepId)}&limit=200`).then(r => r.json()).catch(() => null);
     if (!res) { $('sales-sync-label').textContent = 'Gagal memuat'; return; }
     const reqs = res.requests ?? [];
     renderSalesTable(reqs);
@@ -831,7 +849,7 @@
         <td>${r.eta_date ? `<span style="font-size:13px">${fmtDate(r.eta_date)}</span>` : '—'}</td>
         <td onclick="event.stopPropagation()">
           <div class="td-actions">
-            ${isDiajukan ? `<button class="btn btn-danger btn-sm" onclick="cancelRequest(${r.id},'${esc(allReps.find(x=>x.id==currentRepId)?.full_name)||'Sales'}')">Batalkan</button>` : ''}
+            ${isDiajukan ? `<button class="btn btn-danger btn-sm" onclick="cancelRequest(${r.id},'${esc(allReps.find(x=>x.value==currentRepId)?.full_name)||'Sales'}')">Batalkan</button>` : ''}
             ${isSiap && !r.fulfillment_mode ? `<button class="btn btn-green btn-sm" onclick="openFulfillModal(${r.id})">Pilih Pengambilan</button>` : ''}
             ${isSiap && r.fulfillment_mode ? `<span style="font-size:12px;color:#9fe0b9">✓ ${r.fulfillment_mode}</span>` : ''}
             ${isTerminal ? `<span style="font-size:12px;color:var(--muted)">${r.status === 'SELESAI' ? 'Selesai' : r.status === 'DIBATALKAN' ? 'Dibatalkan' : 'Ditolak'}</span>` : ''}
@@ -876,7 +894,7 @@
     const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString();
 
     let filtered = allRequests.filter(r => {
-      if (filterRep   && String(r.sales_rep_id) !== filterRep)   return false;
+      if (filterRep   && `${r.sales_team || 'retail'}:${r.sales_rep_id}` !== filterRep) return false;
       if (filterLine  && r.product_line !== filterLine)           return false;
       if (filterRoute && r.route !== filterRoute)                 return false;
       if (filterOD    && !r.is_overdue)                           return false;
@@ -954,7 +972,7 @@
     err.style.display = 'none';
     if (!currentRepId) { err.textContent = 'Pilih sales terlebih dahulu.'; err.style.display = 'block'; return; }
     const body = {
-      sales_rep_id:   currentRepId,
+      sales_rep:      currentRepId,
       customer_name:  $('f-customer').value.trim(),
       project_name:   $('f-project').value.trim(),
       product_line:   $('f-product-line').value,
@@ -965,7 +983,7 @@
       qty_panels:     Number($('f-qty').value) || 1,
       needed_by:      $('f-needed-by').value || null,
       notes:          $('f-notes').value.trim(),
-      actor:          allReps.find(r => r.id == currentRepId)?.full_name ?? 'Sales',
+      actor:          allReps.find(r => r.value == currentRepId)?.full_name ?? 'Sales',
     };
     const btn = $('btn-submit');
     btn.disabled = true; btn.textContent = 'Mengajukan…';
@@ -1016,7 +1034,7 @@
     err.style.display = 'none';
     const mode = $('m-fulfill-mode').value;
     if (!mode) { err.textContent = 'Pilih mode pengambilan.'; err.style.display = 'block'; return; }
-    const actor = allReps.find(r => r.id == currentRepId)?.full_name ?? 'Sales';
+    const actor = allReps.find(r => r.value == currentRepId)?.full_name ?? 'Sales';
     const body = {
       fulfillment_mode:   mode,
       delivery_recipient: $('m-fulfill-recipient').value.trim() || null,
