@@ -200,6 +200,11 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
   await db`alter table customers add column if not exists stage          text default 'aktif'`;
   await db`alter table customers add column if not exists owner_id       bigint references salespeople(id)`;
   await db`alter table customers add column if not exists last_contact_at timestamptz`;
+  // Retail accounts carry a MANUAL sales pipeline (prospek→gugur) here, distinct
+  // from `stage` (which for repeating accounts is the auto-decaying health cache
+  // derived from last_contact_at and must never be user-set). Project accounts
+  // keep using `stage` for their pipeline; only repeating accounts use this.
+  await db`alter table customers add column if not exists pipeline_stage text`;
 
   // Backfill owner_id + last_contact_at from visits for accounts that pre-date Module D.
   await db`

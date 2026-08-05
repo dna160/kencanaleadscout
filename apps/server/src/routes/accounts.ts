@@ -13,12 +13,7 @@ import type { FastifyInstance } from "fastify";
 import { getSql, type Sql } from "../db/client.js";
 
 const VALID_STAGES_PROJECT   = new Set(["prospek", "penawaran", "negosiasi", "won", "gugur"]);
-const VALID_STAGES_REPEATING = new Set(["aktif", "perlu_followup", "at_risk", "hibernasi", "repeat_order"]);
 const VALID_ACTION_TYPES     = new Set(["kunjungan", "telepon", "received_order", "note"]);
-
-function allValidStages(): Set<string> {
-  return new Set([...VALID_STAGES_PROJECT, ...VALID_STAGES_REPEATING]);
-}
 
 /**
  * Repeating accounts' true health is always derived live from
@@ -67,7 +62,7 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
     const rows = await db`
       select
         c.id, c.store_name, c.category, c.area, c.address,
-        c.account_type, ${liveStage()} as stage, c.last_contact_at, c.first_seen_at,
+        c.account_type, ${liveStage()} as stage, c.pipeline_stage, c.last_contact_at, c.first_seen_at,
         sp.full_name as owner_name, sp.code as owner_code,
         (
           select count(*) from actions a where a.account_id = c.id
@@ -102,7 +97,8 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
     const [account] = await db`
       select
         c.id, c.store_name, c.category, c.area, c.address, c.postal_code,
-        c.account_type, ${liveStageFragment(db)} as stage, c.last_contact_at, c.first_seen_at,
+        c.account_type, ${liveStageFragment(db)} as stage, c.pipeline_stage,
+        c.last_contact_at, c.first_seen_at,
         sp.id as owner_id, sp.full_name as owner_name, sp.code as owner_code
       from customers c
       left join salespeople sp on sp.id = c.owner_id
@@ -159,29 +155,30 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
     const new_stage  = String(request.body?.stage ?? "").trim().toLowerCase();
     const changed_by = request.body?.changed_by ? Number(request.body.changed_by) : null;
 
-    if (!allValidStages().has(new_stage))
-      return reply.code(400).send({ error: `Invalid stage. Valid: ${[...allValidStages()].join(", ")}` });
+    // Both account types now use the same manual pipeline vocabulary. Retail's
+    // decaying health (aktif/perlu_followup/at_risk/hibernasi) is auto-derived and
+    // is NOT settable here.
+    if (!VALID_STAGES_PROJECT.has(new_stage))
+      return reply.code(400).send({ error: `Invalid stage. Valid: ${[...VALID_STAGES_PROJECT].join(", ")}` });
 
-    const [current] = await db<{ id: number; stage: string; account_type: string }[]>`
-      select id, stage, account_type from customers where id = ${id}
+    const [current] = await db<{ id: number; stage: string; pipeline_stage: string | null; account_type: string }[]>`
+      select id, stage, pipeline_stage, account_type from customers where id = ${id}
     `;
     if (!current) return reply.code(404).send({ error: "Account not found." });
 
-    const validSet = current.account_type === "project" ? VALID_STAGES_PROJECT : VALID_STAGES_REPEATING;
-    if (!validSet.has(new_stage))
-      return reply.code(400).send({
-        error: `Stage "${new_stage}" is not valid for account_type "${current.account_type}".`,
-      });
+    // Project keeps its pipeline in `stage`; retail keeps it in `pipeline_stage`.
+    const stage_col = current.account_type === "project" ? "stage" : "pipeline_stage";
+    const prev      = current.account_type === "project" ? current.stage : current.pipeline_stage;
 
     await Promise.all([
-      db`update customers set stage = ${new_stage} where id = ${id}`,
+      db`update customers set ${db(stage_col)} = ${new_stage} where id = ${id}`,
       db`
         insert into stage_history (account_id, old_stage, new_stage, changed_by)
-        values (${id}, ${current.stage}, ${new_stage}, ${changed_by})
+        values (${id}, ${prev}, ${new_stage}, ${changed_by})
       `,
     ]);
 
-    const [updated] = await db`select id, store_name, stage, account_type from customers where id = ${id}`;
+    const [updated] = await db`select id, store_name, stage, pipeline_stage, account_type from customers where id = ${id}`;
     return { ok: true, account: updated };
   });
 
@@ -409,12 +406,14 @@ export async function accountsRoutes(app: FastifyInstance): Promise<void> {
           where owner_id = ${rep_id}
         ) t
       `,
-      // Won this month (stage transitions)
+      // Won this month (project pipeline transitions). Scoped to project so the
+      // new retail pipeline doesn't silently change this KPI's historical meaning.
       db`
         select count(*)::int as won_this_month
         from stage_history sh
         join customers c on c.id = sh.account_id
         where sh.new_stage = 'won'
+          and c.account_type = 'project'
           and c.owner_id = ${rep_id}
           and sh.changed_at >= date_trunc('month', now())
       `,

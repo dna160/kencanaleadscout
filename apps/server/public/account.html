@@ -328,10 +328,11 @@ function actionLabel(t) {
   return {kunjungan:'Kunjungan',telepon:'Telepon',received_order:'Terima Order',note:'Catatan',followup:'Follow-up'}[t]??t;
 }
 
-function stagesFor(type) {
-  return type === 'project'
-    ? ['prospek','penawaran','negosiasi','won','gugur']
-    : ['aktif','perlu_followup','at_risk','hibernasi','repeat_order'];
+// The manual "Ubah stage" control edits the sales pipeline for BOTH account
+// types. Retail's decaying health (aktif/perlu-followup/at-risk) is auto-derived
+// and never user-set, so it is not offered here.
+function stagesFor(_type) {
+  return ['prospek','penawaran','negosiasi','won','gugur'];
 }
 
 function stageLabel(s) {
@@ -346,27 +347,27 @@ function dotClass(t) {
 
 // ── Pipeline Position ─────────────────────────────────────────────────────────
 
+function pipelineStepperHtml(stage) {
+  const stages = ['prospek','penawaran','negosiasi'];
+  const idx    = stages.indexOf(stage);
+  return stages.map((s, i) => {
+    const cls = s === stage ? 'active' : (i < idx ? 'past' : '');
+    return `<span class="step ${cls}">${stageLabel(s)}</span><span class="step-arrow">›</span>`;
+  }).join('') +
+  `<span class="step-sep">→</span>` +
+  `<span class="step end-won${stage==='won'?' active':''}">${stageLabel('won')}</span>` +
+  `<span style="color:rgba(255,255,255,.18);padding:0 6px;font-size:12px">|</span>` +
+  `<span class="step end-gugur${stage==='gugur'?' active':''}">${stageLabel('gugur')}</span>`;
+}
+
 function renderPipelinePosition(account) {
   const { account_type, stage, last_contact_at } = account;
 
   if (account_type === 'project') {
-    const stages = ['prospek','penawaran','negosiasi'];
-    const ends   = ['won','gugur'];
-    const idx    = stages.indexOf(stage);
-    // Build steps
-    const stepsHtml = stages.map((s, i) => {
-      const cls = s === stage ? 'active' : (i < idx ? 'past' : '');
-      return `<span class="step ${cls}">${stageLabel(s)}</span><span class="step-arrow">›</span>`;
-    }).join('') +
-    `<span class="step-sep">→</span>` +
-    `<span class="step end-won${stage==='won'?' active':''}">${stageLabel('won')}</span>` +
-    `<span style="color:rgba(255,255,255,.18);padding:0 6px;font-size:12px">|</span>` +
-    `<span class="step end-gugur${stage==='gugur'?' active':''}">${stageLabel('gugur')}</span>`;
-
     return `
       <div class="panel pipeline-panel">
         <h3>Posisi Pipeline · Project</h3>
-        <div class="stepper">${stepsHtml}</div>
+        <div class="stepper">${pipelineStepperHtml(stage)}</div>
       </div>`;
   }
 
@@ -401,6 +402,7 @@ function renderPipelinePosition(account) {
     infoHtml = days !== null ? `Terakhir kontak: <strong>${days} hari lalu</strong>` : 'Tidak aktif';
   }
 
+  const pipe = account.pipeline_stage;
   return `
     <div class="panel pipeline-panel">
       <h3>Kesehatan Akun · Repeating</h3>
@@ -410,6 +412,13 @@ function renderPipelinePosition(account) {
         </div>
       </div>
       <div class="health-info">${infoHtml}</div>
+      <div class="health-info" style="margin-top:4px;opacity:.75">Status ini dihitung otomatis dari kontak terakhir — tidak dapat diubah manual.</div>
+    </div>
+    <div class="panel pipeline-panel">
+      <h3>Posisi Pipeline · Retail</h3>
+      ${pipe
+        ? `<div class="stepper">${pipelineStepperHtml(pipe)}</div>`
+        : `<div class="health-info" style="padding-top:2px">Belum ada tahap pipeline. Atur lewat "Ubah stage" di atas atau saat mencatat kunjungan.</div>`}
     </div>`;
 }
 
@@ -419,9 +428,11 @@ function renderPage({account, actions, stage_history, scheduled}) {
   document.title = `${account.store_name} · Kencana LeadScout`;
 
   const stages = stagesFor(account.account_type);
-  const stageOpts = stages.map(s =>
-    `<option value="${s}"${s===account.stage?' selected':''}>${stageLabel(s)}</option>`
-  ).join('');
+  // "Ubah stage" edits the pipeline: project keeps it in `stage`, retail in `pipeline_stage`.
+  const currentPipeline = account.account_type === 'project' ? account.stage : account.pipeline_stage;
+  const stageOpts = [`<option value="">— Pilih tahap —</option>`].concat(stages.map(s =>
+    `<option value="${s}"${s===currentPipeline?' selected':''}>${stageLabel(s)}</option>`
+  )).join('');
 
   const typeLabel = account.account_type === 'project' ? 'Project' : 'Repeating';
 
@@ -543,6 +554,7 @@ async function changeStage() {
   const msg = $('stage-msg');
   if (!msg) return;
   msg.className = 'stage-msg'; msg.textContent = '';
+  if (!stage) { msg.className = 'stage-msg err'; msg.textContent = 'Pilih tahap dulu.'; return; }
   try {
     const r = await fetch(`/api/accounts/${ACCT_ID}/stage`, {
       method: 'PATCH', headers: {'Content-Type':'application/json'},

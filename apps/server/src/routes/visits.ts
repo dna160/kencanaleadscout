@@ -60,27 +60,30 @@ export async function visitsRoutes(app: FastifyInstance): Promise<void> {
       : "repeating";
     const initial_stage = account_type === "project" ? "prospek" : "aktif";
 
-    // Optional explicit stage update submitted from the visit form.
+    // Optional explicit pipeline-stage update submitted from the visit form.
+    // Both project and retail use the SAME pipeline vocabulary; project stores it
+    // in `stage`, retail in `pipeline_stage` (its `stage` is the auto-decaying
+    // health cache and must never be user-set from the form).
     const new_stage_raw = b.new_stage ? String(b.new_stage).trim().toLowerCase() : null;
-    const VALID_PROJECT_STAGES   = new Set(["prospek","penawaran","negosiasi","won","gugur"]);
-    const VALID_REPEATING_STAGES = new Set(["aktif","perlu_followup","at_risk","hibernasi","repeat_order"]);
-    const valid_stages  = account_type === "project" ? VALID_PROJECT_STAGES : VALID_REPEATING_STAGES;
-    const new_stage     = new_stage_raw && valid_stages.has(new_stage_raw) ? new_stage_raw : null;
+    const VALID_PIPELINE_STAGES = new Set(["prospek","penawaran","negosiasi","won","gugur"]);
+    const new_stage     = new_stage_raw && VALID_PIPELINE_STAGES.has(new_stage_raw) ? new_stage_raw : null;
+    const stage_col     = account_type === "project" ? "stage" : "pipeline_stage";
 
     // Detect whether the customer already exists before upsert (to log initial stage).
     let customer_id: number | null = null;
     let was_new  = false;
     let prev_stage: string | null = null;
     try {
-      const [existing] = await db<{ id: number; stage: string }[]>`
-        select id, stage from customers
+      const [existing] = await db<{ id: number; stage: string; pipeline_stage: string | null }[]>`
+        select id, stage, pipeline_stage from customers
         where lower(trim(store_name)) = lower(trim(${store_name}))
           and lower(coalesce(area,'')) = lower(coalesce(${area},''))
       `;
       was_new    = !existing;
-      prev_stage = existing?.stage ?? null;
+      // Compare the manual update against whichever column holds this type's pipeline.
+      prev_stage = existing ? (account_type === "project" ? existing.stage : existing.pipeline_stage) : null;
 
-      const [cust] = await db<{ id: number; stage: string }[]>`
+      const [cust] = await db<{ id: number; stage: string; pipeline_stage: string | null }[]>`
         insert into customers (store_name, category, area, address, postal_code,
                                first_seen_at, created_by, account_type, stage, last_contact_at, owner_id)
         values (${store_name}, ${category}, ${area}, ${address}, ${postal_code},
@@ -96,11 +99,11 @@ export async function visitsRoutes(app: FastifyInstance): Promise<void> {
             when customers.stage = 'hibernasi' then customers.stage
             else coalesce(customers.stage, excluded.stage)
           end
-        returning id, stage
+        returning id, stage, pipeline_stage
       `;
       customer_id = cust?.id ?? null;
       if (was_new) prev_stage = null;
-      else         prev_stage = cust?.stage ?? prev_stage;
+      else         prev_stage = (account_type === "project" ? cust?.stage : cust?.pipeline_stage) ?? prev_stage;
     } catch {
       // non-fatal — visit still saved without customer link
     }
@@ -134,8 +137,9 @@ export async function visitsRoutes(app: FastifyInstance): Promise<void> {
           values (${customer_id}, null, ${initial_stage}, ${salesperson_id})
         `.catch(() => {});
       } else if (new_stage && new_stage !== prev_stage) {
-        // Apply explicit stage update from visit form.
-        db`update customers set stage = ${new_stage} where id = ${customer_id}`.catch(() => {});
+        // Apply explicit pipeline-stage update from visit form (project → stage,
+        // retail → pipeline_stage; retail health is never touched here).
+        db`update customers set ${db(stage_col)} = ${new_stage} where id = ${customer_id}`.catch(() => {});
         db`
           insert into stage_history (account_id, old_stage, new_stage, changed_by)
           values (${customer_id}, ${prev_stage}, ${new_stage}, ${salesperson_id})
@@ -632,12 +636,12 @@ Fokus pada insight yang actionable. Jangan ulangi daftar kunjungan.`;
     const rep_id = request.query.rep_id ? Number(request.query.rep_id) : null;
     const rows = await db<{
       id: number; store_name: string; category: string; area: string | null;
-      account_type: string | null; stage: string | null;
+      account_type: string | null; stage: string | null; pipeline_stage: string | null;
       address: string | null; postal_code: string | null; last_pic_name: string | null;
     }[]>`
       select
         c.id, c.store_name, c.category, c.area,
-        c.account_type, c.stage,
+        c.account_type, c.stage, c.pipeline_stage,
         c.address, c.postal_code,
         (
           select v.pic_name
