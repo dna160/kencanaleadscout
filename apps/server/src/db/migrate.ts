@@ -434,6 +434,26 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
       update salespeople set active = false
       where code in ('DSY','FBI','YNI','HVI','YPI','ALI','RAF','DVA')
     `;
+    // Rahmanto is a permanent retail rep. There is no delete path for salespeople,
+    // so if he vanished from the roster his `active` flag was flipped false. Re-assert
+    // him active — matched by name so this still wins if his row carries one of the
+    // project codes swept above. Runs AFTER the sweep so it takes precedence.
+    const [rahmanto] = await db<{ id: number; active: boolean }[]>`
+      update salespeople set active = true
+      where lower(trim(full_name)) = 'rahmanto'
+      returning id, active
+    `;
+    if (!rahmanto) {
+      // Row genuinely absent — recreate it.
+      await db`
+        insert into salespeople (full_name, code, active)
+        values ('Rahmanto', 'RHM', true)
+        on conflict (code) do update set active = true
+      `;
+      console.info("[migrate] Rahmanto row was missing — recreated as active retail rep.");
+    } else {
+      console.info(`[migrate] Rahmanto reasserted active (salesperson id ${rahmanto.id}).`);
+    }
   } catch (seedErr) {
     console.error("[migrate] salespeople seeding failed (non-fatal):", seedErr);
   }
