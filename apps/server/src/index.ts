@@ -43,6 +43,8 @@ import { distributorEscalationsRoutes } from "./routes/distributor-escalations.j
 import { exportAllRoutes } from "./routes/export-all.js";
 import { colorGatewayRoutes } from "./routes/color-gateway.js";
 import { syHunterRoutes } from "./routes/sy-hunter.js";
+import { stockRoutes } from "./routes/stock.js";
+import { runStockMigrations } from "./db/migrateStock.js";
 
 const PUBLIC_DIR = fileURLToPath(new URL("../public", import.meta.url));
 
@@ -55,6 +57,7 @@ async function bootDatabase(app: ReturnType<typeof Fastify>): Promise<void> {
   if (!db) return;
   try {
     await runMigrations(db);
+    await runStockMigrations(db);
     const n = await seedLeads(db);
     app.log.info({ seeded: n }, "database ready (migrated + seeded)");
   } catch (err) {
@@ -116,6 +119,8 @@ async function main(): Promise<void> {
   app.get("/sy-hunter",    (_req, reply) => reply.header("Cache-Control", NC).sendFile("sy-hunter.html"));
   app.get("/sy-handler",   (_req, reply) => reply.header("Cache-Control", NC).sendFile("sy-handler.html"));
   app.get("/sy-champion",  (_req, reply) => reply.header("Cache-Control", NC).sendFile("sy-champion.html"));
+  app.get("/stock",      (_req, reply) => reply.header("Cache-Control", NC).sendFile("stock.html"));
+  app.get("/stock-ppic", (_req, reply) => reply.header("Cache-Control", NC).sendFile("stock-ppic.html"));
 
   // [A] Scraper APIs.
   await app.register(enrichRoutes);
@@ -160,6 +165,9 @@ async function main(): Promise<void> {
 
   // [SY] SY Hunter — BCI factory/warehouse pipeline.
   await app.register(syHunterRoutes);
+
+  // [STK] Stok Booking (Simple) — Excel upload · book · verify overbook.
+  await app.register(stockRoutes);
 
   await bootDatabase(app);
   startCadenceEngine();

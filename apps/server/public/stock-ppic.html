@@ -1,0 +1,578 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Stok — PPIC</title>
+<style>
+  :root{
+    --bg:#f2f4f7; --card:#fff; --ink:#17233b; --muted:#6b7280; --line:#e5e7eb;
+    --accent:#157a46; --danger:#c03c2b;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{font-family:var(--sans);background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased;padding-bottom:40px}
+  header{position:sticky;top:0;z-index:20;background:var(--ink);color:#fff;padding:12px 16px;box-shadow:0 2px 10px rgba(0,0,0,.12)}
+  .hrow{display:flex;align-items:center;justify-content:space-between;gap:10px;max-width:1000px;margin:0 auto}
+  header h1{font-size:18px;margin:0;font-weight:700}
+  header .sub{font-size:12px;color:#c7cfde;margin-top:2px}
+  header a.pplink{color:#ffd27a;text-decoration:none;font-size:13px;font-weight:600;white-space:nowrap}
+  .wrap{max-width:1000px;margin:0 auto;padding:14px 16px}
+  label.fld{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted);font-weight:600}
+  select,input[type=text],input[type=number],input[type=file],textarea{font:inherit;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink);min-height:44px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden;margin-bottom:14px}
+  .card h2{font-size:14px;margin:0;padding:12px 14px;border-bottom:1px solid var(--line);background:#fafbfc;display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .card .body{padding:14px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:700;background:#fafbfc}
+  tr.itemrow{cursor:pointer}tr.itemrow:hover{background:#f7fafc}
+  .sub2{color:var(--muted);font-size:11px;margin-top:2px}
+  .avail{font-weight:800;white-space:nowrap}.avail.neg{color:var(--danger)}
+  .badge{display:inline-block;font-size:10px;font-weight:800;padding:2px 6px;border-radius:6px;margin-left:6px;background:#ede9fe;color:#6d28d9}
+  .chip{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;white-space:nowrap}
+  .chip.age{background:#f3f4f6;color:#6b7280}
+  .chip.lama{background:#fef3c7;color:#b45309;margin-left:4px}
+  .st-confirmed{background:#dcfce7;color:#15803d}.st-overbooked{background:#fef3c7;color:#b45309}
+  .st-approved{background:#ede9fe;color:#6d28d9}.st-rejected{background:#fee2e2;color:#b91c1c}
+  .st-cancelled{background:#f3f4f6;color:#6b7280}.st-completed{background:#dbeafe;color:#1d4ed8}
+  button.btn{background:var(--accent);color:#fff;border:none;border-radius:10px;padding:0 14px;min-height:40px;font-weight:700;font-size:13px;cursor:pointer}
+  button.btn:disabled{opacity:.55;cursor:default}
+  button.btn.ghost{background:#fff;color:var(--ink);border:1px solid var(--line)}
+  button.btn.danger{background:#fff;color:var(--danger);border:1px solid #f3c9c2}
+  button.btn.approve{background:#6d28d9}
+  button.mini{padding:0 10px;min-height:34px;font-size:12px;border-radius:8px}
+  .empty{padding:22px 16px;text-align:center;color:var(--muted);font-size:14px;line-height:1.5}
+  .warnbox{background:#fef2f2;border:1px solid #fbcaca;color:#991b1b;border-radius:10px;padding:10px 12px;font-size:13px;margin:10px 0;font-weight:600}
+  .metaline{font-size:12px;color:var(--muted);margin:6px 0}
+  .counts{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
+  .countchip{background:#f3f4f6;border-radius:8px;padding:4px 10px;font-size:12px;font-weight:700;color:#374151}
+  .fltchips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+  .fchip{border:1px solid var(--line);background:#fff;border-radius:999px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;color:var(--muted)}
+  .fchip.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .modal-bg{position:fixed;inset:0;background:rgba(15,23,42,.5);display:none;align-items:flex-end;justify-content:center;z-index:50}
+  .modal-bg.on{display:flex}
+  .modal{background:#fff;width:100%;max-width:640px;border-radius:16px 16px 0 0;max-height:92vh;overflow:auto;padding:16px}
+  @media(min-width:640px){.modal-bg{align-items:center;padding:16px}.modal{border-radius:16px}}
+  .modal h3{margin:0 0 4px;font-size:17px}.modal .mp{color:var(--muted);font-size:12px;margin:0 0 14px}
+  .modal .actions{display:flex;gap:10px;margin-top:16px}.modal .actions .btn{flex:1;min-height:46px}
+  .rev{text-decoration:line-through;opacity:.6}
+  .sisa{text-align:right;font-weight:700;white-space:nowrap}
+  .foot{font-size:12px;color:var(--muted);padding:10px 4px 0}
+  .scrollx{overflow-x:auto}
+  #toast{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:80;display:flex;flex-direction:column;gap:8px;width:calc(100% - 32px);max-width:440px}
+  .toast{background:var(--ink);color:#fff;padding:12px 14px;border-radius:12px;font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,.2);animation:tin .25s ease}
+  .toast.ok{background:#166534}.toast.warn{background:#b45309}.toast.err{background:var(--danger)}
+  @keyframes tin{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+  @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+  .spin{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.5);border-top-color:#fff;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px;margin-right:6px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .reddot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--danger);margin-left:5px;vertical-align:middle}
+</style>
+</head>
+<body>
+<header>
+  <div class="hrow">
+    <div>
+      <h1>Stok — PPIC</h1>
+      <div class="sub" id="dataPer">Memuat…</div>
+    </div>
+    <a class="pplink" href="/stock">Halaman Sales ↗</a>
+  </div>
+</header>
+
+<div class="wrap">
+  <label class="fld" style="margin-bottom:12px;max-width:280px">Petugas PPIC
+    <input type="text" id="actor" placeholder="Nama Anda" />
+  </label>
+
+  <!-- Card 1 — Upload -->
+  <div class="card">
+    <h2>Upload Stok</h2>
+    <div class="body">
+      <input type="file" id="file" accept=".xlsx,.xls,.csv" />
+      <div id="parseErr" class="warnbox" style="display:none"></div>
+      <div id="preview"></div>
+    </div>
+  </div>
+
+  <!-- Card 2 — Verify queue -->
+  <div class="card">
+    <h2>Antrean Verifikasi <span class="chip st-overbooked" id="vqCount">0</span></h2>
+    <div id="vqBody" class="scrollx"></div>
+  </div>
+
+  <!-- Card 3 — Tracker -->
+  <div class="card">
+    <h2>Tracker Booking per Sales</h2>
+    <div id="trackBody" class="scrollx"></div>
+    <div class="foot" style="padding:0 14px 12px">Lama = durasi &gt; 24 jam · dihitung dari semua periode.</div>
+  </div>
+
+  <!-- Card 4 — All bookings -->
+  <div class="card">
+    <h2>Semua Booking (periode aktif)</h2>
+    <div class="body">
+      <div class="fltchips" id="stFilters"></div>
+      <div id="allBody" class="scrollx"></div>
+    </div>
+  </div>
+
+  <!-- Card 5 — Upload history -->
+  <div class="card">
+    <h2>Riwayat Upload</h2>
+    <div id="histBody" class="scrollx"></div>
+    <div id="archivePanel"></div>
+  </div>
+</div>
+
+<div class="modal-bg" id="rwBg"><div class="modal" id="rwModal"></div></div>
+<div id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+"use strict";
+const $ = (s,r=document)=>r.querySelector(s);
+const NF = new Intl.NumberFormat("id-ID",{maximumFractionDigits:2});
+const eq=(a,b)=>String(a)===String(b);
+function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function wib(iso){ if(!iso) return "—"; return new Intl.DateTimeFormat("id-ID",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",hour12:false,timeZone:"Asia/Jakarta"}).format(new Date(iso)).replace(/\./g,":"); }
+function dur(sec){ sec=Math.max(0,Math.floor(sec)); const d=Math.floor(sec/86400),h=Math.floor((sec%86400)/3600),m=Math.floor((sec%3600)/60); if(d>0)return `${d}h ${h}j`; if(h>0)return `${h}j`; return `${m}m`; }
+function ageSec(iso){ return (Date.now()-Date.parse(iso))/1000; }
+function toast(msg,kind){ const t=document.createElement("div"); t.className="toast"+(kind?(" "+kind):""); t.textContent=msg; $("#toast").appendChild(t); setTimeout(()=>t.remove(),3500); }
+const STLABEL={confirmed:"Terkonfirmasi",overbooked:"Menunggu Verifikasi",approved:"Disetujui (overbook)",rejected:"Ditolak",cancelled:"Dibatalkan",completed:"Selesai"};
+
+// petugas persist
+$("#actor").value=localStorage.getItem("stk_actor")||"";
+$("#actor").addEventListener("input",()=>localStorage.setItem("stk_actor",$("#actor").value.trim()));
+function actor(){ return $("#actor").value.trim(); }
+function requireActor(){ if(!actor()){ toast("Isi nama petugas PPIC dulu.","warn"); $("#actor").focus(); return false; } return true; }
+
+// ══ R9 · client-side Excel parsing ════════════════════════════════════════════
+const norm=s=>String(s==null?"":s).replace(/\s+/g," ").trim().toUpperCase();
+// Recognizable headers (primary set + generic synonyms) for header-row detection.
+const KNOWN=new Set(["BRAND","WARNA","BATCH WARNA","COATING","TH","MM","P","L",
+  "SALDO AKHIR (LBR)","SALDO AKHIR (M2)","NAMA PRODUK","NAMA","PRODUK","PRODUCT","NAME","ITEM",
+  "LINI","LINE","KATEGORI","CATEGORY","SATUAN","UNIT","UOM","QTY","JUMLAH","STOK","STOCK","QUANTITY"]);
+function headerScore(row){
+  let n=0; for(const c of row){ const k=norm(c); if(!k) continue;
+    if(KNOWN.has(k)) n++;
+    else if(k.includes("SALDO AKHIR")) n++; }
+  return n;
+}
+// Locate a column index by trying a list of exact normalized names, then a contains test.
+function findCol(headers,exacts,contains){
+  for(let i=0;i<headers.length;i++){ if(exacts.includes(norm(headers[i]))) return i; }
+  if(contains){ for(let i=0;i<headers.length;i++){ const k=norm(headers[i]); if(contains.every(t=>k.includes(t))) return i; } }
+  return -1;
+}
+function toNum(v){
+  if(v==null||v==="") return null;
+  if(typeof v==="number") return isFinite(v)?v:null;
+  let s=String(v).trim(); if(!s) return null;
+  const lc=s.lastIndexOf(","),ld=s.lastIndexOf(".");
+  if(lc>-1&&ld>-1){ if(lc>ld) s=s.replace(/\./g,"").replace(",","."); else s=s.replace(/,/g,""); }
+  else if(lc>-1){ const after=s.length-lc-1; s=(after===3&&!/,\d{1,2}$/.test(s))?s.replace(/,/g,""):s.replace(",","."); }
+  s=s.replace(/[^0-9.\-]/g,""); const n=Number(s); return isFinite(n)?n:null;
+}
+// Parse one sheet's 2D rows → structured result, or null if no header detected.
+function parseSheet(rows){
+  let hdrIdx=-1;
+  for(let i=0;i<Math.min(10,rows.length);i++){ if(headerScore(rows[i]||[])>=3){ hdrIdx=i; break; } }
+  if(hdrIdx<0) return null;
+  const headers=rows[hdrIdx]||[];
+  const col={
+    brand:findCol(headers,["BRAND"]),
+    warna:findCol(headers,["WARNA"]),
+    batch:findCol(headers,["BATCH WARNA"]),
+    coating:findCol(headers,["COATING"]),
+    th:findCol(headers,["TH"]),
+    mm:findCol(headers,["MM"]),
+    p:findCol(headers,["P"]),
+    l:findCol(headers,["L"]),
+    qtyLbr:findCol(headers,["SALDO AKHIR (LBR)"],["SALDO AKHIR","LBR"]),
+  };
+  const primary = col.warna>-1 && col.qtyLbr>-1;
+  let mapType, dataRows=[], brands=new Set();
+  let zero=0,skipped=0;
+  const merge=new Map();
+
+  if(primary){
+    mapType="primary";
+    for(let i=hdrIdx+1;i<rows.length;i++){
+      const r=rows[i]||[];
+      const warna=String(r[col.warna]==null?"":r[col.warna]).trim();
+      const qty=toNum(r[col.qtyLbr]);
+      if(!warna || qty==null || qty<0){ if(warna||r.some(x=>x!=null&&String(x).trim()!=="")) skipped++; continue; }
+      if(qty===0) zero++;
+      const brand=col.brand>-1?String(r[col.brand]==null?"":r[col.brand]).trim():"";
+      if(brand) brands.add(brand);
+      const item={
+        brand:brand||null, warna,
+        batch_warna:col.batch>-1?(String(r[col.batch]==null?"":r[col.batch]).trim()||null):null,
+        coating:col.coating>-1?(String(r[col.coating]==null?"":r[col.coating]).trim()||null):null,
+        th:col.th>-1?toNum(r[col.th]):null, mm:col.mm>-1?toNum(r[col.mm]):null,
+        p:col.p>-1?toNum(r[col.p]):null, l:col.l>-1?toNum(r[col.l]):null,
+        qty,
+      };
+      const key=structKey(item);
+      if(merge.has(key)){ merge.get(key).qty+=qty; merge.get(key)._merged=true; }
+      else merge.set(key,item);
+    }
+  }else{
+    mapType="generic";
+    const gc={
+      name:findCol(headers,["NAMA PRODUK","NAMA","PRODUK","PRODUCT","NAME","ITEM"]),
+      line:findCol(headers,["LINI","LINE","KATEGORI","CATEGORY"]),
+      unit:findCol(headers,["SATUAN","UNIT","UOM"]),
+      qty:findCol(headers,["QTY","JUMLAH","STOK","STOCK","QUANTITY"]),
+    };
+    if(gc.name<0||gc.qty<0) return null;
+    for(let i=hdrIdx+1;i<rows.length;i++){
+      const r=rows[i]||[];
+      const name=String(r[gc.name]==null?"":r[gc.name]).trim();
+      const qty=toNum(r[gc.qty]);
+      if(!name || qty==null || qty<0){ if(name||r.some(x=>x!=null&&String(x).trim()!=="")) skipped++; continue; }
+      if(qty===0) zero++;
+      const line=gc.line>-1?(String(r[gc.line]==null?"":r[gc.line]).trim()||null):null;
+      if(line) brands.add(line);
+      const item={ name, product_line:line, unit:gc.unit>-1?(String(r[gc.unit]==null?"":r[gc.unit]).trim()||"pcs"):"pcs", qty };
+      const key=genKey(item);
+      if(merge.has(key)){ merge.get(key).qty+=qty; merge.get(key)._merged=true; }
+      else merge.set(key,item);
+    }
+  }
+  dataRows=[...merge.values()];
+  const merged=dataRows.filter(x=>x._merged).length;
+  dataRows.forEach(x=>delete x._merged);
+  return { mapType, headerRow:hdrIdx+1, rows:dataRows, brands, zero, skipped, merged, valid:dataRows.length };
+}
+function structKey(it){ return ["s",it.brand,it.warna,it.batch_warna,it.coating,it.th,it.mm,it.p,it.l].map(v=>String(v==null?"":v).trim().toLowerCase()).join("|"); }
+function genKey(it){ return ["g",it.name,it.product_line].map(v=>String(v==null?"":v).trim().toLowerCase()).join("|"); }
+// Same key derived from a live summary item, for reconciliation matching.
+function itemKey(i){
+  if(i.warna!=null) return ["s",i.product_line,i.warna,i.batch_warna,i.coating,i.th,i.mm,i.p,i.l].map(v=>String(v==null?"":v).trim().toLowerCase()).join("|");
+  return ["g",i.name,i.product_line].map(v=>String(v==null?"":v).trim().toLowerCase()).join("|");
+}
+
+// ── upload flow state ─────────────────────────────────────────────────────────
+let PARSED=null;     // { filename, sheets:[{name,result}] }
+let SELSHEET=null;   // selected sheet name
+let LIVEKEYS={};     // key → available (from summary), for reconciliation
+
+$("#file").addEventListener("change",async e=>{
+  const f=e.target.files[0]; if(!f) return;
+  $("#parseErr").style.display="none"; $("#preview").innerHTML=`<div class="empty">Membaca file…</div>`;
+  try{
+    const buf=await f.arrayBuffer();
+    const wb=XLSX.read(buf,{type:"array"});
+    const sheets=[];
+    for(const name of wb.SheetNames){
+      // Keep blank rows so the detected header row number matches the real
+      // spreadsheet (the sample's master header genuinely sits on row 5, R9);
+      // all-null rows are harmlessly skipped and never counted as invalid.
+      const rows=XLSX.utils.sheet_to_json(wb.Sheets[name],{header:1,defval:null,blankrows:true});
+      const result=parseSheet(rows);
+      if(result) sheets.push({name,result});
+    }
+    if(sheets.length===0){
+      $("#preview").innerHTML="";
+      $("#parseErr").style.display=""; $("#parseErr").textContent="File tidak dikenali. Pastikan ada kolom BRAND/WARNA/SALDO AKHIR atau Nama Produk/Qty.";
+      PARSED=null; return;
+    }
+    PARSED={ filename:f.name, sheets };
+    // default = most distinct brands, ties → most rows (R9)
+    sheets.sort((a,b)=> (b.result.brands.size-a.result.brands.size) || (b.result.valid-a.result.valid));
+    SELSHEET=sheets[0].name;
+    renderPreview();
+  }catch(err){
+    $("#preview").innerHTML="";
+    $("#parseErr").style.display=""; $("#parseErr").textContent="File tidak bisa dibaca. Pastikan format .xlsx/.xls/.csv.";
+    PARSED=null;
+  }
+});
+
+function currentSheet(){ return PARSED?PARSED.sheets.find(s=>s.name===SELSHEET):null; }
+function renderPreview(){
+  const cs=currentSheet(); if(!cs){ $("#preview").innerHTML=""; return; }
+  const res=cs.result;
+  const active=SUMMARY&&SUMMARY.upload;
+  const mapLabel=res.mapType==="primary"?"Format PPIC (BRAND/WARNA/…)":"Format umum (Nama/Qty)";
+  const sheetOpts=PARSED.sheets.map(s=>`<option ${s.name===SELSHEET?"selected":""} value="${esc(s.name)}">${esc(s.name)} — ${s.result.valid} baris · ${s.result.brands.size} brand</option>`).join("");
+  const over=res.valid>2000;
+  const first=res.rows.slice(0,15);
+  const isPrimary=res.mapType==="primary";
+  const rowsHtml=first.map(r=>{
+    const key=isPrimary?structKey(r):genKey(r);
+    const liveKey=isPrimary?itemKeyFromParsed(r):itemKeyFromParsed(r);
+    const avail=LIVEKEYS[liveKey];
+    const availTxt=avail==null?"":NF.format(avail);
+    if(isPrimary){
+      return `<tr><td>${esc(r.brand||"")}</td><td>${esc(r.warna)}<div class="sub2">${esc([r.batch_warna,r.coating].filter(Boolean).join(" · "))}</div></td>
+        <td>${[r.th,r.mm?r.mm+"mm":"",r.p&&r.l?r.p+"×"+r.l:""].filter(Boolean).map(esc).join(" · ")}</td>
+        <td style="text-align:right">${NF.format(r.qty)}</td><td style="text-align:right">${availTxt}</td></tr>`;
+    }
+    return `<tr><td>${esc(r.product_line||"")}</td><td>${esc(r.name)}</td><td>${esc(r.unit)}</td>
+      <td style="text-align:right">${NF.format(r.qty)}</td><td style="text-align:right">${availTxt}</td></tr>`;
+  }).join("");
+  const head=isPrimary
+    ? `<tr><th>Brand</th><th>Warna</th><th>Spec</th><th style="text-align:right">Qty</th><th style="text-align:right">Tersedia sekarang</th></tr>`
+    : `<tr><th>Lini</th><th>Nama</th><th>Satuan</th><th style="text-align:right">Qty</th><th style="text-align:right">Tersedia sekarang</th></tr>`;
+  $("#preview").innerHTML=`
+    <label class="fld" style="margin-top:12px;max-width:100%">Sheet
+      <select id="sheetSel">${sheetOpts}</select>
+    </label>
+    <div class="metaline">Kolom terpetakan: <b>${mapLabel}</b> · header baris ${res.headerRow}</div>
+    <div class="counts">
+      <span class="countchip">${res.valid} baris valid</span>
+      <span class="countchip">${res.zero} stok 0</span>
+      <span class="countchip">${res.skipped} dilewati</span>
+      <span class="countchip">${res.merged} duplikat digabung</span>
+    </div>
+    ${over?`<div class="warnbox">Terlalu banyak baris (${res.valid}). Maksimal 2000.</div>`:""}
+    ${active?`<div class="warnbox">Upload baru akan MENGARSIPKAN periode berjalan beserta ${SUMMARY.totals.booked_total>0?"booking aktifnya":"seluruh bookingnya"}. Fresh start.</div>`:""}
+    <div class="scrollx"><table><thead>${head}</thead><tbody>${rowsHtml}</tbody></table></div>
+    <div class="metaline">Menampilkan ${first.length} dari ${res.valid} baris.</div>
+    <label class="fld" style="margin-top:8px;max-width:100%">Catatan (opsional)<input type="text" id="upNote" placeholder="—"/></label>
+    <div style="margin-top:12px"><button class="btn" id="doUpload" ${over?"disabled":""}>Konfirmasi Upload</button></div>`;
+  $("#sheetSel").addEventListener("change",e=>{ SELSHEET=e.target.value; renderPreview(); });
+  $("#doUpload").addEventListener("click",doUpload);
+}
+function itemKeyFromParsed(r){
+  if(r.warna!=null) return ["s",r.brand,r.warna,r.batch_warna,r.coating,r.th,r.mm,r.p,r.l].map(v=>String(v==null?"":v).trim().toLowerCase()).join("|");
+  return ["g",r.name,r.product_line].map(v=>String(v==null?"":v).trim().toLowerCase()).join("|");
+}
+
+async function doUpload(){
+  if(!requireActor()) return;
+  const cs=currentSheet(); if(!cs) return;
+  const res=cs.result;
+  if(res.valid>2000){ toast("Maksimal 2000 baris.","err"); return; }
+  if(res.valid===0){ toast("File tidak berisi baris stok yang valid.","err"); return; }
+  const active=SUMMARY&&SUMMARY.upload;
+  if(!confirm(active?"Upload akan mengarsipkan periode berjalan. Lanjut?":"Konfirmasi upload periode baru?")) return;
+  const items=res.rows.map(r=> res.mapType==="primary"
+    ? {brand:r.brand,warna:r.warna,batch_warna:r.batch_warna,coating:r.coating,th:r.th,mm:r.mm,p:r.p,l:r.l,qty:r.qty}
+    : {name:r.name,product_line:r.product_line,unit:r.unit,qty:r.qty});
+  const btn=$("#doUpload"); btn.disabled=true; btn.innerHTML=`<span class="spin"></span>Mengupload`;
+  try{
+    const r=await fetch("/api/stock/uploads",{method:"POST",headers:{"content-type":"application/json"},
+      body:JSON.stringify({filename:PARSED.filename,sheet_name:SELSHEET,uploaded_by:actor(),note:$("#upNote").value.trim()||null,items})});
+    const j=await r.json();
+    if(!r.ok){ toast(j.error||"Gagal upload.","err"); btn.disabled=false; btn.textContent="Konfirmasi Upload"; if((j.error||"").includes("Muat ulang")) refreshAll(); return; }
+    toast(`Upload berhasil — ${j.upload.row_count} baris.`+(j.archived_upload_id?` Periode lama diarsipkan.`:""),"ok");
+    $("#file").value=""; $("#preview").innerHTML=""; PARSED=null;
+    refreshAll();
+  }catch{ toast("Gagal terhubung.","err"); btn.disabled=false; btn.textContent="Konfirmasi Upload"; }
+}
+
+// ══ summary + cards ═══════════════════════════════════════════════════════════
+let SUMMARY={upload:null,items:[],totals:{}};
+async function loadSummary(){
+  try{ const r=await fetch("/api/stock/summary"); if(r.status===503){toast("Database tidak tersedia.","err");return;} SUMMARY=await r.json(); }catch{ return; }
+  // build reconciliation key map
+  LIVEKEYS={};
+  for(const i of SUMMARY.items){ LIVEKEYS[itemKey(i)]=i.available; }
+  const u=SUMMARY.upload;
+  $("#dataPer").textContent=u?`Data per ${wib(u.created_at)} · ${u.filename||"tanpa nama"}${u.sheet_name?` · ${u.sheet_name}`:""}`:"Belum ada data stok";
+  if(PARSED) renderPreview(); // refresh reconciliation column
+}
+function itemById(id){ return SUMMARY.items.find(x=>eq(x.id,id)); }
+function availOf(id){ const i=itemById(id); return i?i.available:null; }
+
+// Card 2 — verify queue
+async function loadQueue(){
+  let rows=[];
+  try{ const r=await fetch("/api/stock/bookings?status=overbooked"); rows=(await r.json()).bookings||[]; }catch{}
+  $("#vqCount").textContent=rows.length;
+  if(rows.length===0){ $("#vqBody").innerHTML=`<div class="empty">Tidak ada yang menunggu verifikasi. 👍</div>`; return; }
+  $("#vqBody").innerHTML=`<table><thead><tr><th>Produk</th><th>Sales</th><th>Qty</th><th>Customer</th><th>Tersedia</th><th>Umur</th><th>Waktu</th><th></th></tr></thead>
+    <tbody>${rows.map(b=>{
+      const av=availOf(b.item_id);
+      const lama=b.long?`<span class="chip lama">LAMA</span>`:"";
+      const age=b.running?dur(ageSec(b.created_at)):dur(b.duration_seconds);
+      return `<tr>
+        <td>${esc(nameOf(b.item_id))}</td><td>${esc(b.rep_name)}</td><td>${NF.format(b.qty)}</td><td>${esc(b.customer_name)}</td>
+        <td class="avail ${av!=null&&av<0?"neg":""}">${av!=null?NF.format(av):"—"}</td>
+        <td><span class="chip age" data-age="${b.running?b.created_at:''}">${age}</span>${lama}</td>
+        <td>${wib(b.created_at)}</td>
+        <td style="white-space:nowrap">
+          <button class="btn approve mini" data-approve="${b.id}">Setujui</button>
+          <button class="btn danger mini" data-reject="${b.id}">Tolak</button>
+        </td></tr>`;
+    }).join("")}</tbody></table>`;
+  $("#vqBody").querySelectorAll("[data-approve]").forEach(x=>x.addEventListener("click",()=>verify(x.getAttribute("data-approve"),"approve")));
+  $("#vqBody").querySelectorAll("[data-reject]").forEach(x=>x.addEventListener("click",()=>verify(x.getAttribute("data-reject"),"reject")));
+}
+function nameOf(id){ const i=itemById(id); return i?i.name:("#"+id); }
+async function verify(id,action){
+  if(!requireActor()) return;
+  if(!confirm(action==="approve"?"Setujui booking overbook ini?":"Tolak booking ini? Stok akan dikembalikan.")) return;
+  try{
+    const r=await fetch(`/api/stock/bookings/${id}/verify`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action,actor:actor()})});
+    const j=await r.json();
+    if(!r.ok){ toast(j.error||"Gagal.","err"); refreshAll(); return; }
+    toast(action==="approve"?"Disetujui.":"Ditolak — stok dikembalikan.","ok");
+    refreshAll();
+  }catch{ toast("Gagal terhubung.","err"); }
+}
+
+// Card 3 — tracker
+async function loadTracker(){
+  let d={reps:[]};
+  try{ const r=await fetch("/api/stock/rep-stats"); d=await r.json(); }catch{}
+  if(!d.reps||d.reps.length===0){ $("#trackBody").innerHTML=`<div class="empty">Belum ada booking untuk dianalisis.</div>`; return; }
+  $("#trackBody").innerHTML=`<table><thead><tr><th>Sales</th><th>Total</th><th>Lama</th><th>Rata² Durasi</th><th>Selesai</th><th>Batal/Tolak</th><th>Hangus</th><th>Aktif</th></tr></thead>
+    <tbody>${d.reps.map(r=>{
+      const lamaCls=r.long_count>0?'style="color:#b45309;font-weight:800"':"";
+      const activeLama=r.active_long_now>0?`<span class="reddot"></span>`:"";
+      return `<tr>
+        <td>${esc(r.rep_name)}</td><td>${r.total}</td>
+        <td ${lamaCls}>${r.long_count} · ${NF.format(r.long_pct)}%</td>
+        <td>${NF.format(r.avg_duration_hours)} j</td>
+        <td>${r.outcomes.selesai}</td>
+        <td>${r.outcomes.dibatalkan+r.outcomes.ditolak}</td>
+        <td>${r.outcomes.hangus}</td>
+        <td>${r.active_now}${activeLama}</td></tr>`;
+    }).join("")}</tbody></table>`;
+}
+
+// Card 4 — all bookings
+let ALLFILTER="";
+const STATUSES=["confirmed","overbooked","approved","rejected","cancelled","completed"];
+function renderStFilters(){
+  $("#stFilters").innerHTML=[["","Semua"],...STATUSES.map(s=>[s,STLABEL[s]])].map(([v,l])=>
+    `<span class="fchip ${ALLFILTER===v?"on":""}" data-f="${v}">${l}</span>`).join("");
+  $("#stFilters").querySelectorAll("[data-f]").forEach(c=>c.addEventListener("click",()=>{ ALLFILTER=c.getAttribute("data-f"); renderStFilters(); loadAll(); }));
+}
+async function loadAll(){
+  let rows=[];
+  try{ const r=await fetch("/api/stock/bookings"+(ALLFILTER?`?status=${ALLFILTER}`:"")); rows=(await r.json()).bookings||[]; }catch{}
+  if(rows.length===0){ $("#allBody").innerHTML=`<div class="empty">Tidak ada booking.</div>`; return; }
+  $("#allBody").innerHTML=`<table><thead><tr><th>Produk</th><th>Sales</th><th>Qty</th><th>Customer</th><th>Status</th><th>Umur/Durasi</th><th>Waktu</th><th></th></tr></thead>
+    <tbody>${rows.map(b=>{
+      const canDone=["confirmed","approved"].includes(b.status);
+      const canCancel=["confirmed","overbooked","approved"].includes(b.status);
+      const lama=b.long?`<span class="chip lama">LAMA</span>`:"";
+      const ageTxt=b.running?dur(ageSec(b.created_at)):`${dur(b.duration_seconds)} · ${b.outcome}`;
+      return `<tr>
+        <td>${esc(nameOf(b.item_id))}</td><td>${esc(b.rep_name)}</td><td>${NF.format(b.qty)}</td><td>${esc(b.customer_name)}</td>
+        <td><span class="chip st-${b.status}">${STLABEL[b.status]||b.status}</span></td>
+        <td><span class="chip age" data-age="${b.running?b.created_at:''}">${ageTxt}</span>${lama}</td>
+        <td>${wib(b.created_at)}</td>
+        <td style="white-space:nowrap">
+          ${canDone?`<button class="btn mini" data-done="${b.id}">Selesai</button>`:""}
+          ${canCancel?`<button class="btn danger mini" data-cancel="${b.id}">Batalkan</button>`:""}
+        </td></tr>`;
+    }).join("")}</tbody></table>`;
+  $("#allBody").querySelectorAll("[data-done]").forEach(x=>x.addEventListener("click",()=>complete(x.getAttribute("data-done"))));
+  $("#allBody").querySelectorAll("[data-cancel]").forEach(x=>x.addEventListener("click",()=>cancelBk(x.getAttribute("data-cancel"))));
+}
+async function complete(id){
+  if(!requireActor()) return;
+  if(!confirm("Tandai selesai — pesanan sudah dikirim?")) return;
+  try{
+    const r=await fetch(`/api/stock/bookings/${id}/complete`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({actor:actor()})});
+    const j=await r.json(); if(!r.ok){ toast(j.error||"Gagal.","err"); refreshAll(); return; }
+    toast("Ditandai selesai.","ok"); refreshAll();
+  }catch{ toast("Gagal terhubung.","err"); }
+}
+async function cancelBk(id){
+  if(!requireActor()) return;
+  if(!confirm("Batalkan booking ini? Stok dikembalikan.")) return;
+  try{
+    const r=await fetch(`/api/stock/bookings/${id}/cancel`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({actor:actor()})});
+    const j=await r.json(); if(!r.ok){ toast(j.error||"Gagal.","err"); refreshAll(); return; }
+    toast("Dibatalkan.","ok"); refreshAll();
+  }catch{ toast("Gagal terhubung.","err"); }
+}
+
+// Card 5 — upload history + archived view
+async function loadHistory(){
+  let rows=[];
+  try{ const r=await fetch("/api/stock/uploads?limit=20"); rows=(await r.json()).uploads||[]; }catch{}
+  if(rows.length===0){ $("#histBody").innerHTML=`<div class="empty">Belum ada upload.</div>`; return; }
+  $("#histBody").innerHTML=`<table><thead><tr><th>File</th><th>Sheet</th><th>Oleh</th><th>Waktu</th><th>Baris</th><th>Status</th><th></th></tr></thead>
+    <tbody>${rows.map(u=>`<tr>
+      <td>${esc(u.filename||"—")}</td><td>${esc(u.sheet_name||"—")}</td><td>${esc(u.uploaded_by||"—")}</td>
+      <td>${wib(u.created_at)}</td><td>${u.row_count}</td>
+      <td><span class="chip ${u.status==="active"?"st-confirmed":"st-cancelled"}">${u.status==="active"?"Aktif":"Diarsipkan"}</span></td>
+      <td>${u.status==="archived"?`<button class="btn ghost mini" data-view="${u.id}">Lihat</button>`:""}</td>
+    </tr>`).join("")}</tbody></table>`;
+  $("#histBody").querySelectorAll("[data-view]").forEach(x=>x.addEventListener("click",()=>viewArchive(x.getAttribute("data-view"))));
+}
+async function viewArchive(id){
+  $("#archivePanel").innerHTML=`<div class="empty">Memuat periode…</div>`;
+  try{
+    const r=await fetch(`/api/stock/uploads/${id}`); const j=await r.json();
+    if(!r.ok){ $("#archivePanel").innerHTML=`<div class="empty">${esc(j.error||"Gagal.")}</div>`; return; }
+    ARCHIVE_ITEMS=j.items;
+    const itemsHtml=j.items.map(i=>{
+      const neg=i.available<0;
+      return `<tr class="itemrow" data-riw="${i.id}">
+        <td>${esc(i.product_line||"—")}</td><td>${esc(i.warna||i.name)}</td>
+        <td style="text-align:right">${NF.format(i.qty_initial)}</td>
+        <td style="text-align:right"><span class="avail ${neg?"neg":""}">${NF.format(i.available)}</span>${neg?'<span class="badge">OVERBOOKED</span>':""}</td></tr>`;
+    }).join("");
+    const bkHtml=j.bookings.map(b=>`<tr class="${["cancelled","rejected"].includes(b.status)?"rev":""}">
+      <td>${esc(archName(b.item_id))}</td><td>${esc(b.rep_name)}</td><td>${NF.format(b.qty)}</td><td>${esc(b.customer_name)}</td>
+      <td><span class="chip st-${b.status}">${STLABEL[b.status]||b.status}</span></td>
+      <td>${dur(b.duration_seconds)} · ${b.outcome}</td><td>${wib(b.created_at)}</td></tr>`).join("");
+    $("#archivePanel").innerHTML=`
+      <div class="body" style="border-top:1px solid var(--line)">
+        <div class="metaline"><b>${esc(j.upload.filename||"—")}</b> · diarsipkan ${wib(j.upload.archived_at)} · read-only</div>
+        <div class="scrollx"><table><thead><tr><th>Brand</th><th>Produk</th><th style="text-align:right">Stok awal</th><th style="text-align:right">Sisa akhir</th></tr></thead><tbody>${itemsHtml}</tbody></table></div>
+        <h2 style="background:none;border:none;padding:14px 0 6px;font-size:13px">Booking periode ini</h2>
+        <div class="scrollx"><table><thead><tr><th>Produk</th><th>Sales</th><th>Qty</th><th>Customer</th><th>Status</th><th>Durasi</th><th>Waktu</th></tr></thead><tbody>${bkHtml||`<tr><td colspan="7" class="empty">Tidak ada booking.</td></tr>`}</tbody></table></div>
+        <div style="margin-top:10px"><button class="btn ghost" id="closeArch">Tutup periode</button></div>
+      </div>`;
+    $("#closeArch").addEventListener("click",()=>$("#archivePanel").innerHTML="");
+    $("#archivePanel").querySelectorAll("[data-riw]").forEach(x=>x.addEventListener("click",()=>openRiwayat(x.getAttribute("data-riw"))));
+  }catch{ $("#archivePanel").innerHTML=`<div class="empty">Gagal terhubung.</div>`; }
+}
+let ARCHIVE_ITEMS=[];
+function archName(id){ const i=ARCHIVE_ITEMS.find(x=>eq(x.id,id)); return i?(i.name||i.warna):("#"+id); }
+
+// ── Riwayat modal (shared render — identical to sales page) ────────────────────
+async function openRiwayat(itemId){
+  $("#rwModal").innerHTML=`<div class="empty">Memuat riwayat…</div>`; $("#rwBg").classList.add("on");
+  try{
+    const r=await fetch(`/api/stock/items/${itemId}/riwayat`); const j=await r.json();
+    if(!r.ok){ $("#rwModal").innerHTML=`<div class="empty">${esc(j.error||"Gagal.")}</div>`; return; }
+    $("#rwModal").innerHTML=renderRiwayat(j);
+    $("#rwClose").addEventListener("click",()=>$("#rwBg").classList.remove("on"));
+  }catch{ $("#rwModal").innerHTML=`<div class="empty">Gagal terhubung.</div>`; }
+}
+$("#rwBg").addEventListener("click",e=>{ if(e.target.id==="rwBg") $("#rwBg").classList.remove("on"); });
+function renderRiwayat(j){
+  const active=j.upload&&j.upload.status==="active";
+  const periodLabel=active?"Periode aktif":(j.upload?`Diarsipkan ${wib(j.upload.archived_at)}`:"—");
+  const rows=j.events.map(ev=>{
+    if(ev.type==="upload") return `<tr><td colspan="4"><b>Stok awal</b> · ${wib(ev.at)}</td><td class="sisa">${NF.format(ev.sisa)}</td></tr>`;
+    const b=ev.booking;
+    const stamps=[b.completed_at?`selesai ${wib(b.completed_at)}`:"",b.verified_at?`verif ${wib(b.verified_at)}`:"",b.cancelled_at?`batal ${wib(b.cancelled_at)}`:""].filter(Boolean).join(" · ");
+    const lama=b.long?`<span class="chip lama">LAMA</span>`:"";
+    return `<tr class="${ev.reversed?"rev":""}">
+      <td>${esc(b.rep_name)}${stamps?`<div class="sub2">${esc(stamps)}</div>`:""}</td>
+      <td>−${NF.format(b.qty)}</td><td>${esc(b.customer_name||"—")}</td>
+      <td><span class="chip st-${b.status}">${STLABEL[b.status]||b.status}</span> <span class="chip age">${dur(b.duration_seconds)}</span>${lama}</td>
+      <td class="sisa">${NF.format(ev.sisa)}</td></tr>`;
+  }).join("");
+  return `<h3>${esc(j.item.name)}</h3><p class="mp">${periodLabel}${j.upload&&j.upload.filename?` · ${esc(j.upload.filename)}`:""}</p>
+    <div class="scrollx"><table><thead><tr><th>Sales</th><th>Qty</th><th>Customer</th><th>Status</th><th style="text-align:right">Sisa</th></tr></thead><tbody>${rows}</tbody></table></div>
+    ${active?`<div class="foot">Sisa akhir = Tersedia saat ini.</div>`:""}
+    <div class="actions"><button class="btn" id="rwClose">Tutup</button></div>`;
+}
+
+// live age tick
+setInterval(()=>{ document.querySelectorAll(".chip.age[data-age]").forEach(el=>{ const iso=el.getAttribute("data-age"); if(iso) el.textContent=dur(ageSec(iso)); }); },60000);
+
+// ── refresh all + poll ────────────────────────────────────────────────────────
+async function refreshAll(){ await loadSummary(); await Promise.all([loadQueue(),loadTracker(),loadAll(),loadHistory()]); }
+renderStFilters();
+refreshAll();
+setInterval(refreshAll,30000);
+</script>
+</body>
+</html>

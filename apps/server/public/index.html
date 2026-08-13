@@ -191,6 +191,20 @@
           <p>Live pipeline view — Band A/B/C progress bars, P1/P2/P3 breakdown, active-project leaderboard, and recent activity feed.</p>
           <span class="go" style="color:#fdba74;">View dashboard →</span>
         </a>
+        <a class="card" href="/stock" style="border-color:rgba(21,122,70,.35);">
+          <span class="stripe" style="background:linear-gradient(180deg,#157a46,#0f5c34);"></span>
+          <span class="tag" style="color:#6ee7a8;">Stok · Sales</span>
+          <h3>Stok — Sales</h3>
+          <p>Lihat stok tersedia &amp; booking langsung.</p>
+          <span class="go" style="color:#6ee7a8;"><span data-stock-line="sales">Stok gudang</span> →</span>
+        </a>
+        <a class="card" href="/stock-ppic" style="border-color:rgba(21,122,70,.35);">
+          <span class="stripe" style="background:linear-gradient(180deg,#157a46,#bb9457);"></span>
+          <span class="tag" style="color:#6ee7a8;">Stok · PPIC</span>
+          <h3>Stok — PPIC</h3>
+          <p>Upload stock check &amp; verifikasi overbooking.</p>
+          <span class="go" style="color:#6ee7a8;"><span data-stock-line="ppic">Stok gudang</span> →</span>
+        </a>
       </div>
     </div>
     <footer>
@@ -200,5 +214,33 @@
       &nbsp;·&nbsp;
       <a href="/api/export/database.zip" style="color:var(--gold);text-decoration:none;font-weight:600;">⬇ Export seluruh database (ZIP)</a>
     </footer>
+    <script>
+      // Live inventory glance for the two Stok cards (§7.3). Single fetch on load;
+      // additive — leaves the default "Stok gudang" text on any error, silent.
+      (function () {
+        fetch("/api/stock/summary")
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (d) {
+            if (!d) return;
+            var sales = document.querySelector('[data-stock-line="sales"]');
+            var ppic = document.querySelector('[data-stock-line="ppic"]');
+            if (!d.upload) {
+              if (sales) sales.textContent = "Belum ada data stok";
+              if (ppic) ppic.textContent = "Belum ada data stok";
+              return;
+            }
+            var per = new Intl.DateTimeFormat("id-ID", { day: "2-digit", month: "short", timeZone: "Asia/Jakarta" })
+              .format(new Date(d.upload.created_at));
+            var t = d.totals || {};
+            if (sales) sales.textContent = (t.items || 0) + " item · " + (t.items_available || 0) + " tersedia · per " + per;
+            if (ppic) {
+              var pend = t.pending_overbooked || 0;
+              ppic.textContent = pend + " menunggu verifikasi · per " + per;
+              if (pend > 0) ppic.style.color = "#e8a86a";
+            }
+          })
+          .catch(function () { /* stay silent — cards keep their default text */ });
+      })();
+    </script>
   </body>
 </html>

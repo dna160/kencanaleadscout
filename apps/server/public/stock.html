@@ -1,0 +1,473 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Stok &amp; Booking</title>
+<style>
+  /* Shared UI system (PRD §7) — mobile-first at 380px */
+  :root{
+    --bg:#f2f4f7; --card:#fff; --ink:#17233b; --muted:#6b7280; --line:#e5e7eb;
+    --accent:#157a46; --danger:#c03c2b;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{font-family:var(--sans);background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased;padding-bottom:40px}
+  header{position:sticky;top:0;z-index:20;background:var(--ink);color:#fff;padding:12px 16px;box-shadow:0 2px 10px rgba(0,0,0,.12)}
+  .hrow{display:flex;align-items:center;justify-content:space-between;gap:10px;max-width:960px;margin:0 auto}
+  header h1{font-size:18px;margin:0;font-weight:700;letter-spacing:.2px}
+  header .sub{font-size:12px;color:#c7cfde;margin-top:2px}
+  header a.pplink{color:#ffd27a;text-decoration:none;font-size:13px;font-weight:600;white-space:nowrap}
+  .wrap{max-width:960px;margin:0 auto;padding:14px 16px}
+  .idbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+  label.fld{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted);font-weight:600}
+  select,input[type=text],input[type=number],textarea{font:inherit;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink);min-height:44px}
+  select{min-width:180px}
+  .banner{background:#fef3c7;color:#7a4f08;border:1px solid #fde68a;border-radius:12px;padding:10px 14px;font-size:13px;display:flex;gap:10px;align-items:flex-start;margin-bottom:12px;line-height:1.45}
+  .banner button{margin-left:auto;background:none;border:none;color:#7a4f08;font-size:18px;cursor:pointer;line-height:1;padding:0 4px}
+  .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+  .toolbar input[type=text]{flex:1;min-width:140px}
+  .chkline{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);cursor:pointer;user-select:none;min-height:44px}
+  .chkline input{width:18px;height:18px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden;margin-bottom:14px}
+  .card h2{font-size:14px;margin:0;padding:12px 14px;border-bottom:1px solid var(--line);background:#fafbfc;display:flex;justify-content:space-between;align-items:center;gap:8px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:700;background:#fafbfc}
+  tr.itemrow{cursor:pointer}
+  tr.itemrow:hover{background:#f7fafc}
+  .warna b{font-size:13px}
+  .sub2{color:var(--muted);font-size:11px;margin-top:2px}
+  .avail{font-weight:800;font-size:14px;white-space:nowrap}
+  .avail.neg{color:var(--danger)}
+  .m2{color:var(--muted);font-size:11px;font-weight:500}
+  .badge{display:inline-block;font-size:10px;font-weight:800;letter-spacing:.4px;padding:2px 6px;border-radius:6px;margin-left:6px;background:#ede9fe;color:#6d28d9}
+  .chip{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;white-space:nowrap}
+  .chip.age{background:#f3f4f6;color:#6b7280}
+  .st-confirmed{background:#dcfce7;color:#15803d}
+  .st-overbooked{background:#fef3c7;color:#b45309}
+  .st-approved{background:#ede9fe;color:#6d28d9}
+  .st-rejected{background:#fee2e2;color:#b91c1c}
+  .st-cancelled{background:#f3f4f6;color:#6b7280}
+  .st-completed{background:#dbeafe;color:#1d4ed8}
+  button.btn{background:var(--accent);color:#fff;border:none;border-radius:10px;padding:0 14px;min-height:40px;font-weight:700;font-size:13px;cursor:pointer}
+  button.btn:disabled{opacity:.55;cursor:default}
+  button.btn.ghost{background:#fff;color:var(--ink);border:1px solid var(--line)}
+  button.btn.danger{background:#fff;color:var(--danger);border:1px solid #f3c9c2}
+  button.mini{padding:0 10px;min-height:34px;font-size:12px;border-radius:8px}
+  .empty{padding:26px 18px;text-align:center;color:var(--muted);font-size:14px;line-height:1.5}
+  .empty a{color:var(--accent);font-weight:700}
+  /* modal */
+  .modal-bg{position:fixed;inset:0;background:rgba(15,23,42,.5);display:none;align-items:flex-end;justify-content:center;z-index:50;padding:0}
+  .modal-bg.on{display:flex}
+  .modal{background:#fff;width:100%;max-width:560px;border-radius:16px 16px 0 0;max-height:92vh;overflow:auto;padding:16px}
+  @media(min-width:560px){.modal-bg{align-items:center;padding:16px}.modal{border-radius:16px}}
+  .modal h3{margin:0 0 4px;font-size:17px}
+  .modal .mp{color:var(--muted);font-size:12px;margin:0 0 14px}
+  .modal .actions{display:flex;gap:10px;margin-top:16px}
+  .modal .actions .btn{flex:1;min-height:46px}
+  .big-avail{font-size:15px;font-weight:800;margin:10px 0}
+  .big-avail.neg{color:var(--danger)}
+  .hint{font-size:12px;color:#b45309;background:#fef3c7;border-radius:8px;padding:6px 10px;margin-top:6px}
+  .modal label.fld{margin-top:12px;color:var(--ink)}
+  .modal input,.modal textarea{width:100%}
+  .rev{text-decoration:line-through;opacity:.6}
+  .sisa{text-align:right;font-weight:700;white-space:nowrap}
+  .foot{font-size:12px;color:var(--muted);padding:10px 4px 0}
+  /* toast */
+  #toast{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:80;display:flex;flex-direction:column;gap:8px;width:calc(100% - 32px);max-width:420px}
+  .toast{background:var(--ink);color:#fff;padding:12px 14px;border-radius:12px;font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,.2);animation:tin .25s ease}
+  .toast.ok{background:#166534}.toast.warn{background:#b45309}.toast.err{background:var(--danger)}
+  @keyframes tin{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+  @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+  .spin{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.5);border-top-color:#fff;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px;margin-right:6px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<header>
+  <div class="hrow">
+    <div>
+      <h1>Stok &amp; Booking</h1>
+      <div class="sub" id="dataPer">Memuat…</div>
+    </div>
+    <a class="pplink" href="/stock-ppic">PPIC ↗</a>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="idbar">
+    <label class="fld" style="flex:1;min-width:200px">Atas nama (sales)
+      <select id="repSel"><option value="">— Pilih nama —</option></select>
+    </label>
+    <label class="fld" id="repFreeWrap" style="display:none;flex:1;min-width:200px">Nama sales
+      <input type="text" id="repFree" placeholder="Ketik nama" />
+    </label>
+  </div>
+
+  <div class="banner" id="banner" style="display:none">
+    <span>Stok live untuk sales. Untuk qty besar atau PO yang sudah fix, wajib konfirmasi ulang ke tim PPIC.</span>
+    <button id="bannerX" title="Tutup">×</button>
+  </div>
+
+  <div id="mainArea"></div>
+
+  <div class="card" id="mineCard" style="display:none">
+    <h2>Booking Saya <span class="chip age" id="mineCount">0</span></h2>
+    <div id="mineBody"></div>
+  </div>
+</div>
+
+<!-- Booking modal -->
+<div class="modal-bg" id="bkBg">
+  <div class="modal" id="bkModal"></div>
+</div>
+<!-- Riwayat modal -->
+<div class="modal-bg" id="rwBg">
+  <div class="modal" id="rwModal"></div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+"use strict";
+const $ = (s,r=document)=>r.querySelector(s);
+const NF = new Intl.NumberFormat("id-ID",{maximumFractionDigits:2});
+const eq = (a,b)=>String(a)===String(b);
+
+// ── WIB + duration formatting (R11, R14) ──────────────────────────────────────
+function wib(iso,withDate=true){
+  if(!iso) return "—";
+  const d=new Date(iso);
+  const opt=withDate
+    ? {day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",hour12:false,timeZone:"Asia/Jakarta"}
+    : {hour:"2-digit",minute:"2-digit",hour12:false,timeZone:"Asia/Jakarta"};
+  return new Intl.DateTimeFormat("id-ID",opt).format(d).replace(/\./g,":").replace(/:(\w{3}):/," $1 ");
+}
+function wibShort(iso){ // dd MMM
+  if(!iso) return "—";
+  return new Intl.DateTimeFormat("id-ID",{day:"2-digit",month:"short",timeZone:"Asia/Jakarta"}).format(new Date(iso));
+}
+// Duration: 38m / 5j / 2h 3j  (m=menit, j=jam, h=hari)
+function dur(sec){
+  sec=Math.max(0,Math.floor(sec));
+  const d=Math.floor(sec/86400), h=Math.floor((sec%86400)/3600), m=Math.floor((sec%3600)/60);
+  if(d>0) return `${d}h ${h}j`;
+  if(h>0) return `${h}j`;
+  return `${m}m`;
+}
+// Live age for a running booking from server created_at (client tick, R14/§8.9)
+function ageSec(iso){ return (Date.now()-Date.parse(iso))/1000; }
+
+function toast(msg,kind){
+  const t=document.createElement("div");
+  t.className="toast"+(kind?(" "+kind):"");
+  t.textContent=msg;
+  $("#toast").appendChild(t);
+  setTimeout(()=>t.remove(),3500);
+}
+
+// ── identity (persist stk_rep) ────────────────────────────────────────────────
+let REPS=[];
+function selectedRep(){
+  const v=$("#repSel").value;
+  if(v){ const r=REPS.find(x=>eq(x.value,v)); return {key:v, name:r?r.name:v}; }
+  const free=$("#repFree").value.trim();
+  if(free) return {key:null,name:free};
+  return null;
+}
+async function loadReps(){
+  try{
+    const r=await fetch("/api/sales-reps"); const j=await r.json();
+    REPS=(j.sales_reps||[]).map(x=>({
+      value:x.value||((x.team||"retail")+":"+x.id),
+      name:x.full_name||x.name||"—",
+      team:x.team||"retail",
+    }));
+  }catch{ REPS=[]; }
+  const sel=$("#repSel");
+  if(REPS.length===0){ // §8.6 registry empty → free-typed fallback
+    $("#repFreeWrap").style.display="";
+    sel.parentElement.style.display="none";
+  }else{
+    const groups={retail:"Retail",project:"Project",distributor:"Distributor"};
+    const byTeam={};
+    for(const r of REPS){ (byTeam[r.team]=byTeam[r.team]||[]).push(r); }
+    let html='<option value="">— Pilih nama —</option>';
+    for(const t of Object.keys(groups)){
+      if(!byTeam[t]) continue;
+      html+=`<optgroup label="${groups[t]}">`+byTeam[t].map(r=>`<option value="${r.value}">${esc(r.name)}</option>`).join("")+"</optgroup>";
+    }
+    // any other teams
+    for(const t of Object.keys(byTeam)){ if(groups[t]) continue;
+      html+=`<optgroup label="${esc(t)}">`+byTeam[t].map(r=>`<option value="${r.value}">${esc(r.name)}</option>`).join("")+"</optgroup>"; }
+    sel.innerHTML=html;
+  }
+  const saved=localStorage.getItem("stk_rep");
+  if(saved){ sel.value=saved; if(sel.value!==saved){ $("#repFree").value=saved; } }
+  onRepChange();
+}
+$("#repSel")?.addEventListener("change",()=>{ localStorage.setItem("stk_rep",$("#repSel").value); onRepChange(); });
+$("#repFree")?.addEventListener("input",()=>{ localStorage.setItem("stk_rep",$("#repFree").value.trim()); onRepChange(); });
+function onRepChange(){
+  const rep=selectedRep();
+  $("#mineCard").style.display=rep?"":"none";
+  if(rep) loadMine();
+}
+function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+// ── banner dismissal (persisted) ──────────────────────────────────────────────
+if(localStorage.getItem("stk_banner_x")!=="1"){ $("#banner").style.display=""; }
+$("#bannerX").addEventListener("click",()=>{ $("#banner").style.display="none"; localStorage.setItem("stk_banner_x","1"); });
+
+// ── state + fetch ─────────────────────────────────────────────────────────────
+let SUMMARY={upload:null,items:[],totals:{}};
+const flt={q:"",brand:"",hideZero:true,onlyOver:false};
+
+async function loadSummary(){
+  try{
+    const r=await fetch("/api/stock/summary");
+    if(r.status===503){ toast("Database tidak tersedia.","err"); return; }
+    SUMMARY=await r.json();
+  }catch{ return; }
+  renderHeader(); renderMain();
+}
+function renderHeader(){
+  const u=SUMMARY.upload;
+  $("#dataPer").textContent = u
+    ? `Data per ${wib(u.created_at)} · ${u.filename||"tanpa nama"}`
+    : "Belum ada data stok";
+}
+
+function renderMain(){
+  const host=$("#mainArea");
+  if(!SUMMARY.upload){
+    host.innerHTML=`<div class="card"><div class="empty">Belum ada data stok.<br>Minta tim PPIC upload file Excel di halaman <a href="/stock-ppic">PPIC</a>.</div></div>`;
+    return;
+  }
+  const brands=[...new Set(SUMMARY.items.map(i=>i.product_line).filter(Boolean))].sort();
+  const t=SUMMARY.totals;
+  host.innerHTML=`
+    <div class="toolbar">
+      <input type="text" id="q" placeholder="Cari warna / batch / nama…" value="${esc(flt.q)}" />
+      <select id="brand"><option value="">Semua brand</option>${brands.map(b=>`<option ${eq(b,flt.brand)?"selected":""} value="${esc(b)}">${esc(b)}</option>`).join("")}</select>
+      <label class="chkline"><input type="checkbox" id="hz" ${flt.hideZero?"checked":""}/> Sembunyikan stok 0</label>
+      <label class="chkline"><input type="checkbox" id="oo" ${flt.onlyOver?"checked":""}/> Hanya overbooked</label>
+    </div>
+    <div class="card">
+      <h2>Inventaris
+        <span class="chip age">${t.items_available||0} tersedia · ${t.items||0} item${t.pending_overbooked?` · ${t.pending_overbooked} overbook`:""}</span>
+      </h2>
+      <div style="overflow-x:auto"><table>
+        <thead><tr><th>Brand</th><th>Warna</th><th>Spec</th><th style="text-align:right">Tersedia</th><th></th></tr></thead>
+        <tbody id="tbody"></tbody>
+      </table></div>
+    </div>`;
+  $("#q").addEventListener("input",e=>{flt.q=e.target.value;renderRows();});
+  $("#brand").addEventListener("change",e=>{flt.brand=e.target.value;renderRows();});
+  $("#hz").addEventListener("change",e=>{flt.hideZero=e.target.checked;renderRows();});
+  $("#oo").addEventListener("change",e=>{flt.onlyOver=e.target.checked;renderRows();});
+  renderRows();
+}
+function visibleItems(){
+  const q=flt.q.trim().toLowerCase();
+  return SUMMARY.items.filter(i=>{
+    if(flt.brand && !eq(i.product_line,flt.brand)) return false;
+    if(flt.onlyOver && !i.overbooked) return false;
+    // zero toggle never hides overbooked/negative rows
+    if(flt.hideZero && i.available===0 && !i.overbooked) return false;
+    if(q){
+      const hay=[i.warna,i.batch_warna,i.name].filter(Boolean).join(" ").toLowerCase();
+      if(!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+function specText(i){
+  const parts=[];
+  if(i.th!=null) parts.push(NF.format(i.th));
+  if(i.mm!=null) parts.push(NF.format(i.mm)+"mm");
+  if(i.p!=null&&i.l!=null) parts.push(`${NF.format(i.p)}×${NF.format(i.l)}`);
+  return parts.join(" · ");
+}
+function renderRows(){
+  const tb=$("#tbody"); if(!tb) return;
+  const rows=visibleItems();
+  if(rows.length===0){ tb.innerHTML=`<tr><td colspan="5" class="empty">Tidak ada produk cocok.</td></tr>`; return; }
+  tb.innerHTML=rows.map(i=>{
+    const sub=[i.batch_warna,i.coating].filter(Boolean).join(" · ");
+    const negCls=i.available<0?"neg":"";
+    const badge=i.available<0?`<span class="badge">OVERBOOKED</span>`:"";
+    const m2=i.available_m2!=null?`<div class="m2">≈ ${NF.format(i.available_m2)} m²</div>`:"";
+    return `<tr class="itemrow" data-id="${i.id}">
+      <td>${esc(i.product_line||"—")}</td>
+      <td class="warna"><b>${esc(i.warna||i.name)}</b>${sub?`<div class="sub2">${esc(sub)}</div>`:""}</td>
+      <td>${esc(specText(i))}</td>
+      <td style="text-align:right"><span class="avail ${negCls}">${NF.format(i.available)} ${esc(i.unit)}</span>${badge}${m2}</td>
+      <td style="text-align:right"><button class="btn mini" data-book="${i.id}">＋ Booking</button></td>
+    </tr>`;
+  }).join("");
+  tb.querySelectorAll("[data-book]").forEach(b=>b.addEventListener("click",e=>{e.stopPropagation();openBooking(b.getAttribute("data-book"));}));
+  tb.querySelectorAll("tr.itemrow").forEach(r=>r.addEventListener("click",()=>openRiwayat(r.getAttribute("data-id"))));
+}
+
+// ── booking modal ─────────────────────────────────────────────────────────────
+function openBooking(itemId){
+  const rep=selectedRep();
+  if(!rep){ toast("Pilih nama sales dulu di atas.","warn"); ($("#repSel")||$("#repFree")).focus(); return; }
+  const i=SUMMARY.items.find(x=>eq(x.id,itemId)); if(!i) return;
+  const neg=i.available<=0;
+  $("#bkModal").innerHTML=`
+    <h3>${esc(i.name)}</h3>
+    <p class="mp">${esc(i.product_line||"")}</p>
+    <div class="big-avail ${neg?"neg":""}">Tersedia ${NF.format(i.available)} ${esc(i.unit)}</div>
+    ${neg?`<div class="hint">Booking tetap bisa — akan masuk antrean verifikasi PPIC.</div>`:""}
+    <label class="fld">Jumlah (${esc(i.unit)})<input type="number" id="bkQty" min="0.01" step="0.01" inputmode="decimal" placeholder="0"/></label>
+    <label class="fld">Customer<input type="text" id="bkCust" placeholder="Nama customer"/></label>
+    <label class="fld">Catatan (opsional)<input type="text" id="bkNote" placeholder="—"/></label>
+    <div class="foot">Atas nama: <b>${esc(rep.name)}</b></div>
+    <div class="actions">
+      <button class="btn ghost" id="bkCancel">Batal</button>
+      <button class="btn" id="bkSubmit">Booking</button>
+    </div>`;
+  $("#bkBg").classList.add("on");
+  $("#bkCancel").addEventListener("click",closeBooking);
+  $("#bkQty").focus();
+  $("#bkSubmit").addEventListener("click",()=>submitBooking(itemId));
+}
+function closeBooking(){ $("#bkBg").classList.remove("on"); }
+$("#bkBg").addEventListener("click",e=>{ if(e.target.id==="bkBg") closeBooking(); });
+
+async function submitBooking(itemId){
+  const rep=selectedRep(); if(!rep) return;
+  const qty=Number($("#bkQty").value);
+  const customer=$("#bkCust").value.trim();
+  const note=$("#bkNote").value.trim();
+  if(!(qty>0)){ toast("Jumlah tidak valid.","err"); return; }
+  if(!customer){ toast("Customer wajib diisi.","err"); return; }
+  const btn=$("#bkSubmit"); btn.disabled=true; btn.innerHTML=`<span class="spin"></span>Menyimpan`;
+  try{
+    const r=await fetch("/api/stock/bookings",{method:"POST",headers:{"content-type":"application/json"},
+      body:JSON.stringify({item_id:itemId,rep_key:rep.key,rep_name:rep.name,qty,customer_name:customer,note:note||null})});
+    const j=await r.json();
+    if(!r.ok){
+      toast(j.error||"Gagal.","err");
+      if((j.error||"").includes("Muat ulang")) loadSummary();
+      btn.disabled=false; btn.textContent="Booking"; return;
+    }
+    closeBooking();
+    toast(j.message, j.booking.status==="overbooked"?"warn":"ok");
+    await loadSummary(); await loadMine();
+  }catch{ toast("Gagal terhubung.","err"); btn.disabled=false; btn.textContent="Booking"; }
+}
+
+// ── Booking Saya ──────────────────────────────────────────────────────────────
+let MINE=[];
+async function loadMine(){
+  const rep=selectedRep(); if(!rep){ MINE=[]; renderMine(); return; }
+  try{
+    const qs=rep.key?`rep_key=${encodeURIComponent(rep.key)}`:"";
+    const r=await fetch("/api/stock/bookings?"+qs);
+    const j=await r.json();
+    // when rep has no key (free-typed), filter client-side by name
+    MINE=(j.bookings||[]).filter(b=>rep.key?true:(b.rep_name||"").toLowerCase()===rep.name.toLowerCase());
+  }catch{ MINE=[]; }
+  renderMine();
+}
+const STLABEL={confirmed:"Terkonfirmasi",overbooked:"Menunggu Verifikasi",approved:"Disetujui (overbook)",rejected:"Ditolak",cancelled:"Dibatalkan",completed:"Selesai"};
+function itemName(id){ const i=SUMMARY.items.find(x=>eq(x.id,id)); return i?i.name:("#"+id); }
+function renderMine(){
+  $("#mineCount").textContent=MINE.length;
+  if(MINE.length===0){ $("#mineBody").innerHTML=`<div class="empty">Belum ada booking.</div>`; return; }
+  $("#mineBody").innerHTML=`<div style="overflow-x:auto"><table>
+    <thead><tr><th>Produk</th><th>Qty</th><th>Customer</th><th>Status</th><th>Umur</th><th>Waktu</th><th></th></tr></thead>
+    <tbody>${MINE.map(b=>{
+      const cancellable=["confirmed","overbooked","approved"].includes(b.status);
+      // sales page: neutral age chip only, NO lama styling (R14)
+      const ageTxt=b.running?dur(ageSec(b.created_at)):dur(b.duration_seconds);
+      return `<tr>
+        <td>${esc(itemName(b.item_id))}</td>
+        <td>${NF.format(b.qty)}</td>
+        <td>${esc(b.customer_name)}</td>
+        <td><span class="chip st-${b.status}">${STLABEL[b.status]||b.status}</span></td>
+        <td><span class="chip age" data-age="${b.running?b.created_at:''}" data-dur="${b.running?'':b.duration_seconds}">${ageTxt}</span></td>
+        <td>${wib(b.created_at)}</td>
+        <td>${cancellable?`<button class="btn danger mini" data-cancel="${b.id}">Batalkan</button>`:""}</td>
+      </tr>`;
+    }).join("")}</tbody></table></div>`;
+  $("#mineBody").querySelectorAll("[data-cancel]").forEach(btn=>btn.addEventListener("click",()=>cancelMine(btn.getAttribute("data-cancel"))));
+}
+async function cancelMine(id){
+  const rep=selectedRep(); if(!rep) return;
+  if(!confirm("Batalkan booking ini?")) return;
+  try{
+    const r=await fetch(`/api/stock/bookings/${id}/cancel`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({actor:rep.name})});
+    const j=await r.json();
+    if(!r.ok){ toast(j.error||"Gagal.","err"); loadMine(); return; }
+    toast("Booking dibatalkan.","ok");
+    await loadSummary(); await loadMine();
+  }catch{ toast("Gagal terhubung.","err"); }
+}
+
+// ── Riwayat Produk modal (shared component — R16) ─────────────────────────────
+async function openRiwayat(itemId){
+  $("#rwModal").innerHTML=`<div class="empty">Memuat riwayat…</div>`;
+  $("#rwBg").classList.add("on");
+  try{
+    const r=await fetch(`/api/stock/items/${itemId}/riwayat`);
+    const j=await r.json();
+    if(!r.ok){ $("#rwModal").innerHTML=`<div class="empty">${esc(j.error||"Gagal.")}</div>`; return; }
+    $("#rwModal").innerHTML=renderRiwayat(j);
+    $("#rwClose").addEventListener("click",()=>$("#rwBg").classList.remove("on"));
+  }catch{ $("#rwModal").innerHTML=`<div class="empty">Gagal terhubung.</div>`; }
+}
+$("#rwBg").addEventListener("click",e=>{ if(e.target.id==="rwBg") $("#rwBg").classList.remove("on"); });
+// Shared render — identical on both pages
+function renderRiwayat(j){
+  const periodLabel=j.upload && j.upload.status==="active" ? "Periode aktif" : (j.upload?`Diarsipkan ${wib(j.upload.archived_at)}`:"—");
+  const active=j.upload && j.upload.status==="active";
+  const rows=j.events.map(ev=>{
+    if(ev.type==="upload"){
+      return `<tr><td colspan="4"><b>Stok awal</b> · ${wib(ev.at)}</td><td class="sisa">${NF.format(ev.sisa)}</td></tr>`;
+    }
+    const b=ev.booking;
+    const stamps=[b.completed_at?`selesai ${wib(b.completed_at)}`:"",b.verified_at?`verif ${wib(b.verified_at)}`:"",b.cancelled_at?`batal ${wib(b.cancelled_at)}`:""].filter(Boolean).join(" · ");
+    const ageChip=b.running
+      ? `<span class="chip age">${dur(b.duration_seconds)}</span>`
+      : `<span class="chip age">${dur(b.duration_seconds)}</span>`;
+    const cls=ev.reversed?"rev":"";
+    return `<tr class="${cls}">
+      <td>${esc(b.rep_name)}${stamps?`<div class="sub2">${esc(stamps)}</div>`:""}</td>
+      <td>−${NF.format(b.qty)}</td>
+      <td>${esc(b.customer_name||"—")}</td>
+      <td><span class="chip st-${b.status}">${STLABEL[b.status]||b.status}</span> ${ageChip}</td>
+      <td class="sisa">${NF.format(ev.sisa)}</td>
+    </tr>`;
+  }).join("");
+  return `
+    <h3>${esc(j.item.name)}</h3>
+    <p class="mp">${periodLabel}${j.upload&&j.upload.filename?` · ${esc(j.upload.filename)}`:""}</p>
+    <div style="overflow-x:auto"><table>
+      <thead><tr><th>Sales</th><th>Qty</th><th>Customer</th><th>Status</th><th style="text-align:right">Sisa</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+    ${active?`<div class="foot">Sisa akhir = Tersedia saat ini.</div>`:""}
+    <div class="actions"><button class="btn" id="rwClose">Tutup</button></div>`;
+}
+
+// ── live age tick (every 60s, no refetch — R14) ───────────────────────────────
+setInterval(()=>{
+  document.querySelectorAll(".chip.age[data-age]").forEach(el=>{
+    const iso=el.getAttribute("data-age");
+    if(iso) el.textContent=dur(ageSec(iso));
+  });
+},60000);
+
+// ── poll every 30s (R10) ──────────────────────────────────────────────────────
+loadReps();
+loadSummary();
+setInterval(loadSummary,30000);
+</script>
+</body>
+</html>
