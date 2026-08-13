@@ -161,6 +161,19 @@ function headerScore(row){
     else if(k.includes("SALDO AKHIR")) n++; }
   return n;
 }
+// A row is a header if it has ≥3 known headers (R9 — skips title blocks), OR it
+// pairs a name/warna column with a qty/saldo column — so a minimal generic file
+// (just "Nama Produk" + "Qty", 2 columns) is still recognized (decision log).
+const NAME_HDRS=new Set(["WARNA","NAMA PRODUK","NAMA","PRODUK","PRODUCT","NAME","ITEM"]);
+const QTY_HDRS=new Set(["QTY","JUMLAH","STOK","STOCK","QUANTITY","SALDO AKHIR (LBR)"]);
+function looksLikeHeader(row){
+  if(headerScore(row)>=3) return true;
+  let hasName=false, hasQty=false;
+  for(const c of row){ const k=norm(c); if(!k) continue;
+    if(NAME_HDRS.has(k)) hasName=true;
+    if(QTY_HDRS.has(k)||k.includes("SALDO AKHIR")) hasQty=true; }
+  return hasName&&hasQty;
+}
 // Locate a column index by trying a list of exact normalized names, then a contains test.
 function findCol(headers,exacts,contains){
   for(let i=0;i<headers.length;i++){ if(exacts.includes(norm(headers[i]))) return i; }
@@ -168,18 +181,21 @@ function findCol(headers,exacts,contains){
   return -1;
 }
 function toNum(v){
+  // id-locale (PRD §8.4): dot = thousands, comma = decimal. Kept byte-identical
+  // in logic to the server's num() so client preview === server re-validation.
   if(v==null||v==="") return null;
   if(typeof v==="number") return isFinite(v)?v:null;
   let s=String(v).trim(); if(!s) return null;
-  const lc=s.lastIndexOf(","),ld=s.lastIndexOf(".");
-  if(lc>-1&&ld>-1){ if(lc>ld) s=s.replace(/\./g,"").replace(",","."); else s=s.replace(/,/g,""); }
-  else if(lc>-1){ const after=s.length-lc-1; s=(after===3&&!/,\d{1,2}$/.test(s))?s.replace(/,/g,""):s.replace(",","."); }
-  s=s.replace(/[^0-9.\-]/g,""); const n=Number(s); return isFinite(n)?n:null;
+  const neg=/^-/.test(s), hasComma=s.includes(","), hasDot=s.includes(".");
+  if(hasComma&&hasDot){ if(s.lastIndexOf(",")>s.lastIndexOf(".")) s=s.replace(/\./g,"").replace(",","."); else s=s.replace(/,/g,""); }
+  else if(hasComma){ const parts=s.split(","); const after=parts[parts.length-1].length; s=(parts.length>2||after===3)?s.replace(/,/g,""):s.replace(",","."); }
+  else if(hasDot){ const parts=s.split("."); const after=parts[parts.length-1].length; if(parts.length>2||after===3) s=s.replace(/\./g,""); }
+  s=s.replace(/[^0-9.]/g,""); const n=Number(s); if(!isFinite(n)) return null; return neg?-n:n;
 }
 // Parse one sheet's 2D rows → structured result, or null if no header detected.
 function parseSheet(rows){
   let hdrIdx=-1;
-  for(let i=0;i<Math.min(10,rows.length);i++){ if(headerScore(rows[i]||[])>=3){ hdrIdx=i; break; } }
+  for(let i=0;i<Math.min(10,rows.length);i++){ if(looksLikeHeader(rows[i]||[])){ hdrIdx=i; break; } }
   if(hdrIdx<0) return null;
   const headers=rows[hdrIdx]||[];
   const col={
@@ -304,8 +320,7 @@ function renderPreview(){
   const first=res.rows.slice(0,15);
   const isPrimary=res.mapType==="primary";
   const rowsHtml=first.map(r=>{
-    const key=isPrimary?structKey(r):genKey(r);
-    const liveKey=isPrimary?itemKeyFromParsed(r):itemKeyFromParsed(r);
+    const liveKey=itemKeyFromParsed(r); // reconciliation match against the active period
     const avail=LIVEKEYS[liveKey];
     const availTxt=avail==null?"":NF.format(avail);
     if(isPrimary){

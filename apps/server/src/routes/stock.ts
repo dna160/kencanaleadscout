@@ -60,20 +60,30 @@ function num(v: unknown): number | null {
   if (typeof v === "number") return Number.isFinite(v) ? v : null;
   let s = str(v);
   if (!s) return null;
-  // If both separators appear, the last one is the decimal separator.
-  const lastComma = s.lastIndexOf(",");
-  const lastDot = s.lastIndexOf(".");
-  if (lastComma > -1 && lastDot > -1) {
-    if (lastComma > lastDot) s = s.replace(/\./g, "").replace(",", ".");
+  const neg = /^-/.test(s);
+  const hasComma = s.includes(",");
+  const hasDot = s.includes(".");
+  // id-locale (PRD §8.4): dot = thousands separator, comma = decimal. When both
+  // appear, the LAST separator is the decimal one. "1.234" → 1234, "1,5" → 1.5.
+  if (hasComma && hasDot) {
+    if (s.lastIndexOf(",") > s.lastIndexOf(".")) s = s.replace(/\./g, "").replace(",", ".");
     else s = s.replace(/,/g, "");
-  } else if (lastComma > -1) {
-    // Comma only → decimal comma if it looks like a decimal, else thousand sep.
-    const after = s.length - lastComma - 1;
-    s = after === 3 && !/,\d{1,2}$/.test(s) ? s.replace(/,/g, "") : s.replace(",", ".");
+  } else if (hasComma) {
+    const parts = s.split(",");
+    const after = parts[parts.length - 1]!.length;
+    // Multiple commas, or a single comma grouping exactly 3 digits → thousands.
+    s = parts.length > 2 || after === 3 ? s.replace(/,/g, "") : s.replace(",", ".");
+  } else if (hasDot) {
+    const parts = s.split(".");
+    const after = parts[parts.length - 1]!.length;
+    // Multiple dots, or a single dot with exactly 3 trailing digits → id-locale
+    // thousands ("1.234" → 1234); otherwise a decimal ("0.35" stays 0.35).
+    if (parts.length > 2 || after === 3) s = s.replace(/\./g, "");
   }
-  s = s.replace(/[^0-9.\-]/g, "");
+  s = s.replace(/[^0-9.]/g, "");
   const n = Number(s);
-  return Number.isFinite(n) ? n : null;
+  if (!Number.isFinite(n)) return null;
+  return neg ? -n : n;
 }
 
 /** Round to at most 2 dp (R8) without trailing-zero noise. */
