@@ -97,6 +97,20 @@
     </div>
   </div>
 
+  <!-- Card 1b — End of day: export movements + new stock check -->
+  <div class="card">
+    <h2>Akhir Hari <span class="chip age" id="eodMeta">—</span></h2>
+    <div class="body">
+      <p class="metaline">Tutup hari: <b>export laporan pergerakan</b> (Ringkasan + Pergerakan stok + daftar Booking, satu file Excel) untuk arsip,
+        lalu <b>buat file stock check baru</b> berisi sisa stok saat ini — sesuaikan dengan hitungan fisik (mis. produksi baru dari pabrik) lalu upload untuk memulai periode baru.</p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button class="btn ghost" id="expEod">⬇ Export Laporan Akhir Hari (XLSX)</button>
+        <button class="btn" id="genCheck">＋ Buat Stock Check Baru (XLSX)</button>
+      </div>
+      <p class="metaline" style="margin-top:10px">File stock check baru memakai format PPIC yang sama (BRAND/WARNA/…/SALDO AKHIR) sehingga langsung bisa di-upload kembali di kartu di atas.</p>
+    </div>
+  </div>
+
   <!-- Card 2 — Verify queue -->
   <div class="card">
     <h2>Antrean Verifikasi <span class="chip st-overbooked" id="vqCount">0</span></h2>
@@ -140,8 +154,12 @@ function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;"
 function wib(iso){ if(!iso) return "—"; return new Intl.DateTimeFormat("id-ID",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",hour12:false,timeZone:"Asia/Jakarta"}).format(new Date(iso)).replace(/\./g,":"); }
 function dur(sec){ sec=Math.max(0,Math.floor(sec)); const d=Math.floor(sec/86400),h=Math.floor((sec%86400)/3600),m=Math.floor((sec%3600)/60); if(d>0)return `${d}h ${h}j`; if(h>0)return `${h}j`; return `${m}m`; }
 function ageSec(iso){ return (Date.now()-Date.parse(iso))/1000; }
+function round2(n){ return Math.round((Number(n)||0)*100)/100; }
+function dateStamp(){ return new Intl.DateTimeFormat("en-CA",{year:"numeric",month:"2-digit",day:"2-digit",timeZone:"Asia/Jakarta"}).format(new Date()); } // yyyy-mm-dd WIB
+function nowWib(){ return wib(new Date().toISOString()); }
 function toast(msg,kind){ const t=document.createElement("div"); t.className="toast"+(kind?(" "+kind):""); t.textContent=msg; $("#toast").appendChild(t); setTimeout(()=>t.remove(),3500); }
 const STLABEL={confirmed:"Terkonfirmasi",overbooked:"Menunggu Verifikasi",approved:"Disetujui (overbook)",rejected:"Ditolak",cancelled:"Dibatalkan",completed:"Selesai"};
+const DEDUCTING_SET=new Set(["confirmed","overbooked","approved","completed"]); // statuses that count against stock (R4/R5/R6/R12)
 
 // petugas persist
 $("#actor").value=localStorage.getItem("stk_actor")||"";
@@ -382,6 +400,141 @@ async function doUpload(){
   }catch{ toast("Gagal terhubung.","err"); btn.disabled=false; btn.textContent="Konfirmasi Upload"; }
 }
 
+// ══ Akhir Hari — export movements report + generate a fresh stock check ════════
+// Both use the same SheetJS framework as the upload (client-side, zero server
+// deps). The export is a single workbook with three sheets:
+//   Ringkasan   — period header, totals, and a per-item stok awal/terbooking/
+//                 tersedia table (the summary that ties everything together).
+//   Pergerakan  — the elaborated movement ledger: per product, a Stok Awal row
+//                 then every booking as a signed qty with a running Sisa (mirror
+//                 of the per-product riwayat; final Sisa === Tersedia).
+//   Booking     — the flat booking list with timers, outcomes, and stamps.
+function xlsxReady(){ if(typeof XLSX==="undefined"){ toast("Library Excel belum siap. Muat ulang halaman.","err"); return false; } return true; }
+function setCols(ws,widths){ ws["!cols"]=widths.map(w=>({wch:w})); }
+
+async function exportEndOfDay(){
+  if(!xlsxReady()) return;
+  if(!SUMMARY.upload){ toast("Belum ada periode aktif untuk diexport.","warn"); return; }
+  const btn=$("#expEod"); btn.disabled=true; const label=btn.textContent; btn.innerHTML=`<span class="spin"></span>Menyiapkan`;
+  try{
+    // Pull every booking of the active period (all statuses, with timer fields).
+    let bookings=[];
+    try{ const r=await fetch("/api/stock/bookings"); bookings=(await r.json()).bookings||[]; }catch{ toast("Gagal ambil data booking.","err"); btn.disabled=false; btn.textContent=label; return; }
+    const items=SUMMARY.items, t=SUMMARY.totals||{}, u=SUMMARY.upload;
+
+    // ── Sheet: Ringkasan ──────────────────────────────────────────────────────
+    const bytStatus={}; for(const b of bookings){ bytStatus[b.status]=(bytStatus[b.status]||0)+1; }
+    const sumAoa=[
+      ["RINGKASAN AKHIR HARI — STOK BOOKING"],
+      ["Periode (file)", u.filename||"—"],
+      ["Sheet", u.sheet_name||"—"],
+      ["Data per (WIB)", wib(u.created_at)],
+      ["Diekspor (WIB)", nowWib()],
+      ["Petugas", actor()||"—"],
+      [],
+      ["TOTAL"],
+      ["Total item", items.length],
+      ["Item tersedia (>0)", t.items_available||0],
+      ["Total qty terbooking", round2(t.booked_total||0)],
+      ["Total booking", bookings.length],
+      ["— Terkonfirmasi", bytStatus.confirmed||0],
+      ["— Menunggu verifikasi (overbook)", bytStatus.overbooked||0],
+      ["— Disetujui (overbook)", bytStatus.approved||0],
+      ["— Selesai", bytStatus.completed||0],
+      ["— Dibatalkan", bytStatus.cancelled||0],
+      ["— Ditolak", bytStatus.rejected||0],
+      ["Booking aktif > 24 jam (LAMA)", t.active_long||0],
+      [],
+      ["RINGKASAN PER PRODUK"],
+      ["Brand","Produk","Warna","Satuan","Stok Awal","Terbooking","Tersedia","Tersedia (M2)","Overbooked?","Menunggu Verifikasi"],
+    ];
+    for(const i of items){
+      sumAoa.push([
+        i.product_line||"", i.name, i.warna||"", i.unit,
+        round2(i.qty_initial), round2(i.booked), round2(i.available),
+        i.available_m2==null?"":round2(i.available_m2),
+        i.available<0?"YA":"", i.pending_verifications||0,
+      ]);
+    }
+    const wsSum=XLSX.utils.aoa_to_sheet(sumAoa);
+    setCols(wsSum,[16,30,18,8,10,10,10,13,11,18]);
+
+    // ── Sheet: Pergerakan (movement ledger) ───────────────────────────────────
+    const byItem=new Map();
+    for(const b of bookings){ if(!byItem.has(b.item_id)) byItem.set(b.item_id,[]); byItem.get(b.item_id).push(b); }
+    for(const arr of byItem.values()) arr.sort((a,b)=>Date.parse(a.created_at)-Date.parse(b.created_at)||(String(a.id)<String(b.id)?-1:1));
+    const movAoa=[["Produk","Brand","Waktu (WIB)","Tipe","Sales","Customer","Qty (±)","Status","Hasil","Durasi (jam)","Sisa","Catatan"]];
+    for(const i of items){
+      let sisa=round2(i.qty_initial);
+      movAoa.push([i.name, i.product_line||"", wib(u.created_at), "Stok Awal", "", "", round2(i.qty_initial), "", "", "", sisa, ""]);
+      const arr=byItem.get(i.id)||[];
+      for(const b of arr){
+        const deduct=DEDUCTING_SET.has(b.status);
+        if(deduct) sisa=round2(sisa-Number(b.qty));
+        movAoa.push([
+          i.name, i.product_line||"", wib(b.created_at), "Booking", b.rep_name, b.customer_name,
+          deduct? -round2(b.qty) : 0, STLABEL[b.status]||b.status, b.outcome,
+          round2(b.duration_seconds/3600), sisa, b.note||"",
+        ]);
+      }
+    }
+    const wsMov=XLSX.utils.aoa_to_sheet(movAoa);
+    setCols(wsMov,[30,14,16,10,14,20,10,20,10,12,10,24]);
+
+    // ── Sheet: Booking (flat detail) ──────────────────────────────────────────
+    const bkAoa=[["Produk","Brand","Sales","Qty","Satuan","Customer","Status","Hasil","Durasi (jam)","Lama?","Waktu Booking (WIB)","Diverifikasi (WIB)","Selesai (WIB)","Dibatalkan (WIB)","Catatan"]];
+    for(const b of bookings){
+      const it=itemById(b.item_id);
+      bkAoa.push([
+        it?it.name:("#"+b.item_id), it?(it.product_line||""):"", b.rep_name, round2(b.qty),
+        it?it.unit:"", b.customer_name, STLABEL[b.status]||b.status, b.outcome,
+        round2(b.duration_seconds/3600), b.long?"LAMA":"",
+        wib(b.created_at), b.verified_at?wib(b.verified_at):"", b.completed_at?wib(b.completed_at):"",
+        b.cancelled_at?wib(b.cancelled_at):"", b.note||"",
+      ]);
+    }
+    const wsBk=XLSX.utils.aoa_to_sheet(bkAoa);
+    setCols(wsBk,[30,14,14,8,8,20,20,10,12,7,18,18,18,18,24]);
+
+    const wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb,wsSum,"Ringkasan");
+    XLSX.utils.book_append_sheet(wb,wsMov,"Pergerakan");
+    XLSX.utils.book_append_sheet(wb,wsBk,"Booking");
+    XLSX.writeFile(wb,`laporan-akhir-hari-${dateStamp()}.xlsx`);
+    toast("Laporan akhir hari diunduh.","ok");
+  }finally{ btn.disabled=false; btn.textContent=label; }
+}
+
+// Generate a fresh STOCK_CHECK file seeded with current remaining stock, in the
+// exact primary format (or generic when the period is generic) so PPIC adjusts
+// it against the physical count and re-uploads it to open the next period.
+function generateNewStockCheck(){
+  if(!xlsxReady()) return;
+  if(!SUMMARY.upload){ toast("Belum ada periode aktif.","warn"); return; }
+  const items=SUMMARY.items;
+  if(items.length===0){ toast("Tidak ada item untuk dibuat.","warn"); return; }
+  const structured=items.some(i=>i.warna!=null);
+  let aoa;
+  if(structured){
+    aoa=[["BRAND","WARNA","BATCH WARNA","COATING","TH","MM","P","L","SALDO AKHIR (Lbr)","SALDO AKHIR (M2)"]];
+    for(const i of items){
+      const qty=Math.max(0,round2(i.available)); // carry forward remaining stock (a count can't be negative)
+      const m2=(i.p!=null&&i.l!=null)?round2(qty*i.p*i.l/1e6):"";
+      aoa.push([i.product_line||"", i.warna||i.name||"", i.batch_warna||"", i.coating||"",
+        i.th==null?"":i.th, i.mm==null?"":i.mm, i.p==null?"":i.p, i.l==null?"":i.l, qty, m2]);
+    }
+  }else{
+    aoa=[["Nama Produk","Kategori","Satuan","Qty"]];
+    for(const i of items){ aoa.push([i.name||"", i.product_line||"", i.unit||"pcs", Math.max(0,round2(i.available))]); }
+  }
+  const ws=XLSX.utils.aoa_to_sheet(aoa);
+  setCols(ws, structured?[16,20,14,10,7,6,8,8,16,16]:[30,16,10,10]);
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,"STOCK CHECK");
+  XLSX.writeFile(wb,`stock-check-baru-${dateStamp()}.xlsx`);
+  toast("File stock check baru dibuat — sesuaikan dengan hitungan fisik lalu upload.","ok");
+}
+
 // ══ summary + cards ═══════════════════════════════════════════════════════════
 let SUMMARY={upload:null,items:[],totals:{}};
 async function loadSummary(){
@@ -391,6 +544,10 @@ async function loadSummary(){
   for(const i of SUMMARY.items){ LIVEKEYS[itemKey(i)]=i.available; }
   const u=SUMMARY.upload;
   $("#dataPer").textContent=u?`Data per ${wib(u.created_at)} · ${u.filename||"tanpa nama"}${u.sheet_name?` · ${u.sheet_name}`:""}`:"Belum ada data stok";
+  const t=SUMMARY.totals||{};
+  $("#eodMeta").textContent=u?`${t.items||0} item · ${round2(t.booked_total||0)} terbooking`:"—";
+  const dis=!u;
+  $("#expEod").disabled=dis; $("#genCheck").disabled=dis;
   if(PARSED) renderPreview(); // refresh reconciliation column
 }
 function itemById(id){ return SUMMARY.items.find(x=>eq(x.id,id)); }
@@ -582,6 +739,10 @@ function renderRiwayat(j){
 
 // live age tick
 setInterval(()=>{ document.querySelectorAll(".chip.age[data-age]").forEach(el=>{ const iso=el.getAttribute("data-age"); if(iso) el.textContent=dur(ageSec(iso)); }); },60000);
+
+// ── Akhir Hari buttons ────────────────────────────────────────────────────────
+$("#expEod").addEventListener("click",exportEndOfDay);
+$("#genCheck").addEventListener("click",generateNewStockCheck);
 
 // ── refresh all + poll ────────────────────────────────────────────────────────
 async function refreshAll(){ await loadSummary(); await Promise.all([loadQueue(),loadTracker(),loadAll(),loadHistory()]); }
