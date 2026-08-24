@@ -178,17 +178,9 @@ function selectedRep(){
   return null;
 }
 async function loadReps(){
-  // Stock-scoped roster: same shape as /api/sales-reps plus the Online team.
-  // Falls back to the app-wide registry if the stock endpoint is unavailable.
+  // Shared roster across every surface: Retail, Project, Distributor, Online.
   try{
-    let j=null;
-    try{
-      const r=await fetch("/api/stock/sales-reps");
-      if(r.ok) j=await r.json();
-    }catch{}
-    if(!j||!(j.sales_reps||[]).length){
-      const r2=await fetch("/api/sales-reps"); j=await r2.json();
-    }
+    const r=await fetch("/api/sales-reps"); const j=await r.json();
     REPS=(j.sales_reps||[]).map(x=>({
       value:x.value||((x.team||"retail")+":"+x.id),
       name:x.full_name||x.name||"—",

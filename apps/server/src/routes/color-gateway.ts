@@ -62,6 +62,7 @@ const SALES_TEAMS: Record<string, string> = {
   retail:      "salespeople",
   project:     "project_salespeople",
   distributor: "distributor_salespeople",
+  online:      "online_salespeople",
 };
 
 /**
@@ -82,33 +83,38 @@ function parseSalesRef(v: unknown): { team: string; id: number; table: string } 
 export async function colorGatewayRoutes(app: FastifyInstance): Promise<void> {
 
   // ── GET /api/sales-reps ────────────────────────────────────────────────────
-  // Union of every visitation team so a color request can be raised by a Retail,
-  // Project, or Distributor rep. Ids collide across teams, so each option carries
-  // a composite `value` of "team:id".
+  // Every sales team, so a color request (or a stock booking) can be raised by a
+  // Retail, Project, Distributor, or Online rep. Ids collide across teams, so
+  // each option carries a composite `value` of "team:id" — the same key
+  // parseSalesRef() resolves back through SALES_TEAMS.
+  //
+  // Each team is read independently rather than as one UNION: a single missing
+  // roster table then shortens the list instead of collapsing every team.
   app.get("/api/sales-reps", async (_req, reply) => {
     const db = getSql();
     if (!db) return reply.code(503).send({ error: "Database not configured." });
-    let rows: { team: string; id: number; full_name: string; code: string | null }[];
-    try {
-      rows = await db`
-        select 'retail'::text      as team, id, full_name, code from salespeople             where active = true
-        union all
-        select 'project'::text     as team, id, full_name, code from project_salespeople     where active = true
-        union all
-        select 'distributor'::text as team, id, full_name, code from distributor_salespeople where active = true
-        order by team, full_name
-      `;
-    } catch {
-      rows = await db`select 'retail'::text as team, id, full_name, code from salespeople where active = true order by full_name`;
-    }
-    const sales_reps = rows.map((r) => ({
-      value:     `${r.team}:${r.id}`,
-      team:      r.team,
-      id:        r.id,
-      full_name: r.full_name,
-      code:      r.code,
+
+    const ORDER = ["retail", "project", "distributor", "online"];
+    const per = await Promise.all(ORDER.map(async (team) => {
+      const table = SALES_TEAMS[team];
+      if (!table) return [];
+      try {
+        const rows = await db<{ id: string; full_name: string; code: string | null }[]>`
+          select id, full_name, code from ${db(table)}
+          where active = true order by full_name
+        `;
+        return rows.map((r) => ({
+          value:     `${team}:${r.id}`,
+          team,
+          id:        r.id,
+          full_name: r.full_name,
+          code:      r.code,
+        }));
+      } catch {
+        return [];
+      }
     }));
-    return { sales_reps };
+    return { sales_reps: per.flat() };
   });
 
   // ── POST /api/color-requests ───────────────────────────────────────────────

@@ -763,12 +763,12 @@
       if (currentRepId) localStorage.setItem('cg_rep_id', currentRepId);
     }
 
-    const TEAM_LABEL = { retail: 'Retail', project: 'Project', distributor: 'Distributor' };
+    const TEAM_LABEL = { retail: 'Retail', project: 'Project', distributor: 'Distributor', online: 'Online' };
     // Group reps into <optgroup> per team so the same name across teams stays distinct.
     function fillRepSelect(sel) {
       const groups = {};
       allReps.forEach(r => { (groups[r.team] ??= []).push(r); });
-      ['retail', 'project', 'distributor'].forEach(team => {
+      ['retail', 'project', 'distributor', 'online'].forEach(team => {
         const reps = groups[team];
         if (!reps || !reps.length) return;
         const og = document.createElement('optgroup');
