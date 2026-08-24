@@ -37,6 +37,7 @@
   .st-confirmed{background:#dcfce7;color:#15803d}.st-overbooked{background:#fef3c7;color:#b45309}
   .st-approved{background:#ede9fe;color:#6d28d9}.st-rejected{background:#fee2e2;color:#b91c1c}
   .st-cancelled{background:#f3f4f6;color:#6b7280}.st-completed{background:#dbeafe;color:#1d4ed8}
+  .st-outstanding{background:#ffedd5;color:#c2410c}
   button.btn{background:var(--accent);color:#fff;border:none;border-radius:10px;padding:0 14px;min-height:40px;font-weight:700;font-size:13px;cursor:pointer}
   button.btn:disabled{opacity:.55;cursor:default}
   button.btn.ghost{background:#fff;color:var(--ink);border:1px solid var(--line)}
@@ -45,6 +46,7 @@
   button.mini{padding:0 10px;min-height:34px;font-size:12px;border-radius:8px}
   .empty{padding:22px 16px;text-align:center;color:var(--muted);font-size:14px;line-height:1.5}
   .warnbox{background:#fef2f2;border:1px solid #fbcaca;color:#991b1b;border-radius:10px;padding:10px 12px;font-size:13px;margin:10px 0;font-weight:600}
+  .warnbox.amber{background:#fffbeb;border-color:#fde68a;color:#92400e}
   .metaline{font-size:12px;color:var(--muted);margin:6px 0}
   .counts{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
   .countchip{background:#f3f4f6;border-radius:8px;padding:4px 10px;font-size:12px;font-weight:700;color:#374151}
@@ -117,14 +119,21 @@
     <div id="vqBody" class="scrollx"></div>
   </div>
 
-  <!-- Card 3 — Tracker -->
+  <!-- Card 3 — Booking Outstanding (R17) -->
+  <div class="card">
+    <h2>Booking Outstanding <span class="chip st-outstanding" id="outCount">0</span></h2>
+    <div id="outBody" class="scrollx"></div>
+    <div class="foot" style="padding:0 14px 12px">Booking yang terbawa dari stock check sebelumnya — belum memotong stok aktif sampai dipenuhi.</div>
+  </div>
+
+  <!-- Card 4 — Tracker -->
   <div class="card">
     <h2>Tracker Booking per Sales</h2>
     <div id="trackBody" class="scrollx"></div>
     <div class="foot" style="padding:0 14px 12px">Lama = durasi &gt; 24 jam · dihitung dari semua periode.</div>
   </div>
 
-  <!-- Card 4 — All bookings -->
+  <!-- Card 5 — All bookings -->
   <div class="card">
     <h2>Semua Booking (periode aktif)</h2>
     <div class="body">
@@ -133,7 +142,7 @@
     </div>
   </div>
 
-  <!-- Card 5 — Upload history -->
+  <!-- Card 6 — Upload history -->
   <div class="card">
     <h2>Riwayat Upload</h2>
     <div id="histBody" class="scrollx"></div>
@@ -158,8 +167,8 @@ function round2(n){ return Math.round((Number(n)||0)*100)/100; }
 function dateStamp(){ return new Intl.DateTimeFormat("en-CA",{year:"numeric",month:"2-digit",day:"2-digit",timeZone:"Asia/Jakarta"}).format(new Date()); } // yyyy-mm-dd WIB
 function nowWib(){ return wib(new Date().toISOString()); }
 function toast(msg,kind){ const t=document.createElement("div"); t.className="toast"+(kind?(" "+kind):""); t.textContent=msg; $("#toast").appendChild(t); setTimeout(()=>t.remove(),3500); }
-const STLABEL={confirmed:"Terkonfirmasi",overbooked:"Menunggu Verifikasi",approved:"Disetujui (overbook)",rejected:"Ditolak",cancelled:"Dibatalkan",completed:"Selesai"};
-const DEDUCTING_SET=new Set(["confirmed","overbooked","approved","completed"]); // statuses that count against stock (R4/R5/R6/R12)
+const STLABEL={confirmed:"Terkonfirmasi",overbooked:"Menunggu Verifikasi",approved:"Disetujui (overbook)",rejected:"Ditolak",cancelled:"Dibatalkan",completed:"Selesai",outstanding:"Outstanding"};
+const DEDUCTING_SET=new Set(["confirmed","overbooked","approved","completed"]); // count against stock; outstanding deducts nowhere (R17)
 
 // petugas persist
 $("#actor").value=localStorage.getItem("stk_actor")||"";
@@ -364,7 +373,7 @@ function renderPreview(){
       <span class="countchip">${res.merged} duplikat digabung</span>
     </div>
     ${over?`<div class="warnbox">Terlalu banyak baris (${res.valid}). Maksimal 2000.</div>`:""}
-    ${active?`<div class="warnbox">Upload baru akan MENGARSIPKAN periode berjalan beserta ${SUMMARY.totals.booked_total>0?"booking aktifnya":"seluruh bookingnya"}. Fresh start.</div>`:""}
+    ${active?`<div class="warnbox amber">Upload baru akan MENGGANTI stok. ${openNow()} booking aktif akan menjadi OUTSTANDING — tidak memotong stok baru sampai dipenuhi PPIC.</div>`:""}
     <div class="scrollx"><table><thead>${head}</thead><tbody>${rowsHtml}</tbody></table></div>
     <div class="metaline">Menampilkan ${first.length} dari ${res.valid} baris.</div>
     <label class="fld" style="margin-top:8px;max-width:100%">Catatan (opsional)<input type="text" id="upNote" placeholder="—"/></label>
@@ -384,7 +393,7 @@ async function doUpload(){
   if(res.valid>2000){ toast("Maksimal 2000 baris.","err"); return; }
   if(res.valid===0){ toast("File tidak berisi baris stok yang valid.","err"); return; }
   const active=SUMMARY&&SUMMARY.upload;
-  if(!confirm(active?"Upload akan mengarsipkan periode berjalan. Lanjut?":"Konfirmasi upload periode baru?")) return;
+  if(!confirm(active?`Upload akan mengganti stok. ${openNow()} booking aktif menjadi OUTSTANDING. Lanjut?`:"Konfirmasi upload periode baru?")) return;
   const items=res.rows.map(r=> res.mapType==="primary"
     ? {brand:r.brand,warna:r.warna,batch_warna:r.batch_warna,coating:r.coating,th:r.th,mm:r.mm,p:r.p,l:r.l,qty:r.qty}
     : {name:r.name,product_line:r.product_line,unit:r.unit,qty:r.qty});
@@ -394,7 +403,7 @@ async function doUpload(){
       body:JSON.stringify({filename:PARSED.filename,sheet_name:SELSHEET,uploaded_by:actor(),note:$("#upNote").value.trim()||null,items})});
     const j=await r.json();
     if(!r.ok){ toast(j.error||"Gagal upload.","err"); btn.disabled=false; btn.textContent="Konfirmasi Upload"; if((j.error||"").includes("Muat ulang")) refreshAll(); return; }
-    toast(`Upload berhasil — ${j.upload.row_count} baris.`+(j.archived_upload_id?` Periode lama diarsipkan.`:""),"ok");
+    toast(`Upload berhasil — ${j.upload.row_count} baris.`+(j.carried_outstanding?` ${j.carried_outstanding} booking jadi outstanding.`:""),"ok");
     $("#file").value=""; $("#preview").innerHTML=""; PARSED=null;
     refreshAll();
   }catch{ toast("Gagal terhubung.","err"); btn.disabled=false; btn.textContent="Konfirmasi Upload"; }
@@ -439,11 +448,12 @@ async function exportEndOfDay(){
       ["Total booking", bookings.length],
       ["— Terkonfirmasi", bytStatus.confirmed||0],
       ["— Menunggu verifikasi (overbook)", bytStatus.overbooked||0],
+      ["— Outstanding (menunggu Penuhi)", bytStatus.outstanding||0],
       ["— Disetujui (overbook)", bytStatus.approved||0],
       ["— Selesai", bytStatus.completed||0],
       ["— Dibatalkan", bytStatus.cancelled||0],
       ["— Ditolak", bytStatus.rejected||0],
-      ["Booking aktif > 24 jam (LAMA)", t.active_long||0],
+      ["Booking terbuka > 24 jam (LAMA)", t.active_long||0],
       [],
       ["RINGKASAN PER PRODUK"],
       ["Brand","Produk","Warna","Satuan","Stok Awal","Terbooking","Tersedia","Tersedia (M2)","Overbooked?","Menunggu Verifikasi"],
@@ -461,7 +471,12 @@ async function exportEndOfDay(){
 
     // ── Sheet: Pergerakan (movement ledger) ───────────────────────────────────
     const byItem=new Map();
-    for(const b of bookings){ if(!byItem.has(b.item_id)) byItem.set(b.item_id,[]); byItem.get(b.item_id).push(b); }
+    // Effective item = where the qty actually counts (R17): a booking Penuhi'd
+    // into this period deducts from fulfilled_item_id, not its origin item.
+    for(const b of bookings){
+      const eff=b.fulfilled_item_id||b.item_id;
+      if(!byItem.has(eff)) byItem.set(eff,[]); byItem.get(eff).push(b);
+    }
     for(const arr of byItem.values()) arr.sort((a,b)=>Date.parse(a.created_at)-Date.parse(b.created_at)||(String(a.id)<String(b.id)?-1:1));
     const movAoa=[["Produk","Brand","Waktu (WIB)","Tipe","Sales","Customer","Qty (±)","Status","Hasil","Durasi (jam)","Sisa","Catatan"]];
     for(const i of items){
@@ -471,8 +486,10 @@ async function exportEndOfDay(){
       for(const b of arr){
         const deduct=DEDUCTING_SET.has(b.status);
         if(deduct) sisa=round2(sisa-Number(b.qty));
+        const via=b.fulfilled_item_id&&!eq(b.fulfilled_item_id,b.item_id);
         movAoa.push([
-          i.name, i.product_line||"", wib(b.created_at), "Booking", b.rep_name, b.customer_name,
+          i.name, i.product_line||"", wib(via?(b.completed_at||b.created_at):b.created_at),
+          via?"Booking (Penuhi)":"Booking", b.rep_name, b.customer_name,
           deduct? -round2(b.qty) : 0, STLABEL[b.status]||b.status, b.outcome,
           round2(b.duration_seconds/3600), sisa, b.note||"",
         ]);
@@ -551,6 +568,8 @@ async function loadSummary(){
   if(PARSED) renderPreview(); // refresh reconciliation column
 }
 function itemById(id){ return SUMMARY.items.find(x=>eq(x.id,id)); }
+// Bookings that would flip to OUTSTANDING if a new stock check landed now (R1).
+function openNow(){ const t=SUMMARY.totals||{}; return (t.confirmed||0)+(t.pending_overbooked||0)+(t.approved||0); }
 function availOf(id){ const i=itemById(id); return i?i.available:null; }
 
 // Card 2 — verify queue
@@ -590,29 +609,86 @@ async function verify(id,action){
   }catch{ toast("Gagal terhubung.","err"); }
 }
 
-// Card 3 — tracker
+// Card 3 — Booking Outstanding (R17). Placed right under the verification queue
+// so it prompts on every visit. The match line is resolved server-side against
+// the CURRENTLY active period, so it shows exactly what Penuhi would do.
+let OUTSTANDING=[];
+async function loadOutstanding(){
+  let rows=[];
+  try{ const r=await fetch("/api/stock/bookings?status=outstanding"); rows=(await r.json()).bookings||[]; }catch{}
+  OUTSTANDING=rows;
+  const badge=$("#outCount"); badge.textContent=rows.length;
+  badge.className="chip "+(rows.length>0?"st-outstanding":"age");
+  if(rows.length===0){ $("#outBody").innerHTML=`<div class="empty">Tidak ada booking outstanding. 👍</div>`; return; }
+  $("#outBody").innerHTML=`<table><thead><tr><th>Produk asal</th><th>Sales</th><th>Qty</th><th>Customer</th><th>Umur</th><th>Periode asal</th><th>Cocok di stok aktif</th><th></th></tr></thead>
+    <tbody>${rows.map(b=>{
+      const lama=b.long?`<span class="chip lama">LAMA</span>`:"";
+      const age=b.running?dur(ageSec(b.created_at)):dur(b.duration_seconds);
+      const m=b.match;
+      const matchLine=m
+        ? `→ ${esc(m.name)}<div class="sub2">Tersedia <b class="${m.available<0?"avail neg":""}">${NF.format(m.available)}</b> ${esc(m.unit)}</div>`
+        : `<span style="color:var(--danger);font-weight:700">Produk tidak ada di stock check aktif</span>`;
+      return `<tr>
+        <td>${esc(b.item_name)}${b.item_product_line?`<div class="sub2">${esc(b.item_product_line)}</div>`:""}</td>
+        <td>${esc(b.rep_name)}</td>
+        <td>${NF.format(b.qty)} ${esc(b.item_unit||"")}</td>
+        <td>${esc(b.customer_name)}</td>
+        <td><span class="chip age" data-age="${b.running?b.created_at:''}">${age}</span>${lama}</td>
+        <td>${esc(b.origin_period||"—")}<div class="sub2">${wib(b.created_at)}</div></td>
+        <td>${matchLine}</td>
+        <td style="white-space:nowrap">
+          <button class="btn mini" data-fulfil="${b.id}">Penuhi</button>
+          <button class="btn danger mini" data-reject="${b.id}">Tolak</button>
+        </td></tr>`;
+    }).join("")}</tbody></table>`;
+  $("#outBody").querySelectorAll("[data-fulfil]").forEach(x=>x.addEventListener("click",()=>fulfil(x.getAttribute("data-fulfil"))));
+  $("#outBody").querySelectorAll("[data-reject]").forEach(x=>x.addEventListener("click",()=>verify(x.getAttribute("data-reject"),"reject")));
+}
+// Penuhi: matched → deducts from the active period (may go negative, R4);
+// unmatched → needs an explicit no-deduction confirmation (R17).
+async function fulfil(id){
+  if(!requireActor()) return;
+  const b=OUTSTANDING.find(x=>eq(x.id,id));
+  const m=b&&b.match;
+  const msg=m
+    ? `Potong ${NF.format(b.qty)} ${m.unit} dari stok aktif?`
+    : `Produk tidak ada di stock check aktif — tandai selesai tanpa memotong stok?`;
+  if(!confirm(msg)) return;
+  try{
+    const body={actor:actor()};
+    if(!m) body.confirm_no_deduct=true;
+    const r=await fetch(`/api/stock/bookings/${id}/fulfill`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
+    const j=await r.json();
+    if(!r.ok){ toast(j.error||"Gagal.","err"); refreshAll(); return; }
+    toast(j.matched_item?`Dipenuhi — stok ${j.matched_item.name} kini ${NF.format(j.available_after)}.`:"Ditandai selesai tanpa potongan stok.","ok");
+    refreshAll();
+  }catch{ toast("Gagal terhubung.","err"); }
+}
+
+// Card 4 — tracker
 async function loadTracker(){
   let d={reps:[]};
   try{ const r=await fetch("/api/stock/rep-stats"); d=await r.json(); }catch{}
   if(!d.reps||d.reps.length===0){ $("#trackBody").innerHTML=`<div class="empty">Belum ada booking untuk dianalisis.</div>`; return; }
-  $("#trackBody").innerHTML=`<table><thead><tr><th>Sales</th><th>Total</th><th>Lama</th><th>Rata² Durasi</th><th>Selesai</th><th>Batal/Tolak</th><th>Hangus</th><th>Aktif</th></tr></thead>
+  $("#trackBody").innerHTML=`<table><thead><tr><th>Sales</th><th>Total</th><th>Lama</th><th>Rata² Durasi</th><th>Selesai</th><th>Batal/Tolak</th><th>Terbuka</th></tr></thead>
     <tbody>${d.reps.map(r=>{
       const lamaCls=r.long_count>0?'style="color:#b45309;font-weight:800"':"";
-      const activeLama=r.active_long_now>0?`<span class="reddot"></span>`:"";
+      // red dot when ANY open booking (aktif or outstanding) is already lama
+      const openLama=(r.active_long_now+(r.outstanding_long_now||0))>0?`<span class="reddot"></span>`:"";
+      const outs=r.outstanding_now||0;
       return `<tr>
         <td>${esc(r.rep_name)}</td><td>${r.total}</td>
         <td ${lamaCls}>${r.long_count} · ${NF.format(r.long_pct)}%</td>
         <td>${NF.format(r.avg_duration_hours)} j</td>
         <td>${r.outcomes.selesai}</td>
         <td>${r.outcomes.dibatalkan+r.outcomes.ditolak}</td>
-        <td>${r.outcomes.hangus}</td>
-        <td>${r.active_now}${activeLama}</td></tr>`;
+        <td>${r.active_now}+${outs}${openLama}<div class="sub2">aktif+outstanding</div></td></tr>`;
     }).join("")}</tbody></table>`;
 }
 
 // Card 4 — all bookings
 let ALLFILTER="";
-const STATUSES=["confirmed","overbooked","approved","rejected","cancelled","completed"];
+const STATUSES=["confirmed","overbooked","approved","outstanding","rejected","cancelled","completed"];
 function renderStFilters(){
   $("#stFilters").innerHTML=[["","Semua"],...STATUSES.map(s=>[s,STLABEL[s]])].map(([v,l])=>
     `<span class="fchip ${ALLFILTER===v?"on":""}" data-f="${v}">${l}</span>`).join("");
@@ -625,20 +701,23 @@ async function loadAll(){
   $("#allBody").innerHTML=`<table><thead><tr><th>Produk</th><th>Sales</th><th>Qty</th><th>Customer</th><th>Status</th><th>Umur/Durasi</th><th>Waktu</th><th></th></tr></thead>
     <tbody>${rows.map(b=>{
       const canDone=["confirmed","approved"].includes(b.status);
-      const canCancel=["confirmed","overbooked","approved"].includes(b.status);
+      const canFulfil=b.status==="outstanding";
+      const canCancel=["confirmed","overbooked","approved","outstanding"].includes(b.status);
       const lama=b.long?`<span class="chip lama">LAMA</span>`:"";
       const ageTxt=b.running?dur(ageSec(b.created_at)):`${dur(b.duration_seconds)} · ${b.outcome}`;
       return `<tr>
-        <td>${esc(nameOf(b.item_id))}</td><td>${esc(b.rep_name)}</td><td>${NF.format(b.qty)}</td><td>${esc(b.customer_name)}</td>
+        <td>${esc(b.item_name||nameOf(b.item_id))}</td><td>${esc(b.rep_name)}</td><td>${NF.format(b.qty)}</td><td>${esc(b.customer_name)}</td>
         <td><span class="chip st-${b.status}">${STLABEL[b.status]||b.status}</span></td>
         <td><span class="chip age" data-age="${b.running?b.created_at:''}">${ageTxt}</span>${lama}</td>
         <td>${wib(b.created_at)}</td>
         <td style="white-space:nowrap">
           ${canDone?`<button class="btn mini" data-done="${b.id}">Selesai</button>`:""}
+          ${canFulfil?`<button class="btn mini" data-fulfil="${b.id}">Penuhi</button>`:""}
           ${canCancel?`<button class="btn danger mini" data-cancel="${b.id}">Batalkan</button>`:""}
         </td></tr>`;
     }).join("")}</tbody></table>`;
   $("#allBody").querySelectorAll("[data-done]").forEach(x=>x.addEventListener("click",()=>complete(x.getAttribute("data-done"))));
+  $("#allBody").querySelectorAll("[data-fulfil]").forEach(x=>x.addEventListener("click",()=>fulfil(x.getAttribute("data-fulfil"))));
   $("#allBody").querySelectorAll("[data-cancel]").forEach(x=>x.addEventListener("click",()=>cancelBk(x.getAttribute("data-cancel"))));
 }
 async function complete(id){
@@ -725,8 +804,16 @@ function renderRiwayat(j){
     const b=ev.booking;
     const stamps=[b.completed_at?`selesai ${wib(b.completed_at)}`:"",b.verified_at?`verif ${wib(b.verified_at)}`:"",b.cancelled_at?`batal ${wib(b.cancelled_at)}`:""].filter(Boolean).join(" · ");
     const lama=b.long?`<span class="chip lama">LAMA</span>`:"";
+    // R16 markers: where a booking's qty went, when it no longer counts here.
+    const mark=ev.moved==="outstanding"
+      ? `<div class="sub2" style="color:#c2410c">→ outstanding</div>`
+      : ev.moved==="fulfilled"
+        ? `<div class="sub2" style="color:#1d4ed8">→ dipenuhi di periode ${esc(ev.moved_period||"—")}</div>`
+        : ev.via_penuhi
+          ? `<div class="sub2" style="color:#1d4ed8">via Penuhi · dari ${esc(ev.origin_period||"—")}</div>`
+          : "";
     return `<tr class="${ev.reversed?"rev":""}">
-      <td>${esc(b.rep_name)}${stamps?`<div class="sub2">${esc(stamps)}</div>`:""}</td>
+      <td>${esc(b.rep_name)}${mark}${stamps?`<div class="sub2">${esc(stamps)}</div>`:""}</td>
       <td>−${NF.format(b.qty)}</td><td>${esc(b.customer_name||"—")}</td>
       <td><span class="chip st-${b.status}">${STLABEL[b.status]||b.status}</span> <span class="chip age">${dur(b.duration_seconds)}</span>${lama}</td>
       <td class="sisa">${NF.format(ev.sisa)}</td></tr>`;
@@ -745,7 +832,7 @@ $("#expEod").addEventListener("click",exportEndOfDay);
 $("#genCheck").addEventListener("click",generateNewStockCheck);
 
 // ── refresh all + poll ────────────────────────────────────────────────────────
-async function refreshAll(){ await loadSummary(); await Promise.all([loadQueue(),loadTracker(),loadAll(),loadHistory()]); }
+async function refreshAll(){ await loadSummary(); await Promise.all([loadQueue(),loadOutstanding(),loadTracker(),loadAll(),loadHistory()]); }
 renderStFilters();
 refreshAll();
 setInterval(refreshAll,30000);

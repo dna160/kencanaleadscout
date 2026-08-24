@@ -7,7 +7,12 @@
  *   Booking beyond stock   → status='overbooked', lands in PPIC's verify queue.
  *
  * The one derived number, recomputed on every read, NEVER stored (§4):
- *   available (Tersedia) = qty_initial − Σ qty of DEDUCTING bookings.
+ *   available (Tersedia) = qty_initial − booked(item), where
+ *   booked(item) = Σ qty of DEDUCTING bookings whose EFFECTIVE item is `item`.
+ *
+ * An upload replaces the numbers but never wipes bookings (R1/R2): open ones
+ * become 'outstanding' — deducting nowhere — until PPIC presses Penuhi (R17),
+ * which re-applies the qty against whatever period is active at that moment.
  *
  * Endpoints:
  *   1  GET  /summary                     — everything the sales page needs in one call
@@ -21,6 +26,7 @@
  *   9  POST /bookings/:id/complete       — {actor} — PPIC marks Selesai (R12)
  *   10 GET  /rep-stats                   — per-sales long-booking tracker (R15)
  *   11 GET  /items/:id/riwayat           — per-product combined riwayat (R16)
+ *   12 POST /bookings/:id/fulfill        — {actor} — PPIC Penuhi on outstanding (R17)
  *
  * Realtime is polling, not SSE (R10) — future upgrade noted, not built here.
  */
@@ -29,8 +35,25 @@ import type postgres from "postgres";
 import type { Sql } from "../db/client.js";
 import { getSql } from "../db/client.js";
 
-/** The statuses that count against stock. R4/R5/R6/R12 all fall out of this. */
+/**
+ * The canonical deduction rule (§5), used verbatim by summary, riwayat, and
+ * every `available_after`. A booking counts against its EFFECTIVE item:
+ *
+ *   booked(X) = Σ qty where status = any(DEDUCTING)
+ *                     and coalesce(fulfilled_item_id, item_id) = X
+ *
+ * `fulfilled_item_id` is only ever written together with status='completed'
+ * (by Penuhi, R17), so this single form is exactly the PRD's two-branch rule:
+ * live statuses match on item_id (their fulfilled_item_id is null), while a
+ * completed booking matches on wherever it was actually fulfilled.
+ *
+ * 'outstanding' is absent by design — a carried booking deducts NOWHERE until
+ * PPIC presses Penuhi (R17).
+ */
 const DEDUCTING = ["confirmed", "overbooked", "approved", "completed"] as const;
+
+/** Statuses that still deduct in their own period — flipped to outstanding on upload (R1). */
+const LIVE_ON_UPLOAD = ["confirmed", "overbooked", "approved"] as const;
 
 /** LAMA threshold — a booking is *lama* when its lifetime exceeds this (R14). */
 const LONG_THRESHOLD_HOURS = 24;
@@ -49,6 +72,8 @@ type Db = Sql | postgres.TransactionSql<Record<string, never>>;
 
 function str(v: unknown): string { return String(v ?? "").trim(); }
 function optStr(v: unknown): string | null { const s = str(v); return s || null; }
+/** bigserial ids arrive as strings from postgres.js — compare them as such (§3.4). */
+function eqId(a: unknown, b: unknown): boolean { return a != null && b != null && String(a) === String(b); }
 
 /**
  * Coerce a possibly-messy numeric (SheetJS may hand us "1.234" id-locale strings,
@@ -99,7 +124,8 @@ async function availableOf(db: Db, itemId: string | number): Promise<number> {
       i.qty_initial
       - coalesce((
           select sum(b.qty) from stock_bookings b
-          where b.item_id = i.id and b.status = any(${DEDUCTING as unknown as string[]})
+          where coalesce(b.fulfilled_item_id, b.item_id) = i.id
+            and b.status = any(${DEDUCTING as unknown as string[]})
         ), 0) as available
     from stock_items i
     where i.id = ${itemId}
@@ -139,11 +165,10 @@ interface BookingRow {
   completed_at: string | null;
   cancelled_by: string | null;
   cancelled_at: string | null;
-  // upload archival stamp, joined in so `hangus` can be derived
-  upload_archived_at?: string | null;
+  fulfilled_item_id: string | null;
 }
 
-type Outcome = "selesai" | "dibatalkan" | "ditolak" | "hangus" | "aktif";
+type Outcome = "selesai" | "dibatalkan" | "ditolak" | "aktif" | "outstanding";
 
 interface TimerFields {
   ended_at: string | null;
@@ -155,9 +180,11 @@ interface TimerFields {
 
 /**
  * Derive a booking's timer fields (R13/R14). `ended_at` is the first of:
- *   completed_at · cancelled_at · verified_at (only when rejected) ·
- *   its upload's archived_at (still deducting when the period archived → hangus).
- * No terminal event and the period still active → running, age = now − created_at.
+ *   completed_at · cancelled_at · verified_at (only when rejected).
+ * Uploads no longer end a booking — the timer runs straight through stock-check
+ * renewals until someone acts, which is what makes a long-outstanding booking
+ * the strongest LAMA signal there is (R15). No terminal event → running, with
+ * outcome 'aktif' (deducting now) or 'outstanding' (carried, awaiting Penuhi).
  * Nothing stored; everything computed on read. `now` is passed so a whole list
  * shares one clock.
  */
@@ -175,13 +202,9 @@ function timerFor(b: BookingRow, now: number): TimerFields {
   } else if (b.status === "rejected" && b.verified_at) {
     endedAt = b.verified_at;
     outcome = "ditolak";
-  } else if (b.upload_archived_at) {
-    // Period archived while the booking was still deducting → hangus (R13).
-    endedAt = b.upload_archived_at;
-    outcome = "hangus";
   } else {
     endedAt = null;
-    outcome = "aktif";
+    outcome = b.status === "outstanding" ? "outstanding" : "aktif";
   }
 
   const endMs = endedAt ? Date.parse(endedAt) : now;
@@ -211,8 +234,29 @@ function withTimer(b: BookingRow, now: number): Record<string, unknown> {
     completed_at: b.completed_at,
     cancelled_by: b.cancelled_by,
     cancelled_at: b.cancelled_at,
+    fulfilled_item_id: b.fulfilled_item_id,
     ...t,
   };
+}
+
+/**
+ * Normalized attribute key used to match a booking's origin item to the active
+ * period on Penuhi (R17), and by the upload preview's reconciliation column.
+ * Structured rows key on brand+warna+batch+coating+th+mm+p+l; generic rows on
+ * name+lini. Mirrors itemKey() in the two pages so both sides agree.
+ */
+function attrKey(i: {
+  product_line?: unknown; warna?: unknown; batch_warna?: unknown; coating?: unknown;
+  th?: unknown; mm?: unknown; p?: unknown; l?: unknown; name?: unknown;
+}): string {
+  const norm = (v: unknown) => String(v ?? "").trim().toLowerCase();
+  // Numerics are normalized through Number() so "0.30" and 0.3 collide.
+  const nrm = (v: unknown) => { const n = num(v); return n == null ? "" : String(n); };
+  if (norm(i.warna)) {
+    return ["s", norm(i.product_line), norm(i.warna), norm(i.batch_warna), norm(i.coating),
+      nrm(i.th), nrm(i.mm), nrm(i.p), nrm(i.l)].join("|");
+  }
+  return ["g", norm(i.name), norm(i.product_line)].join("|");
 }
 
 /** Compose a display name for a structured (primary-map) row (R9/§6.2). */
@@ -256,7 +300,7 @@ export async function stockRoutes(app: FastifyInstance): Promise<void> {
         items: [],
         totals: {
           items: 0, items_available: 0, booked_total: 0,
-          confirmed: 0, pending_overbooked: 0, approved: 0, active_long: 0,
+          confirmed: 0, pending_overbooked: 0, approved: 0, outstanding: 0, active_long: 0,
         },
       };
     }
@@ -274,15 +318,17 @@ export async function stockRoutes(app: FastifyInstance): Promise<void> {
         coalesce(pv.pending, 0) as pending_verifications
       from stock_items i
       left join (
-        select item_id, sum(qty) as booked
-        from stock_bookings
-        where upload_id = ${upload.id} and status = any(${DEDUCTING as unknown as string[]})
-        group by item_id
-      ) d on d.item_id = i.id
+        -- Grouped by EFFECTIVE item, not upload: a booking Penuhi'd out of an
+        -- older period deducts from the item it was fulfilled into (R17).
+        select coalesce(b.fulfilled_item_id, b.item_id) as eff_item_id, sum(b.qty) as booked
+        from stock_bookings b
+        where b.status = any(${DEDUCTING as unknown as string[]})
+        group by 1
+      ) d on d.eff_item_id = i.id
       left join (
         select item_id, count(*)::int as pending
         from stock_bookings
-        where upload_id = ${upload.id} and status = 'overbooked'
+        where status = 'overbooked'
         group by item_id
       ) pv on pv.item_id = i.id
       where i.upload_id = ${upload.id}
@@ -316,22 +362,23 @@ export async function stockRoutes(app: FastifyInstance): Promise<void> {
       };
     });
 
-    // Status tallies + running-long count in one pass over the active bookings.
+    // Status tallies: this period's own bookings, plus every outstanding one —
+    // those are carried from older periods and belong to no active upload.
     const statusRows = await db<{ status: string; cnt: number }[]>`
       select status, count(*)::int as cnt
-      from stock_bookings where upload_id = ${upload.id}
+      from stock_bookings
+      where upload_id = ${upload.id} or status = 'outstanding'
       group by status
     `;
     const byStatus: Record<string, number> = {};
     for (const r of statusRows) byStatus[r.status] = r.cnt;
 
-    // active_long: running bookings already past 24 jam (R14). Running == still
-    // deducting in an active period with no terminal stamp → age from created_at.
+    // active_long: running bookings — aktif OR outstanding — past 24 jam (R14).
+    // An upload no longer stops a timer, so a long-carried booking counts here.
     const [longRow] = await db<[{ cnt: number }]>`
       select count(*)::int as cnt
       from stock_bookings
-      where upload_id = ${upload.id}
-        and status in ('confirmed','overbooked','approved')
+      where status in ('confirmed','overbooked','approved','outstanding')
         and now() - created_at > make_interval(hours => ${LONG_THRESHOLD_HOURS})
     `;
 
@@ -353,6 +400,7 @@ export async function stockRoutes(app: FastifyInstance): Promise<void> {
         confirmed: byStatus.confirmed ?? 0,
         pending_overbooked: byStatus.overbooked ?? 0,
         approved: byStatus.approved ?? 0,
+        outstanding: byStatus.outstanding ?? 0,
         active_long: longRow?.cnt ?? 0,
       },
     };
@@ -427,24 +475,28 @@ export async function stockRoutes(app: FastifyInstance): Promise<void> {
 
     try {
       const result = await db.begin(async (sql) => {
-        // Archive the current active period (if any) together with its bookings.
+        // Archive the current period and CARRY its open bookings (R1/R2): the
+        // numbers are replaced, but nothing a rep booked is ever wiped. Live
+        // bookings become 'outstanding' — deducting nowhere — until PPIC
+        // presses Penuhi (R17). Terminal ones (completed/cancelled/rejected)
+        // stay with their period as history.
         const [current] = await sql<{ id: string }[]>`
           select id from stock_uploads where status = 'active' for update
         `;
         let archived_upload_id: string | null = null;
-        let archived_bookings = 0;
+        let carried_outstanding = 0;
         if (current) {
           await sql`
             update stock_uploads set status = 'archived', archived_at = now()
             where id = ${current.id}
           `;
-          const [cnt] = await sql<[{ n: number }]>`
-            select count(*)::int as n from stock_bookings
+          const carried = await sql`
+            update stock_bookings set status = 'outstanding'
             where upload_id = ${current.id}
-              and status in ('confirmed','overbooked','approved','completed')
+              and status = any(${LIVE_ON_UPLOAD as unknown as string[]})
           `;
           archived_upload_id = current.id;
-          archived_bookings = cnt?.n ?? 0;
+          carried_outstanding = carried.count ?? 0;
         }
 
         const [up] = await sql<{ id: string; created_at: string }[]>`
@@ -472,7 +524,7 @@ export async function stockRoutes(app: FastifyInstance): Promise<void> {
             created_at: up.created_at, row_count: clean.length,
           },
           archived_upload_id,
-          archived_bookings,
+          carried_outstanding,
         };
       });
 
@@ -528,7 +580,8 @@ export async function stockRoutes(app: FastifyInstance): Promise<void> {
         i.th, i.mm, i.p, i.l, i.unit, i.qty_initial,
         coalesce((
           select sum(bk.qty) from stock_bookings bk
-          where bk.item_id = i.id and bk.status = any(${DEDUCTING as unknown as string[]})
+          where coalesce(bk.fulfilled_item_id, bk.item_id) = i.id
+            and bk.status = any(${DEDUCTING as unknown as string[]})
         ), 0) as booked
       from stock_items i
       where i.upload_id = ${id}
@@ -549,49 +602,126 @@ export async function stockRoutes(app: FastifyInstance): Promise<void> {
       };
     });
 
+    // The period's own bookings plus any Penuhi'd INTO it — the latter deduct
+    // from these items (R17), so the list matches the availability shown above.
     const now = Date.now();
-    const bookingRows = await db<BookingRow[]>`
-      select b.*, u.archived_at as upload_archived_at
+    const bookingRows = await db<(BookingRow & {
+      item_name: string; item_unit: string; item_product_line: string | null;
+    })[]>`
+      select b.*, i.name as item_name, i.unit as item_unit, i.product_line as item_product_line
       from stock_bookings b
-      join stock_uploads u on u.id = b.upload_id
+      join stock_items i on i.id = b.item_id
       where b.upload_id = ${id}
+         or b.fulfilled_item_id in (select id from stock_items where upload_id = ${id})
       order by b.created_at asc, b.id asc
     `;
-    const bookings = bookingRows.map((b) => withTimer(b, now));
+    const bookings = bookingRows.map((b) => ({
+      ...withTimer(b, now),
+      item_name: b.item_name, item_unit: b.item_unit, item_product_line: b.item_product_line,
+    }));
 
     return { upload, items: shapedItems, bookings };
   });
 
   // ── 5 · GET /api/stock/bookings ────────────────────────────────────────────
-  // Active period by default; optional filters. Every row carries timer fields.
+  // Default scope = everything relevant NOW (§6.5): the active period's own
+  // bookings, every outstanding one (carried from any older period), and any
+  // Penuhi'd into the active period. `upload_id` pins a single period instead.
+  // Every row carries timer fields.
   app.get<{ Querystring: { status?: string; item_id?: string; rep_key?: string; upload_id?: string } }>(
     "/api/stock/bookings", async (request, reply) => {
       const db = getSql();
       if (!db) return dbErr(reply);
       const q = request.query;
 
-      let uploadId = optStr(q.upload_id);
-      if (!uploadId) {
+      const pinnedUpload = optStr(q.upload_id);
+      let activeId: string | null = null;
+      if (!pinnedUpload) {
         const up = await activeUpload(db);
-        if (!up) return { count: 0, bookings: [] };
-        uploadId = up.id;
+        // No active period: outstanding bookings still exist and must stay visible.
+        activeId = up ? up.id : null;
       }
       const status = optStr(q.status);
       const itemId = optStr(q.item_id);
       const repKey = optStr(q.rep_key);
 
+      const scope = pinnedUpload
+        ? db`b.upload_id = ${pinnedUpload}`
+        : activeId
+          ? db`(b.upload_id = ${activeId}
+                or b.status = 'outstanding'
+                or b.fulfilled_item_id in (select id from stock_items where upload_id = ${activeId}))`
+          : db`b.status = 'outstanding'`;
+
       const now = Date.now();
-      const rows = await db<BookingRow[]>`
-        select b.*, u.archived_at as upload_archived_at
+      // Origin item + period travel with the booking: an outstanding row points
+      // at an OLD period's item, which the pages cannot resolve from /summary.
+      const rows = await db<(BookingRow & {
+        item_name: string; item_unit: string; item_product_line: string | null;
+        origin_period: string | null;
+        i_warna: string | null; i_batch: string | null; i_coating: string | null;
+        i_th: string | null; i_mm: string | null; i_p: string | null; i_l: string | null;
+      })[]>`
+        select b.*,
+               i.name as item_name, i.unit as item_unit, i.product_line as item_product_line,
+               i.warna as i_warna, i.batch_warna as i_batch, i.coating as i_coating,
+               i.th as i_th, i.mm as i_mm, i.p as i_p, i.l as i_l,
+               coalesce(nullif(ou.sheet_name, ''), ou.filename, 'periode ' || ou.id) as origin_period
         from stock_bookings b
-        join stock_uploads u on u.id = b.upload_id
-        where b.upload_id = ${uploadId}
+        join stock_items i on i.id = b.item_id
+        join stock_uploads ou on ou.id = b.upload_id
+        where ${scope}
           ${status ? db`and b.status = ${status}` : db``}
           ${itemId ? db`and b.item_id = ${itemId}` : db``}
           ${repKey ? db`and b.rep_key = ${repKey}` : db``}
         order by b.created_at desc, b.id desc
       `;
-      return { count: rows.length, bookings: rows.map((b) => withTimer(b, now)) };
+
+      // For outstanding rows, resolve the Penuhi target against the CURRENT
+      // active period — the same match the fulfill endpoint will run, so the
+      // queue shows exactly what pressing the button would do (R17/§8.11).
+      const needMatch = rows.some((b) => b.status === "outstanding");
+      let activeItems: { id: string; name: string; unit: string; available: number; key: string }[] = [];
+      if (needMatch && activeId) {
+        const cand = await db<{
+          id: string; name: string; unit: string; product_line: string | null; warna: string | null;
+          batch_warna: string | null; coating: string | null;
+          th: string | null; mm: string | null; p: string | null; l: string | null;
+          qty_initial: string; booked: string | null;
+        }[]>`
+          select i.id, i.name, i.unit, i.product_line, i.warna, i.batch_warna, i.coating,
+                 i.th, i.mm, i.p, i.l, i.qty_initial,
+                 coalesce((
+                   select sum(bk.qty) from stock_bookings bk
+                   where coalesce(bk.fulfilled_item_id, bk.item_id) = i.id
+                     and bk.status = any(${DEDUCTING as unknown as string[]})
+                 ), 0) as booked
+          from stock_items i where i.upload_id = ${activeId}
+        `;
+        activeItems = cand.map((c) => ({
+          id: c.id, name: c.name, unit: c.unit,
+          available: round2(Number(c.qty_initial) - Number(c.booked ?? 0)),
+          key: attrKey(c),
+        }));
+      }
+
+      const bookings = rows.map((b) => {
+        const base = withTimer(b, now) as Record<string, unknown>;
+        base.item_name = b.item_name;
+        base.item_unit = b.item_unit;
+        base.item_product_line = b.item_product_line;
+        base.origin_period = b.origin_period;
+        if (b.status === "outstanding") {
+          const key = attrKey({
+            product_line: b.item_product_line, warna: b.i_warna, batch_warna: b.i_batch,
+            coating: b.i_coating, th: b.i_th, mm: b.i_mm, p: b.i_p, l: b.i_l, name: b.item_name,
+          });
+          const m = activeItems.find((c) => c.key === key) ?? null;
+          base.match = m ? { item_id: m.id, name: m.name, unit: m.unit, available: m.available } : null;
+        }
+        return base;
+      });
+      return { count: bookings.length, bookings };
     },
   );
 
@@ -702,7 +832,12 @@ export async function stockRoutes(app: FastifyInstance): Promise<void> {
 
       try {
         const result = await mutateBooking(db, id, async (sql, booking) => {
-          if (booking.status !== "overbooked")
+          // Setujui answers the overbook question (R5), so it only applies to an
+          // overbooked booking. Tolak is also how PPIC closes a dead OUTSTANDING
+          // order (R17) — same terminal state, same verified_by/at stamps.
+          if (action === "approve" && booking.status !== "overbooked")
+            throw new HttpError(409, "Booking bukan status menunggu verifikasi.");
+          if (action === "reject" && !["overbooked", "outstanding"].includes(booking.status))
             throw new HttpError(409, "Booking bukan status menunggu verifikasi.");
           const next = action === "approve" ? "approved" : "rejected";
           const [updated] = await sql<BookingRow[]>`
@@ -734,7 +869,9 @@ export async function stockRoutes(app: FastifyInstance): Promise<void> {
 
       try {
         const result = await mutateBooking(db, id, async (sql, booking) => {
-          if (!["confirmed", "overbooked", "approved"].includes(booking.status))
+          // Outstanding is cancellable too (R6) — a carried booking whose deal
+          // died. Nothing to restore there; it was already deducting nowhere.
+          if (!["confirmed", "overbooked", "approved", "outstanding"].includes(booking.status))
             throw new HttpError(409, "Booking sudah selesai / dibatalkan.");
           const [updated] = await sql<BookingRow[]>`
             update stock_bookings
@@ -787,20 +924,114 @@ export async function stockRoutes(app: FastifyInstance): Promise<void> {
     },
   );
 
+  // ── 12 · POST /api/stock/bookings/:id/fulfill ──────────────────────────────
+  // Penuhi (R17): "this carried order is real — process it against the stock
+  // check that is active NOW." Matches the booking's origin item to the active
+  // period by normalized attribute key; matched → the qty starts deducting from
+  // the current item (may go negative, consistent with R4's never-block rule);
+  // unmatched → the product is gone from the new count, so completing it must
+  // be an explicit, confirmed no-deduction decision. Matching always runs at
+  // execution time, so an upload landing mid-click can never deduct stale stock
+  // (§8.10/§8.11).
+  app.post<{ Params: { id: string }; Body: Record<string, unknown> }>(
+    "/api/stock/bookings/:id/fulfill", async (request, reply) => {
+      const db = getSql();
+      if (!db) return dbErr(reply);
+      const id = str(request.params.id);
+      if (!/^\d+$/.test(id)) return reply.code(400).send({ error: "Booking tidak valid." });
+
+      const actor = optStr(request.body?.actor);
+      const confirmNoDeduct = request.body?.confirm_no_deduct === true;
+      if (!actor) return reply.code(400).send({ error: "Nama petugas wajib diisi." });
+
+      try {
+        const result = await db.begin(async (sql) => {
+          const [booking] = await sql<BookingRow[]>`
+            select * from stock_bookings where id = ${id} for update
+          `;
+          if (!booking) throw new HttpError(404, "Booking tidak ditemukan.");
+          if (booking.status !== "outstanding")
+            throw new HttpError(409, "Booking bukan status outstanding.");
+
+          // Origin item supplies the attribute key to match on.
+          const [origin] = await sql<{
+            name: string; product_line: string | null; warna: string | null;
+            batch_warna: string | null; coating: string | null;
+            th: string | null; mm: string | null; p: string | null; l: string | null;
+          }[]>`
+            select name, product_line, warna, batch_warna, coating, th, mm, p, l
+            from stock_items where id = ${booking.item_id}
+          `;
+          if (!origin) throw new HttpError(404, "Produk asal tidak ditemukan.");
+          const key = attrKey(origin);
+
+          // Candidates from whatever period is active right now.
+          const candidates = await sql<{
+            id: string; name: string; unit: string; product_line: string | null; warna: string | null;
+            batch_warna: string | null; coating: string | null;
+            th: string | null; mm: string | null; p: string | null; l: string | null;
+          }[]>`
+            select i.id, i.name, i.unit, i.product_line, i.warna, i.batch_warna, i.coating,
+                   i.th, i.mm, i.p, i.l
+            from stock_items i
+            join stock_uploads u on u.id = i.upload_id and u.status = 'active'
+          `;
+          const match = candidates.find((c) => attrKey(c) === key) ?? null;
+
+          if (!match) {
+            if (!confirmNoDeduct)
+              throw new HttpError(409, "Produk tidak ada di stock check aktif. Kirim confirm_no_deduct untuk tandai selesai tanpa potongan.");
+            const [updated] = await sql<BookingRow[]>`
+              update stock_bookings
+              set status = 'completed', completed_by = ${actor}, completed_at = now(),
+                  fulfilled_item_id = null
+              where id = ${id} returning *
+            `;
+            return { booking: updated!, matched_item: null, available_after: null as number | null };
+          }
+
+          // Lock the target item so available_after settles cleanly (R7/§8.10).
+          await sql`select id from stock_items where id = ${match.id} for update`;
+          const [updated] = await sql<BookingRow[]>`
+            update stock_bookings
+            set status = 'completed', completed_by = ${actor}, completed_at = now(),
+                fulfilled_item_id = ${match.id}
+            where id = ${id} returning *
+          `;
+          const available_after = await availableOf(sql, match.id);
+          return {
+            booking: updated!,
+            matched_item: { id: match.id, name: match.name, unit: match.unit },
+            available_after,
+          };
+        });
+
+        return {
+          ok: true,
+          booking: { ...result.booking, qty: Number(result.booking.qty) },
+          matched_item: result.matched_item,
+          available_after: result.available_after,
+        };
+      } catch (err) {
+        if (err instanceof HttpError) return reply.code(err.status).send({ error: err.message });
+        request.log.error({ err }, "stock fulfill failed");
+        return reply.code(500).send({ error: "Gagal memenuhi booking." });
+      }
+    },
+  );
+
   // ── 10 · GET /api/stock/rep-stats ──────────────────────────────────────────
   // Per-sales long-booking tracker, all uploads, all time (R15). Grouped by
   // rep_key with fallback lower(rep_name) when null. Timer derivation done in
-  // JS so the R13 rules (hangus etc.) stay in exactly one place.
+  // JS so the R13 rules stay in exactly one place. "Open" now splits into
+  // aktif + outstanding — a booking carried unfulfilled through several stock
+  // checks is the strongest lama signal there is.
   app.get("/api/stock/rep-stats", async (_req, reply) => {
     const db = getSql();
     if (!db) return dbErr(reply);
 
     const now = Date.now();
-    const rows = await db<BookingRow[]>`
-      select b.*, u.archived_at as upload_archived_at
-      from stock_bookings b
-      join stock_uploads u on u.id = b.upload_id
-    `;
+    const rows = await db<BookingRow[]>`select b.* from stock_bookings b`;
 
     interface Agg {
       rep_key: string | null; rep_name: string;
@@ -808,6 +1039,7 @@ export async function stockRoutes(app: FastifyInstance): Promise<void> {
       ended_count: number; ended_seconds: number;
       outcomes: Record<Outcome, number>;
       active_now: number; active_long_now: number;
+      outstanding_now: number; outstanding_long_now: number;
     }
     const map = new Map<string, Agg>();
     for (const b of rows) {
@@ -817,8 +1049,9 @@ export async function stockRoutes(app: FastifyInstance): Promise<void> {
         a = {
           rep_key: b.rep_key, rep_name: b.rep_name,
           total: 0, long_count: 0, ended_count: 0, ended_seconds: 0,
-          outcomes: { selesai: 0, dibatalkan: 0, ditolak: 0, hangus: 0, aktif: 0 },
+          outcomes: { selesai: 0, dibatalkan: 0, ditolak: 0, aktif: 0, outstanding: 0 },
           active_now: 0, active_long_now: 0,
+          outstanding_now: 0, outstanding_long_now: 0,
         };
         map.set(key, a);
       }
@@ -827,8 +1060,13 @@ export async function stockRoutes(app: FastifyInstance): Promise<void> {
       a.outcomes[t.outcome]++;
       if (t.long) a.long_count++;
       if (t.running) {
-        a.active_now++;
-        if (t.long) a.active_long_now++;
+        if (t.outcome === "outstanding") {
+          a.outstanding_now++;
+          if (t.long) a.outstanding_long_now++;
+        } else {
+          a.active_now++;
+          if (t.long) a.active_long_now++;
+        }
       } else {
         a.ended_count++;
         a.ended_seconds += t.duration_seconds;
@@ -846,6 +1084,8 @@ export async function stockRoutes(app: FastifyInstance): Promise<void> {
         outcomes: a.outcomes,
         active_now: a.active_now,
         active_long_now: a.active_long_now,
+        outstanding_now: a.outstanding_now,
+        outstanding_long_now: a.outstanding_long_now,
       }))
       // R15 sort: lama count desc, then lama % desc.
       .sort((x, y) => y.long_count - x.long_count || y.long_pct - x.long_pct);
@@ -881,49 +1121,106 @@ export async function stockRoutes(app: FastifyInstance): Promise<void> {
       from stock_uploads where id = ${item.upload_id}
     `;
 
+    // Two families of booking touch this item (R16):
+    //   • origin bookings (item_id = X) — booked here, whatever became of them;
+    //   • bookings Penuhi'd INTO here from an older period (fulfilled_item_id = X).
     const now = Date.now();
-    const bookingRows = await db<BookingRow[]>`
-      select b.*, u.archived_at as upload_archived_at
+    const bookingRows = await db<(BookingRow & { origin_period: string | null })[]>`
+      select b.*,
+             coalesce(nullif(ou.sheet_name, ''), ou.filename, 'periode ' || ou.id) as origin_period
       from stock_bookings b
-      join stock_uploads u on u.id = b.upload_id
-      where b.item_id = ${id}
+      join stock_uploads ou on ou.id = b.upload_id
+      where b.item_id = ${id} or b.fulfilled_item_id = ${id}
       order by b.created_at asc, b.id asc
     `;
 
+    // Where does a Penuhi'd booking's qty actually land? Needed to label an
+    // origin row that has since been fulfilled into some other period.
+    const movedIds = bookingRows
+      .filter((b) => b.fulfilled_item_id && !eqId(b.fulfilled_item_id, id))
+      .map((b) => b.fulfilled_item_id as string);
+    const movedLabels = new Map<string, string>();
+    if (movedIds.length) {
+      const rows = await db<{ item_id: string; period: string }[]>`
+        select i.id as item_id,
+               coalesce(nullif(u.sheet_name, ''), u.filename, 'periode ' || u.id) as period
+        from stock_items i join stock_uploads u on u.id = i.upload_id
+        where i.id = any(${movedIds})
+      `;
+      for (const r of rows) movedLabels.set(String(r.item_id), r.period);
+    }
+
     const qtyInitial = Number(item.qty_initial);
+    interface Ev { at: string | null; sort: number; ev: Record<string, unknown> }
+    const bookingEvents: Ev[] = [];
+
+    for (const b of bookingRows) {
+      const t = timerFor(b, now);
+      const isOrigin = eqId(b.item_id, id);
+      const effHere = eqId(b.fulfilled_item_id ?? b.item_id, id);
+      // Currently counting against THIS item per the canonical booked() rule.
+      const deducting = (DEDUCTING as readonly string[]).includes(b.status) && effHere;
+      const viaPenuhi = !isOrigin && effHere;
+
+      // Markers for an origin row whose qty no longer counts here (R16).
+      let moved: string | null = null;
+      let movedPeriod: string | null = null;
+      if (isOrigin && !deducting) {
+        if (b.status === "outstanding") moved = "outstanding";
+        else if (b.status === "completed" && b.fulfilled_item_id && !effHere) {
+          moved = "fulfilled";
+          movedPeriod = movedLabels.get(String(b.fulfilled_item_id)) ?? null;
+        }
+      }
+      // Struck-through only for genuinely dead bookings; carried/moved rows
+      // keep their marker instead so the trail stays readable.
+      const reversed = isOrigin && (b.status === "cancelled" || b.status === "rejected");
+
+      // A fulfilled-in booking belongs at its completed_at, not its created_at.
+      const at = viaPenuhi ? (b.completed_at ?? b.created_at) : b.created_at;
+      bookingEvents.push({
+        at,
+        sort: Date.parse(at ?? b.created_at),
+        ev: {
+          type: "booking",
+          at,
+          reversed,
+          via_penuhi: viaPenuhi,
+          ...(viaPenuhi ? { origin_period: b.origin_period } : {}),
+          ...(moved ? { moved, moved_period: movedPeriod } : {}),
+          _deducting: deducting,
+          _qty: Number(b.qty),
+          booking: {
+            id: b.id,
+            rep_name: b.rep_name,
+            qty: Number(b.qty),
+            customer_name: b.customer_name,
+            status: b.status,
+            outcome: t.outcome,
+            duration_seconds: t.duration_seconds,
+            running: t.running,
+            long: t.long,
+            verified_at: b.verified_at,
+            completed_at: b.completed_at,
+            cancelled_at: b.cancelled_at,
+          },
+        },
+      });
+    }
+
+    bookingEvents.sort((a, b) => a.sort - b.sort);
+
     const events: Record<string, unknown>[] = [{
       type: "upload",
       at: upload?.created_at ?? null,
       qty: qtyInitial,
       sisa: qtyInitial,
     }];
-
     let sisa = qtyInitial;
-    for (const b of bookingRows) {
-      const deducting = (DEDUCTING as readonly string[]).includes(b.status);
-      const reversed = !deducting; // cancelled | rejected → sisa untouched
-      if (deducting) sisa = round2(sisa - Number(b.qty));
-      const t = timerFor(b, now);
-      events.push({
-        type: "booking",
-        at: b.created_at,
-        sisa,
-        reversed,
-        booking: {
-          id: b.id,
-          rep_name: b.rep_name,
-          qty: Number(b.qty),
-          customer_name: b.customer_name,
-          status: b.status,
-          outcome: t.outcome,
-          duration_seconds: t.duration_seconds,
-          running: t.running,
-          long: t.long,
-          verified_at: b.verified_at,
-          completed_at: b.completed_at,
-          cancelled_at: b.cancelled_at,
-        },
-      });
+    for (const { ev } of bookingEvents) {
+      if (ev._deducting) sisa = round2(sisa - (ev._qty as number));
+      delete ev._deducting; delete ev._qty;
+      events.push({ ...ev, sisa });
     }
 
     return {

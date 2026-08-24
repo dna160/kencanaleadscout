@@ -8,10 +8,15 @@
  * Three tables, one derived number:
  *   stock_uploads   — one active period at a time (partial unique index, R1)
  *   stock_items     — the uploaded inventory rows, immutable after upload (R3)
- *   stock_bookings  — every booking; six statuses; deducts by derivation (R4–R12)
+ *   stock_bookings  — every booking; seven statuses; deducts by derivation (R4–R17)
  *
- *   available (Tersedia) = qty_initial − Σ qty of DEDUCTING bookings   (never stored)
- *   DEDUCTING = confirmed | overbooked | approved | completed
+ *   available (Tersedia) = qty_initial − booked(item)                  (never stored)
+ *   booked(item) = Σ qty of bookings in confirmed | overbooked | approved | completed
+ *                  whose EFFECTIVE item — coalesce(fulfilled_item_id, item_id) — is item.
+ *
+ * An upload replaces the quantities but never wipes bookings: still-deducting
+ * ones flip to 'outstanding' (R1/R2), which deducts nowhere until PPIC presses
+ * Penuhi (R17) and the qty is re-applied against the then-active period.
  */
 import type { Sql } from "./client.js";
 import { getSql } from "./client.js";
@@ -85,7 +90,11 @@ export async function runStockMigrations(db: Sql = getSql()!): Promise<void> {
         qty           numeric not null check (qty > 0),
         customer_name text not null,
         note          text,
-        status        text not null default 'confirmed', -- confirmed | overbooked | approved | rejected | cancelled | completed
+        status        text not null default 'confirmed', -- confirmed | overbooked | approved | rejected | cancelled | completed | outstanding
+        -- set by Penuhi (R17): the ACTIVE-period item this booking was deducted
+        -- from. Only ever written together with status='completed', so the
+        -- effective item a booking counts against is coalesce(fulfilled_item_id, item_id).
+        fulfilled_item_id bigint references stock_items(id),
         created_at    timestamptz not null default now(),
         verified_by   text,
         verified_at   timestamptz,
@@ -103,6 +112,10 @@ export async function runStockMigrations(db: Sql = getSql()!): Promise<void> {
     // Selesai action (R12) — bring the completion stamps in via the usual pattern.
     await db`alter table stock_bookings add column if not exists completed_by text`;
     await db`alter table stock_bookings add column if not exists completed_at timestamptz`;
+    // R17: Penuhi target. Added separately so databases predating outstanding
+    // bookings pick it up on the next boot.
+    await db`alter table stock_bookings add column if not exists fulfilled_item_id bigint references stock_items(id)`;
+    await db`create index if not exists stock_bookings_fulfilled_idx on stock_bookings (fulfilled_item_id)`;
   } catch (bookingsErr) {
     console.error("[migrateStock] stock_bookings step failed (non-fatal):", bookingsErr);
   }

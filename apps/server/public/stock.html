@@ -51,6 +51,7 @@
   .st-rejected{background:#fee2e2;color:#b91c1c}
   .st-cancelled{background:#f3f4f6;color:#6b7280}
   .st-completed{background:#dbeafe;color:#1d4ed8}
+  .st-outstanding{background:#ffedd5;color:#c2410c}
   button.btn{background:var(--accent);color:#fff;border:none;border-radius:10px;padding:0 14px;min-height:40px;font-weight:700;font-size:13px;cursor:pointer}
   button.btn:disabled{opacity:.55;cursor:default}
   button.btn.ghost{background:#fff;color:var(--ink);border:1px solid var(--line)}
@@ -376,7 +377,7 @@ async function loadMine(){
   }catch{ MINE=[]; }
   renderMine();
 }
-const STLABEL={confirmed:"Terkonfirmasi",overbooked:"Menunggu Verifikasi",approved:"Disetujui (overbook)",rejected:"Ditolak",cancelled:"Dibatalkan",completed:"Selesai"};
+const STLABEL={confirmed:"Terkonfirmasi",overbooked:"Menunggu Verifikasi",approved:"Disetujui (overbook)",rejected:"Ditolak",cancelled:"Dibatalkan",completed:"Selesai",outstanding:"Outstanding"};
 function itemName(id){ const i=SUMMARY.items.find(x=>eq(x.id,id)); return i?i.name:("#"+id); }
 function renderMine(){
   $("#mineCount").textContent=MINE.length;
@@ -384,12 +385,16 @@ function renderMine(){
   $("#mineBody").innerHTML=`<div style="overflow-x:auto"><table>
     <thead><tr><th>Produk</th><th>Qty</th><th>Customer</th><th>Status</th><th>Umur</th><th>Waktu</th><th></th></tr></thead>
     <tbody>${MINE.map(b=>{
-      const cancellable=["confirmed","overbooked","approved"].includes(b.status);
+      const cancellable=["confirmed","overbooked","approved","outstanding"].includes(b.status);
       // sales page: neutral age chip only, NO lama styling (R14)
       const ageTxt=b.running?dur(ageSec(b.created_at)):dur(b.duration_seconds);
+      // Outstanding = carried past a stock-check renewal. Nothing ever leaves
+      // this list on upload — it is the rep's own log (§7.1, issue #1).
+      const hint=b.status==="outstanding"
+        ? `<div class="sub2">Menunggu diproses PPIC terhadap stock check baru.</div>` : "";
       return `<tr>
-        <td>${esc(itemName(b.item_id))}</td>
-        <td>${NF.format(b.qty)}</td>
+        <td>${esc(b.item_name||itemName(b.item_id))}${hint}</td>
+        <td>${NF.format(b.qty)} ${esc(b.item_unit||"")}</td>
         <td>${esc(b.customer_name)}</td>
         <td><span class="chip st-${b.status}">${STLABEL[b.status]||b.status}</span></td>
         <td><span class="chip age" data-age="${b.running?b.created_at:''}" data-dur="${b.running?'':b.duration_seconds}">${ageTxt}</span></td>

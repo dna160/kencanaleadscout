@@ -235,8 +235,9 @@
             if (sales) sales.textContent = (t.items || 0) + " item · " + (t.items_available || 0) + " tersedia · per " + per;
             if (ppic) {
               var pend = t.pending_overbooked || 0;
-              ppic.textContent = pend + " menunggu verifikasi · per " + per;
-              if (pend > 0) ppic.style.color = "#e8a86a";
+              var outs = t.outstanding || 0;
+              ppic.textContent = outs + " outstanding · " + pend + " menunggu verifikasi · per " + per;
+              if (pend > 0 || outs > 0) ppic.style.color = "#e8a86a";
             }
           })
           .catch(function () { /* stay silent — cards keep their default text */ });
