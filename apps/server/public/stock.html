@@ -178,8 +178,17 @@ function selectedRep(){
   return null;
 }
 async function loadReps(){
+  // Stock-scoped roster: same shape as /api/sales-reps plus the Online team.
+  // Falls back to the app-wide registry if the stock endpoint is unavailable.
   try{
-    const r=await fetch("/api/sales-reps"); const j=await r.json();
+    let j=null;
+    try{
+      const r=await fetch("/api/stock/sales-reps");
+      if(r.ok) j=await r.json();
+    }catch{}
+    if(!j||!(j.sales_reps||[]).length){
+      const r2=await fetch("/api/sales-reps"); j=await r2.json();
+    }
     REPS=(j.sales_reps||[]).map(x=>({
       value:x.value||((x.team||"retail")+":"+x.id),
       name:x.full_name||x.name||"—",
@@ -191,7 +200,7 @@ async function loadReps(){
     $("#repFreeWrap").style.display="";
     sel.parentElement.style.display="none";
   }else{
-    const groups={retail:"Retail",project:"Project",distributor:"Distributor"};
+    const groups={retail:"Retail",project:"Project",distributor:"Distributor",online:"Online"};
     const byTeam={};
     for(const r of REPS){ (byTeam[r.team]=byTeam[r.team]||[]).push(r); }
     let html='<option value="">— Pilih nama —</option>';

@@ -106,6 +106,35 @@ export async function runStockMigrations(db: Sql = getSql()!): Promise<void> {
   } catch (bookingsErr) {
     console.error("[migrateStock] stock_bookings step failed (non-fatal):", bookingsErr);
   }
+
+  // ── online_salespeople — the "Online" sales team ───────────────────────────
+  // Same shape as the other per-team rosters (salespeople, project_salespeople,
+  // distributor_salespeople). Booking attribution is by rep_key "online:<id>",
+  // so these reps flow into the tracker, riwayat, and exports like any other.
+  // Deactivate on departure; never hard-delete (bookings reference the name).
+  try {
+    await db`
+      create table if not exists online_salespeople (
+        id         bigserial primary key,
+        full_name  text not null,
+        code       text unique,
+        active     boolean not null default true,
+        created_at timestamptz not null default now()
+      )
+    `;
+    for (const r of [
+      { full_name: "Andini", code: "ADN" },
+      { full_name: "Risti",  code: "RST" },
+    ]) {
+      await db`
+        insert into online_salespeople (full_name, code)
+        values (${r.full_name}, ${r.code})
+        on conflict (code) do nothing
+      `;
+    }
+  } catch (onlineErr) {
+    console.error("[migrateStock] online_salespeople step failed (non-fatal):", onlineErr);
+  }
 }
 
 // Allow `tsx src/db/migrateStock.ts` as a one-off.

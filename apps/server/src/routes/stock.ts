@@ -242,6 +242,43 @@ export async function stockRoutes(app: FastifyInstance): Promise<void> {
   const dbErr = (reply: import("fastify").FastifyReply) =>
     reply.code(503).send({ error: "Database tidak tersedia." });
 
+  // ── 0 · GET /api/stock/sales-reps ──────────────────────────────────────────
+  // Rep roster for the booking dropdown. Mirrors the shape of the app-wide
+  // /api/sales-reps (composite `value` of "team:id") but adds the Online team,
+  // which only the stock module books against — the shared endpoint is left
+  // untouched so Color Gateway's own rep list and its team whitelist keep
+  // working unchanged. Each team is read independently so one missing table
+  // degrades to a shorter list instead of an empty dropdown.
+  app.get("/api/stock/sales-reps", async (_req, reply) => {
+    const db = getSql();
+    if (!db) return dbErr(reply);
+
+    const TEAMS: { team: string; table: string }[] = [
+      { team: "retail",      table: "salespeople" },
+      { team: "project",     table: "project_salespeople" },
+      { team: "distributor", table: "distributor_salespeople" },
+      { team: "online",      table: "online_salespeople" },
+    ];
+    const per = await Promise.all(TEAMS.map(async ({ team, table }) => {
+      try {
+        const rows = await db<{ id: string; full_name: string; code: string | null }[]>`
+          select id, full_name, code from ${db(table)}
+          where active = true order by full_name
+        `;
+        return rows.map((r) => ({
+          value: `${team}:${r.id}`,
+          team,
+          id: r.id,
+          full_name: r.full_name,
+          code: r.code,
+        }));
+      } catch {
+        return [];
+      }
+    }));
+    return { sales_reps: per.flat() };
+  });
+
   // ── 1 · GET /api/stock/summary ─────────────────────────────────────────────
   // Everything the sales page needs in one call. `booked` computed with a single
   // grouped aggregate joined to items — never per-row (§6.1).
