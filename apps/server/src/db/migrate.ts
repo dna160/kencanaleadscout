@@ -890,6 +890,7 @@ export async function runMigrations(db: Sql = getSql()!): Promise<void> {
       { full_name: "Yeni",  code: "YNI" },
       { full_name: "Yupi",  code: "YPI" },
       { full_name: "Biya",  code: "BIY" },
+      { full_name: "Devina", code: "DVN" },   // distinct from Dava (DVA)
     ]) {
       await db`
         insert into project_salespeople (full_name, code)

@@ -4,7 +4,7 @@
  * All database tables are prefixed with project_.
  * All API endpoints are under /api/project/.
  *
- * Salespeople: Ali, Dava, Deasy, Febi, Havi, Raafi, Yeni, Yupi, Biya.
+ * Salespeople: Ali, Dava, Deasy, Febi, Havi, Raafi, Yeni, Yupi, Biya, Devina.
  * Visitation log + insights, plus the same persisted health cadence as
  * Module D's `customers` table (see startProjectCadenceEngine below) —
  * display always derives health live from last_contact_at; the cadence
