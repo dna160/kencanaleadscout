@@ -478,10 +478,10 @@ async function exportEndOfDay(){
       if(!byItem.has(eff)) byItem.set(eff,[]); byItem.get(eff).push(b);
     }
     for(const arr of byItem.values()) arr.sort((a,b)=>Date.parse(a.created_at)-Date.parse(b.created_at)||(String(a.id)<String(b.id)?-1:1));
-    const movAoa=[["Produk","Brand","Waktu (WIB)","Tipe","Sales","Customer","Qty (±)","Status","Hasil","Durasi (jam)","Sisa","Catatan"]];
+    const movAoa=[["Produk","Brand","Waktu (WIB)","Tipe","Sales","Customer","No. SO","Qty (±)","Status","Hasil","Durasi (jam)","Sisa","Catatan"]];
     for(const i of items){
       let sisa=round2(i.qty_initial);
-      movAoa.push([i.name, i.product_line||"", wib(u.created_at), "Stok Awal", "", "", round2(i.qty_initial), "", "", "", sisa, ""]);
+      movAoa.push([i.name, i.product_line||"", wib(u.created_at), "Stok Awal", "", "", "", round2(i.qty_initial), "", "", "", sisa, ""]);
       const arr=byItem.get(i.id)||[];
       for(const b of arr){
         const deduct=DEDUCTING_SET.has(b.status);
@@ -489,29 +489,29 @@ async function exportEndOfDay(){
         const via=b.fulfilled_item_id&&!eq(b.fulfilled_item_id,b.item_id);
         movAoa.push([
           i.name, i.product_line||"", wib(via?(b.completed_at||b.created_at):b.created_at),
-          via?"Booking (Penuhi)":"Booking", b.rep_name, b.customer_name,
+          via?"Booking (Penuhi)":"Booking", b.rep_name, b.customer_name, b.so_number||"",
           deduct? -round2(b.qty) : 0, STLABEL[b.status]||b.status, b.outcome,
           round2(b.duration_seconds/3600), sisa, b.note||"",
         ]);
       }
     }
     const wsMov=XLSX.utils.aoa_to_sheet(movAoa);
-    setCols(wsMov,[30,14,16,10,14,20,10,20,10,12,10,24]);
+    setCols(wsMov,[30,14,16,10,14,20,16,10,20,10,12,10,24]);
 
     // ── Sheet: Booking (flat detail) ──────────────────────────────────────────
-    const bkAoa=[["Produk","Brand","Sales","Qty","Satuan","Customer","Status","Hasil","Durasi (jam)","Lama?","Waktu Booking (WIB)","Diverifikasi (WIB)","Selesai (WIB)","Dibatalkan (WIB)","Catatan"]];
+    const bkAoa=[["Produk","Brand","Sales","Qty","Satuan","Customer","No. SO","Status","Hasil","Durasi (jam)","Lama?","Waktu Booking (WIB)","Diverifikasi (WIB)","Selesai (WIB)","Dibatalkan (WIB)","Catatan"]];
     for(const b of bookings){
       const it=itemById(b.item_id);
       bkAoa.push([
         it?it.name:("#"+b.item_id), it?(it.product_line||""):"", b.rep_name, round2(b.qty),
-        it?it.unit:"", b.customer_name, STLABEL[b.status]||b.status, b.outcome,
+        it?it.unit:"", b.customer_name, b.so_number||"", STLABEL[b.status]||b.status, b.outcome,
         round2(b.duration_seconds/3600), b.long?"LAMA":"",
         wib(b.created_at), b.verified_at?wib(b.verified_at):"", b.completed_at?wib(b.completed_at):"",
         b.cancelled_at?wib(b.cancelled_at):"", b.note||"",
       ]);
     }
     const wsBk=XLSX.utils.aoa_to_sheet(bkAoa);
-    setCols(wsBk,[30,14,14,8,8,20,20,10,12,7,18,18,18,18,24]);
+    setCols(wsBk,[30,14,14,8,8,20,16,20,10,12,7,18,18,18,18,24]);
 
     const wb=XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb,wsSum,"Ringkasan");
@@ -584,7 +584,7 @@ async function loadQueue(){
       const lama=b.long?`<span class="chip lama">LAMA</span>`:"";
       const age=b.running?dur(ageSec(b.created_at)):dur(b.duration_seconds);
       return `<tr>
-        <td>${esc(nameOf(b.item_id))}</td><td>${esc(b.rep_name)}</td><td>${NF.format(b.qty)}</td><td>${esc(b.customer_name)}</td>
+        <td>${esc(b.item_name||nameOf(b.item_id))}</td><td>${esc(b.rep_name)}</td><td>${NF.format(b.qty)}</td><td>${esc(b.customer_name)}${b.so_number?`<div class="sub2">SO ${esc(b.so_number)}</div>`:""}</td>
         <td class="avail ${av!=null&&av<0?"neg":""}">${av!=null?NF.format(av):"—"}</td>
         <td><span class="chip age" data-age="${b.running?b.created_at:''}">${age}</span>${lama}</td>
         <td>${wib(b.created_at)}</td>
@@ -632,7 +632,7 @@ async function loadOutstanding(){
         <td>${esc(b.item_name)}${b.item_product_line?`<div class="sub2">${esc(b.item_product_line)}</div>`:""}</td>
         <td>${esc(b.rep_name)}</td>
         <td>${NF.format(b.qty)} ${esc(b.item_unit||"")}</td>
-        <td>${esc(b.customer_name)}</td>
+        <td>${esc(b.customer_name)}${b.so_number?`<div class="sub2">SO ${esc(b.so_number)}</div>`:""}</td>
         <td><span class="chip age" data-age="${b.running?b.created_at:''}">${age}</span>${lama}</td>
         <td>${esc(b.origin_period||"—")}<div class="sub2">${wib(b.created_at)}</div></td>
         <td>${matchLine}</td>
@@ -706,7 +706,7 @@ async function loadAll(){
       const lama=b.long?`<span class="chip lama">LAMA</span>`:"";
       const ageTxt=b.running?dur(ageSec(b.created_at)):`${dur(b.duration_seconds)} · ${b.outcome}`;
       return `<tr>
-        <td>${esc(b.item_name||nameOf(b.item_id))}</td><td>${esc(b.rep_name)}</td><td>${NF.format(b.qty)}</td><td>${esc(b.customer_name)}</td>
+        <td>${esc(b.item_name||nameOf(b.item_id))}</td><td>${esc(b.rep_name)}</td><td>${NF.format(b.qty)}</td><td>${esc(b.customer_name)}${b.so_number?`<div class="sub2">SO ${esc(b.so_number)}</div>`:""}</td>
         <td><span class="chip st-${b.status}">${STLABEL[b.status]||b.status}</span></td>
         <td><span class="chip age" data-age="${b.running?b.created_at:''}">${ageTxt}</span>${lama}</td>
         <td>${wib(b.created_at)}</td>
@@ -814,7 +814,7 @@ function renderRiwayat(j){
           : "";
     return `<tr class="${ev.reversed?"rev":""}">
       <td>${esc(b.rep_name)}${mark}${stamps?`<div class="sub2">${esc(stamps)}</div>`:""}</td>
-      <td>−${NF.format(b.qty)}</td><td>${esc(b.customer_name||"—")}</td>
+      <td>−${NF.format(b.qty)}</td><td>${esc(b.customer_name||"—")}${b.so_number?`<div class="sub2">SO ${esc(b.so_number)}</div>`:""}</td>
       <td><span class="chip st-${b.status}">${STLABEL[b.status]||b.status}</span> <span class="chip age">${dur(b.duration_seconds)}</span>${lama}</td>
       <td class="sisa">${NF.format(ev.sisa)}</td></tr>`;
   }).join("");

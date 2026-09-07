@@ -156,6 +156,7 @@ interface BookingRow {
   rep_name: string;
   qty: string;
   customer_name: string;
+  so_number: string | null;
   note: string | null;
   status: string;
   created_at: string;
@@ -225,6 +226,7 @@ function withTimer(b: BookingRow, now: number): Record<string, unknown> {
     rep_name: b.rep_name,
     qty: Number(b.qty),
     customer_name: b.customer_name,
+    so_number: b.so_number,
     note: b.note,
     status: b.status,
     created_at: b.created_at,
@@ -737,6 +739,9 @@ export async function stockRoutes(app: FastifyInstance): Promise<void> {
     const rep_key = optStr(b.rep_key);
     const rep_name = optStr(b.rep_name);
     const customer_name = optStr(b.customer_name);
+    // Optional: a booking often precedes its Sales Order, and R4 says nothing
+    // may block a sale — so an absent SO number never rejects the write.
+    const so_number = optStr(b.so_number);
     const note = optStr(b.note);
     const qty = num(b.qty);
 
@@ -768,10 +773,10 @@ export async function stockRoutes(app: FastifyInstance): Promise<void> {
 
         const [booking] = await sql<BookingRow[]>`
           insert into stock_bookings
-            (upload_id, item_id, rep_key, rep_name, qty, customer_name, note, status)
+            (upload_id, item_id, rep_key, rep_name, qty, customer_name, so_number, note, status)
           values
             (${item.upload_id}, ${item.id}, ${rep_key}, ${rep_name}, ${round2(qty)},
-             ${customer_name}, ${note}, ${status})
+             ${customer_name}, ${so_number}, ${note}, ${status})
           returning *
         `;
         if (!booking) throw new HttpError(500, "Gagal menyimpan booking.");
@@ -1195,6 +1200,7 @@ export async function stockRoutes(app: FastifyInstance): Promise<void> {
             rep_name: b.rep_name,
             qty: Number(b.qty),
             customer_name: b.customer_name,
+            so_number: b.so_number,
             status: b.status,
             outcome: t.outcome,
             duration_seconds: t.duration_seconds,

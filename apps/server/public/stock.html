@@ -231,7 +231,7 @@ let SUMMARY={upload:null,items:[],totals:{}};
 // Sort defaults to colour A–Z so a given warna always lands in the same place
 // (users were missing "BLACK" because file order scattered it below "BLACK
 // GALAXY"). Persisted, so the ordering a rep learns stays put across visits.
-const flt={q:"",brand:"",size:"",mm:"",sort:localStorage.getItem("stk_sort")||"warna",hideZero:true,onlyOver:false};
+const flt={q:"",brand:"",coating:"",size:"",mm:"",sort:localStorage.getItem("stk_sort")||"warna",hideZero:true,onlyOver:false};
 
 async function loadSummary(){
   try{
@@ -260,15 +260,18 @@ function renderMain(){
   const sizes=[...new Set(SUMMARY.items.map(sizeKey).filter(Boolean))]
     .sort((a,b)=>{const[ap,al]=a.split("x").map(Number),[bp,bl]=b.split("x").map(Number);return ap-bp||al-bl;});
   const mms=[...new Set(SUMMARY.items.map(i=>i.mm).filter(v=>v!=null))].sort((a,b)=>a-b);
+  const coatings=[...new Set(SUMMARY.items.map(i=>i.coating).filter(Boolean))].sort();
   const t=SUMMARY.totals;
   host.innerHTML=`
     <div class="toolbar">
       <input type="text" id="q" placeholder="Cari warna / batch / nama…" value="${esc(flt.q)}" />
       <select id="brand"><option value="">Semua brand</option>${brands.map(b=>`<option ${eq(b,flt.brand)?"selected":""} value="${esc(b)}">${esc(b)}</option>`).join("")}</select>
+      ${coatings.length?`<select id="coating" title="Jenis coating"><option value="">Semua coating</option>${coatings.map(c=>`<option ${eq(c,flt.coating)?"selected":""} value="${esc(c)}">${esc(c)}</option>`).join("")}</select>`:""}
       ${sizes.length?`<select id="size" title="Ukuran panel (P×L)"><option value="">Semua ukuran</option>${sizes.map(v=>{const[a,b2]=v.split("x");return `<option ${eq(v,flt.size)?"selected":""} value="${esc(v)}">${NF.format(Number(a))}×${NF.format(Number(b2))}</option>`;}).join("")}</select>`:""}
       ${mms.length?`<select id="mm" title="Tebal panel"><option value="">Semua tebal</option>${mms.map(v=>`<option ${eq(String(v),flt.mm)?"selected":""} value="${v}">${NF.format(v)} mm</option>`).join("")}</select>`:""}
       <select id="sort" title="Urutkan">
         <option value="warna" ${flt.sort==="warna"?"selected":""}>Urut: Warna A–Z</option>
+        <option value="coating" ${flt.sort==="coating"?"selected":""}>Urut: Coating</option>
         <option value="avail_desc" ${flt.sort==="avail_desc"?"selected":""}>Urut: Stok terbanyak</option>
         <option value="avail_asc" ${flt.sort==="avail_asc"?"selected":""}>Urut: Stok paling sedikit</option>
         <option value="file" ${flt.sort==="file"?"selected":""}>Urut: Sesuai file</option>
@@ -287,6 +290,7 @@ function renderMain(){
     </div>`;
   $("#q").addEventListener("input",e=>{flt.q=e.target.value;renderRows();});
   $("#brand").addEventListener("change",e=>{flt.brand=e.target.value;renderRows();});
+  $("#coating")?.addEventListener("change",e=>{flt.coating=e.target.value;renderRows();});
   $("#size")?.addEventListener("change",e=>{flt.size=e.target.value;renderRows();});
   $("#mm")?.addEventListener("change",e=>{flt.mm=e.target.value;renderRows();});
   $("#sort").addEventListener("change",e=>{flt.sort=e.target.value;localStorage.setItem("stk_sort",flt.sort);renderRows();});
@@ -324,6 +328,7 @@ function cmpFor(sort,fileIdx){
     || String(a.product_line||"").localeCompare(String(b.product_line||""),"id",{sensitivity:"base"})
     || sizeKey(a).localeCompare(sizeKey(b))
     || (String(a.id)<String(b.id)?-1:String(a.id)>String(b.id)?1:0);
+  if(sort==="coating") return (a,b)=>String(a.coating||"~").localeCompare(String(b.coating||"~"),"id",{sensitivity:"base"})||tail(a,b);
   if(sort==="avail_desc") return (a,b)=>(b.available-a.available)||tail(a,b);
   if(sort==="avail_asc")  return (a,b)=>(a.available-b.available)||tail(a,b);
   if(sort==="file")       return (a,b)=>((fileIdx.get(String(a.id))??0)-(fileIdx.get(String(b.id))??0));
@@ -334,6 +339,7 @@ function visibleItems(){
   const q=flt.q.trim().toLowerCase();
   const rows=SUMMARY.items.filter(i=>{
     if(flt.brand && !eq(i.product_line,flt.brand)) return false;
+    if(flt.coating && !eq(i.coating,flt.coating)) return false;
     if(flt.size && sizeKey(i)!==flt.size) return false;
     if(flt.mm && String(i.mm)!==flt.mm) return false;
     if(flt.onlyOver && !i.overbooked) return false;
@@ -365,7 +371,7 @@ function renderRows(){
   const rows=visibleItems();
   const meta=$("#invMeta"), t=SUMMARY.totals||{};
   if(meta){
-    const filtered=flt.q||flt.brand||flt.size||flt.mm||flt.onlyOver||flt.hideZero;
+    const filtered=flt.q||flt.brand||flt.coating||flt.size||flt.mm||flt.onlyOver||flt.hideZero;
     meta.textContent=filtered
       ? `${rows.length} ditampilkan · ${t.items||0} item`
       : `${t.items_available||0} tersedia · ${t.items||0} item${t.pending_overbooked?` · ${t.pending_overbooked} overbook`:""}`;
@@ -401,6 +407,7 @@ function openBooking(itemId){
     ${neg?`<div class="hint">Booking tetap bisa — akan masuk antrean verifikasi PPIC.</div>`:""}
     <label class="fld">Jumlah (${esc(i.unit)})<input type="number" id="bkQty" min="0.01" step="0.01" inputmode="decimal" placeholder="0"/></label>
     <label class="fld">Customer<input type="text" id="bkCust" placeholder="Nama customer"/></label>
+    <label class="fld">No. SO (opsional)<input type="text" id="bkSO" placeholder="mis. SO-2026-0142"/></label>
     <label class="fld">Catatan (opsional)<input type="text" id="bkNote" placeholder="—"/></label>
     <div class="foot">Atas nama: <b>${esc(rep.name)}</b></div>
     <div class="actions">
@@ -419,13 +426,14 @@ async function submitBooking(itemId){
   const rep=selectedRep(); if(!rep) return;
   const qty=Number($("#bkQty").value);
   const customer=$("#bkCust").value.trim();
+  const so=$("#bkSO").value.trim();
   const note=$("#bkNote").value.trim();
   if(!(qty>0)){ toast("Jumlah tidak valid.","err"); return; }
   if(!customer){ toast("Customer wajib diisi.","err"); return; }
   const btn=$("#bkSubmit"); btn.disabled=true; btn.innerHTML=`<span class="spin"></span>Menyimpan`;
   try{
     const r=await fetch("/api/stock/bookings",{method:"POST",headers:{"content-type":"application/json"},
-      body:JSON.stringify({item_id:itemId,rep_key:rep.key,rep_name:rep.name,qty,customer_name:customer,note:note||null})});
+      body:JSON.stringify({item_id:itemId,rep_key:rep.key,rep_name:rep.name,qty,customer_name:customer,so_number:so||null,note:note||null})});
     const j=await r.json();
     if(!r.ok){
       toast(j.error||"Gagal.","err");
@@ -469,7 +477,7 @@ function renderMine(){
       return `<tr>
         <td>${esc(b.item_name||itemName(b.item_id))}${hint}</td>
         <td>${NF.format(b.qty)} ${esc(b.item_unit||"")}</td>
-        <td>${esc(b.customer_name)}</td>
+        <td>${esc(b.customer_name)}${b.so_number?`<div class="sub2">SO ${esc(b.so_number)}</div>`:""}</td>
         <td><span class="chip st-${b.status}">${STLABEL[b.status]||b.status}</span></td>
         <td><span class="chip age" data-age="${b.running?b.created_at:''}" data-dur="${b.running?'':b.duration_seconds}">${ageTxt}</span></td>
         <td>${wib(b.created_at)}</td>

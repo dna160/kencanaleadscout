@@ -89,6 +89,7 @@ export async function runStockMigrations(db: Sql = getSql()!): Promise<void> {
         rep_name      text not null,
         qty           numeric not null check (qty > 0),
         customer_name text not null,
+        so_number     text,                             -- Sales Order no., optional at booking time
         note          text,
         status        text not null default 'confirmed', -- confirmed | overbooked | approved | rejected | cancelled | completed | outstanding
         -- set by Penuhi (R17): the ACTIVE-period item this booking was deducted
@@ -115,6 +116,8 @@ export async function runStockMigrations(db: Sql = getSql()!): Promise<void> {
     // R17: Penuhi target. Added separately so databases predating outstanding
     // bookings pick it up on the next boot.
     await db`alter table stock_bookings add column if not exists fulfilled_item_id bigint references stock_items(id)`;
+    // SO number: recorded with the booking when the rep already has one.
+    await db`alter table stock_bookings add column if not exists so_number text`;
     await db`create index if not exists stock_bookings_fulfilled_idx on stock_bookings (fulfilled_item_id)`;
   } catch (bookingsErr) {
     console.error("[migrateStock] stock_bookings step failed (non-fatal):", bookingsErr);
