@@ -28,6 +28,9 @@
   .banner button{margin-left:auto;background:none;border:none;color:#7a4f08;font-size:18px;cursor:pointer;line-height:1;padding:0 4px}
   .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
   .toolbar input[type=text]{flex:1;min-width:140px}
+  /* Filter selects share rows instead of one-per-line at 380px — the point of
+     these controls is less scrolling, so the toolbar must not add its own. */
+  .toolbar select{min-width:0;flex:1 1 46%}
   .chkline{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);cursor:pointer;user-select:none;min-height:44px}
   .chkline input{width:18px;height:18px}
   .card{background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden;margin-bottom:14px}
@@ -225,7 +228,10 @@ $("#bannerX").addEventListener("click",()=>{ $("#banner").style.display="none"; 
 
 // ── state + fetch ─────────────────────────────────────────────────────────────
 let SUMMARY={upload:null,items:[],totals:{}};
-const flt={q:"",brand:"",hideZero:true,onlyOver:false};
+// Sort defaults to colour A–Z so a given warna always lands in the same place
+// (users were missing "BLACK" because file order scattered it below "BLACK
+// GALAXY"). Persisted, so the ordering a rep learns stays put across visits.
+const flt={q:"",brand:"",size:"",mm:"",sort:localStorage.getItem("stk_sort")||"warna",hideZero:true,onlyOver:false};
 
 async function loadSummary(){
   try{
@@ -249,17 +255,30 @@ function renderMain(){
     return;
   }
   const brands=[...new Set(SUMMARY.items.map(i=>i.product_line).filter(Boolean))].sort();
+  // Sizing options come from the active period only, so a generic upload (no
+  // dimensions) simply doesn't show these filters.
+  const sizes=[...new Set(SUMMARY.items.map(sizeKey).filter(Boolean))]
+    .sort((a,b)=>{const[ap,al]=a.split("x").map(Number),[bp,bl]=b.split("x").map(Number);return ap-bp||al-bl;});
+  const mms=[...new Set(SUMMARY.items.map(i=>i.mm).filter(v=>v!=null))].sort((a,b)=>a-b);
   const t=SUMMARY.totals;
   host.innerHTML=`
     <div class="toolbar">
       <input type="text" id="q" placeholder="Cari warna / batch / nama…" value="${esc(flt.q)}" />
       <select id="brand"><option value="">Semua brand</option>${brands.map(b=>`<option ${eq(b,flt.brand)?"selected":""} value="${esc(b)}">${esc(b)}</option>`).join("")}</select>
+      ${sizes.length?`<select id="size" title="Ukuran panel (P×L)"><option value="">Semua ukuran</option>${sizes.map(v=>{const[a,b2]=v.split("x");return `<option ${eq(v,flt.size)?"selected":""} value="${esc(v)}">${NF.format(Number(a))}×${NF.format(Number(b2))}</option>`;}).join("")}</select>`:""}
+      ${mms.length?`<select id="mm" title="Tebal panel"><option value="">Semua tebal</option>${mms.map(v=>`<option ${eq(String(v),flt.mm)?"selected":""} value="${v}">${NF.format(v)} mm</option>`).join("")}</select>`:""}
+      <select id="sort" title="Urutkan">
+        <option value="warna" ${flt.sort==="warna"?"selected":""}>Urut: Warna A–Z</option>
+        <option value="avail_desc" ${flt.sort==="avail_desc"?"selected":""}>Urut: Stok terbanyak</option>
+        <option value="avail_asc" ${flt.sort==="avail_asc"?"selected":""}>Urut: Stok paling sedikit</option>
+        <option value="file" ${flt.sort==="file"?"selected":""}>Urut: Sesuai file</option>
+      </select>
       <label class="chkline"><input type="checkbox" id="hz" ${flt.hideZero?"checked":""}/> Sembunyikan stok 0</label>
       <label class="chkline"><input type="checkbox" id="oo" ${flt.onlyOver?"checked":""}/> Hanya overbooked</label>
     </div>
     <div class="card">
       <h2>Inventaris
-        <span class="chip age">${t.items_available||0} tersedia · ${t.items||0} item${t.pending_overbooked?` · ${t.pending_overbooked} overbook`:""}</span>
+        <span class="chip age" id="invMeta">${t.items_available||0} tersedia · ${t.items||0} item${t.pending_overbooked?` · ${t.pending_overbooked} overbook`:""}</span>
       </h2>
       <div style="overflow-x:auto"><table>
         <thead><tr><th>Brand</th><th>Warna</th><th>Spec</th><th style="text-align:right">Tersedia</th><th></th></tr></thead>
@@ -268,14 +287,55 @@ function renderMain(){
     </div>`;
   $("#q").addEventListener("input",e=>{flt.q=e.target.value;renderRows();});
   $("#brand").addEventListener("change",e=>{flt.brand=e.target.value;renderRows();});
+  $("#size")?.addEventListener("change",e=>{flt.size=e.target.value;renderRows();});
+  $("#mm")?.addEventListener("change",e=>{flt.mm=e.target.value;renderRows();});
+  $("#sort").addEventListener("change",e=>{flt.sort=e.target.value;localStorage.setItem("stk_sort",flt.sort);renderRows();});
   $("#hz").addEventListener("change",e=>{flt.hideZero=e.target.checked;renderRows();});
   $("#oo").addEventListener("change",e=>{flt.onlyOver=e.target.checked;renderRows();});
   renderRows();
 }
+// Stable size key: raw numbers so "2440x1220" never depends on locale format.
+function sizeKey(i){ return (i.p!=null&&i.l!=null)?`${i.p}x${i.l}`:""; }
+
+/**
+ * Search relevance (issue: searching "black" buried the plain BLACK colour
+ * under BLACK GALAXY because rows came back in raw file order). Lower = higher
+ * up. Exact colour first, then colours that START with the term, then the term
+ * as a whole word, then any substring, and only then batch/name matches.
+ */
+function rankOf(i,q){
+  const w=String(i.warna||i.name||"").toLowerCase();
+  const b=String(i.batch_warna||"").toLowerCase();
+  const n=String(i.name||"").toLowerCase();
+  if(w===q) return 0;
+  if(w.startsWith(q)) return 1;
+  if(new RegExp(`(^|[^a-z0-9])${q.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}([^a-z0-9]|$)`).test(w)) return 2;
+  if(w.includes(q)) return 3;
+  if(b.includes(q)) return 4;
+  if(n.includes(q)) return 5;
+  return 6;
+}
+
+// Deterministic tie-breakers: whatever the chosen order, equal keys always fall
+// back to warna → brand → size → id, so a colour never moves between renders.
+function cmpFor(sort,fileIdx){
+  const byName=(a,b)=>String(a.warna||a.name||"").localeCompare(String(b.warna||b.name||""),"id",{sensitivity:"base"});
+  const tail=(a,b)=>byName(a,b)
+    || String(a.product_line||"").localeCompare(String(b.product_line||""),"id",{sensitivity:"base"})
+    || sizeKey(a).localeCompare(sizeKey(b))
+    || (String(a.id)<String(b.id)?-1:String(a.id)>String(b.id)?1:0);
+  if(sort==="avail_desc") return (a,b)=>(b.available-a.available)||tail(a,b);
+  if(sort==="avail_asc")  return (a,b)=>(a.available-b.available)||tail(a,b);
+  if(sort==="file")       return (a,b)=>((fileIdx.get(String(a.id))??0)-(fileIdx.get(String(b.id))??0));
+  return tail; // "warna" — colour A–Z, brands of the same colour adjacent
+}
+
 function visibleItems(){
   const q=flt.q.trim().toLowerCase();
-  return SUMMARY.items.filter(i=>{
+  const rows=SUMMARY.items.filter(i=>{
     if(flt.brand && !eq(i.product_line,flt.brand)) return false;
+    if(flt.size && sizeKey(i)!==flt.size) return false;
+    if(flt.mm && String(i.mm)!==flt.mm) return false;
     if(flt.onlyOver && !i.overbooked) return false;
     // zero toggle never hides overbooked/negative rows
     if(flt.hideZero && i.available===0 && !i.overbooked) return false;
@@ -285,6 +345,13 @@ function visibleItems(){
     }
     return true;
   });
+  // Original file order, captured once, for the "Sesuai file" option.
+  const fileIdx=new Map(SUMMARY.items.map((i,idx)=>[String(i.id),idx]));
+  const cmp=cmpFor(flt.sort,fileIdx);
+  // While searching, relevance leads and the chosen sort breaks ties, so the
+  // exact colour is always the first row rather than somewhere down the list.
+  rows.sort(q ? (a,b)=>(rankOf(a,q)-rankOf(b,q))||cmp(a,b) : cmp);
+  return rows;
 }
 function specText(i){
   const parts=[];
@@ -296,6 +363,13 @@ function specText(i){
 function renderRows(){
   const tb=$("#tbody"); if(!tb) return;
   const rows=visibleItems();
+  const meta=$("#invMeta"), t=SUMMARY.totals||{};
+  if(meta){
+    const filtered=flt.q||flt.brand||flt.size||flt.mm||flt.onlyOver||flt.hideZero;
+    meta.textContent=filtered
+      ? `${rows.length} ditampilkan · ${t.items||0} item`
+      : `${t.items_available||0} tersedia · ${t.items||0} item${t.pending_overbooked?` · ${t.pending_overbooked} overbook`:""}`;
+  }
   if(rows.length===0){ tb.innerHTML=`<tr><td colspan="5" class="empty">Tidak ada produk cocok.</td></tr>`; return; }
   tb.innerHTML=rows.map(i=>{
     const sub=[i.batch_warna,i.coating].filter(Boolean).join(" · ");
