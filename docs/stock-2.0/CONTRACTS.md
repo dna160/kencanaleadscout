@@ -847,3 +847,40 @@ the panel thickness, so `brand`/`brand_text` are now on the wire. Both pages sti
 label the filter "Kode barang". That is a **spec change, not a bug** — ST-R8 asked
 for a brand filter and the field now exists to build one. Left unimplemented
 deliberately; spec it before building it.
+
+
+## AMENDMENT 18 — the deploy gate is a grep checklist, not a green build
+
+**Raised by the deployment package, and upheld.** Its evidence is the argument:
+three live defects appeared and were fixed inside one hour, and **not one of them
+was visible to `tsc` or to a passing test run.**
+
+- The worker wrote `kode_barang` into `erp_so_line` *after* the migration dropped
+  that column — a `42703` on every demand page, meaning `open_commitment` is zero
+  and **ATP equals on-hand across the whole catalogue**. `postgres.js` takes
+  column names as strings, so no type checker can see this class of defect.
+- `checkSkuKeyMatch()` — the unmatched-SKU alarm, the entire safety net under an
+  unvalidated join key — was **exported and called by nothing**, while two source
+  files documented it as running every sync. A decorative safety net is worse
+  than none, because it is believed.
+- `header` auth mode sent the *query-parameter* names as header names — exactly
+  the 401 that the config comment claimed had been fixed.
+
+Each was a green build. Two of the three would have shipped, and one of those
+makes the entire inventory read as promiseable.
+
+**Ruling:** `GO-LIVE.md` §1's greps are a **literal checklist executed at the
+deploy gate**, not advisory reading. In particular, before any deploy that
+touches the mirror:
+
+1. Every column the worker writes exists on the table it writes to — checked
+   against `information_schema`, not against the type checker.
+2. Both silent-catastrophe detectors (`checkCommitmentGate`, `checkSkuKeyMatch`)
+   have a **call site**, not merely an export.
+3. The credential names match the configured auth **mode**.
+4. The conformance suite **ran** rather than skipped.
+
+On (4): `--passWithNoTests` combined with `describe.skipIf(!hasDb)` means a green
+run proves little without `DATABASE_URL`. The standing rule is therefore **"green
+is not the check — not-skipped is the check."** A deploy gate that accepts a
+suite which silently skipped its own database tests is measuring nothing.
