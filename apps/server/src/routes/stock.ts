@@ -1,35 +1,45 @@
 /**
- * Stok Booking (Simple) — routes (PRD §6). All under /api/stock, JSON in/out.
+ * Stok Booking 1.0 — RETIRED, kept as a read-only archive (ST-R14, ST-R15).
  *
- * One idea, three moves:
- *   PPIC uploads an Excel  → that file IS the inventory (POST /uploads).
- *   Sales see it and book  → each booking deducts immediately (POST /bookings).
- *   Booking beyond stock   → status='overbooked', lands in PPIC's verify queue.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THIS FILE IS NO LONGER THE STOCK MODULE. It is the archive of the one that
+ * came before. The live module is `routes/stock-atp.ts`; the spec for all of it
+ * is in `docs/stock-2.0/` (read CONTRACTS.md §4 for the HTTP surface, PRD.md §8
+ * for why bookings went away).
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- * The one derived number, recomputed on every read, NEVER stored (§4):
- *   available (Tersedia) = qty_initial − booked(item), where
- *   booked(item) = Σ qty of DEDUCTING bookings whose EFFECTIVE item is `item`.
+ * What 1.0 was: a manual booking ledger. PPIC uploaded an Excel that *became*
+ * the inventory, sales placed bookings that deducted from it, and overbookings
+ * landed in a PPIC verify queue. It existed only because LeadScout had no link
+ * to the ERP. It has one now, so stock consumption follows the Sales Order and
+ * the number the app shows is Available-to-Promise, derived per read:
  *
- * An upload replaces the numbers but never wipes bookings (R1/R2): open ones
- * become 'outstanding' — deducting nowhere — until PPIC presses Penuhi (R17),
- * which re-applies the qty against whatever period is active at that moment.
+ *     ATP(sku) = on_hand − open_commitment + manual_adjustment
  *
- * Endpoints:
- *   1  GET  /summary                     — everything the sales page needs in one call
- *   2  POST /uploads                     — new period from parsed Excel JSON (R1, R2, R9)
- *   3  GET  /uploads?limit               — upload history, newest first
- *   4  GET  /uploads/:id                 — one period (active or archived), read-only
- *   5  GET  /bookings?status&item_id&rep_key&upload_id — bookings + timer fields
- *   6  POST /bookings                    — the booking write (R4, R7)
- *   7  POST /bookings/:id/verify         — {action:'approve'|'reject', actor} (R5)
- *   8  POST /bookings/:id/cancel         — {actor} (R6)
- *   9  POST /bookings/:id/complete       — {actor} — PPIC marks Selesai (R12)
- *   10 GET  /rep-stats                   — per-sales long-booking tracker (R15)
- *   11 GET  /items/:id/riwayat           — per-product combined riwayat (R16)
- *   12 POST /bookings/:id/fulfill        — {actor} — PPIC Penuhi on outstanding (R17)
+ * What changed here:
+ *   - `GET /summary` MOVED to routes/stock-atp.ts. Same URL, ATP-shaped body,
+ *     so /stock migrated without a URL break (ST-R15). It is registered there
+ *     and NOT here — registering it in both files would shadow one silently.
+ *   - Every booking/upload WRITE answers **410 Gone** with a Bahasa message.
+ *     Loud failure beats a POST that looks like it worked.
+ *   - Every booking/upload READ still works, unchanged, forever: the frozen
+ *     history of what was booked before cutover is audit material (ST-R14).
  *
- * Realtime is polling, not SSE (R10) — future upgrade noted, not built here.
- */
+ * The tables stay. `stock_uploads`, `stock_items` and `stock_bookings` are not
+ * dropped and `db/migrateStock.ts` still creates them — but nothing in the
+ * codebase writes to them any more. If you are adding a write here, you are in
+ * the wrong file.
+ *
+ * Surviving endpoints (all read-only):
+ *   GET  /uploads?limit               — upload history, newest first
+ *   GET  /uploads/:id                 — one archived period with its bookings
+ *   GET  /bookings?status&item_id&rep_key&upload_id — bookings + timer fields
+ *   GET  /rep-stats                   — per-sales long-booking tracker (R15)
+ *   GET  /items/:id/riwayat           — per-product combined riwayat (R16)
+ *
+ * Retired (410 Gone):
+ *   POST /uploads · /bookings · /bookings/:id/{verify,cancel,complete,fulfill}
+  */
 import type { FastifyInstance } from "fastify";
 import type postgres from "postgres";
 import type { Sql } from "../db/client.js";
@@ -52,20 +62,10 @@ import { getSql } from "../db/client.js";
  */
 const DEDUCTING = ["confirmed", "overbooked", "approved", "completed"] as const;
 
-/** Statuses that still deduct in their own period — flipped to outstanding on upload (R1). */
-const LIVE_ON_UPLOAD = ["confirmed", "overbooked", "approved"] as const;
 
 /** LAMA threshold — a booking is *lama* when its lifetime exceeds this (R14). */
 const LONG_THRESHOLD_HOURS = 24;
-const MAX_ROWS = 2000;
 
-/** Typed HTTP error so a rule violation carries its own status + Bahasa message. */
-class HttpError extends Error {
-  constructor(public status: number, message: string) {
-    super(message);
-    this.name = "HttpError";
-  }
-}
 
 /** A porsager transaction handle behaves like the top-level Sql for our queries. */
 type Db = Sql | postgres.TransactionSql<Record<string, never>>;
@@ -114,24 +114,6 @@ function num(v: unknown): number | null {
 /** Round to at most 2 dp (R8) without trailing-zero noise. */
 function round2(n: number): number { return Math.round(n * 100) / 100; }
 
-/**
- * available for one item, live, inside or outside a transaction. Works with both
- * the pool and a tx handle (§6). Single grouped subtract — never per-row.
- */
-async function availableOf(db: Db, itemId: string | number): Promise<number> {
-  const [row] = await db<{ available: string | null }[]>`
-    select
-      i.qty_initial
-      - coalesce((
-          select sum(b.qty) from stock_bookings b
-          where coalesce(b.fulfilled_item_id, b.item_id) = i.id
-            and b.status = any(${DEDUCTING as unknown as string[]})
-        ), 0) as available
-    from stock_items i
-    where i.id = ${itemId}
-  `;
-  return row ? round2(Number(row.available ?? 0)) : 0;
-}
 
 /** The single active upload row, or null when no period has been started yet. */
 async function activeUpload(
@@ -261,286 +243,32 @@ function attrKey(i: {
   return ["g", norm(i.name), norm(i.product_line)].join("|");
 }
 
-/** Compose a display name for a structured (primary-map) row (R9/§6.2). */
-function composeName(r: {
-  warna?: unknown; batch_warna?: unknown; coating?: unknown;
-  th?: unknown; mm?: unknown; p?: unknown; l?: unknown;
-}): string {
-  const warna = str(r.warna);
-  const batch = str(r.batch_warna);
-  const coating = str(r.coating);
-  const th = num(r.th);
-  const mm = num(r.mm);
-  const p = num(r.p);
-  const l = num(r.l);
-  const parts: string[] = [];
-  if (warna) parts.push(warna);
-  if (batch) parts.push(batch);
-  // "PVDF 0.3" — coating + thickness together when either is present.
-  const coatPart = [coating, th != null ? String(th) : ""].filter(Boolean).join(" ");
-  if (coatPart) parts.push(coatPart);
-  if (mm != null) parts.push(`${mm}mm`);
-  if (p != null && l != null) parts.push(`${p}×${l}`);
-  return parts.join(" · ") || warna || "Produk";
-}
-
 export async function stockRoutes(app: FastifyInstance): Promise<void> {
   const dbErr = (reply: import("fastify").FastifyReply) =>
     reply.code(503).send({ error: "Database tidak tersedia." });
 
-  // ── 1 · GET /api/stock/summary ─────────────────────────────────────────────
-  // Everything the sales page needs in one call. `booked` computed with a single
-  // grouped aggregate joined to items — never per-row (§6.1).
-  app.get("/api/stock/summary", async (_req, reply) => {
-    const db = getSql();
-    if (!db) return dbErr(reply);
+  /**
+   * ST-R15 retirement. The booking ledger and the Excel ingest are gone; stock
+   * consumption now follows the ERP Sales Order. These POSTs answer 410 Gone so
+   * an old tab, a bookmarked script or a cached page fails loudly and in Bahasa
+   * rather than appearing to succeed. The rows they used to write are kept and
+   * still readable below (ST-R14) — frozen, for audit.
+   */
+  const RETIRED = "Booking sudah tidak digunakan. Stok kini mengikuti Sales Order dari ERP.";
+  const gone = (_req: import("fastify").FastifyRequest, reply: import("fastify").FastifyReply) =>
+    reply.code(410).send({ error: RETIRED });
 
-    const upload = await activeUpload(db);
-    if (!upload) {
-      return {
-        upload: null,
-        items: [],
-        totals: {
-          items: 0, items_available: 0, booked_total: 0,
-          confirmed: 0, pending_overbooked: 0, approved: 0, outstanding: 0, active_long: 0,
-        },
-      };
-    }
+  for (const path of [
+    "/api/stock/uploads",
+    "/api/stock/bookings",
+    "/api/stock/bookings/:id/verify",
+    "/api/stock/bookings/:id/cancel",
+    "/api/stock/bookings/:id/complete",
+    "/api/stock/bookings/:id/fulfill",
+  ]) {
+    app.post(path, gone);
+  }
 
-    const items = await db<{
-      id: string; name: string; product_line: string | null; warna: string | null;
-      batch_warna: string | null; coating: string | null; th: string | null; mm: string | null;
-      p: string | null; l: string | null; unit: string; qty_initial: string;
-      booked: string | null; pending_verifications: number;
-    }[]>`
-      select
-        i.id, i.name, i.product_line, i.warna, i.batch_warna, i.coating,
-        i.th, i.mm, i.p, i.l, i.unit, i.qty_initial,
-        coalesce(d.booked, 0)  as booked,
-        coalesce(pv.pending, 0) as pending_verifications
-      from stock_items i
-      left join (
-        -- Grouped by EFFECTIVE item, not upload: a booking Penuhi'd out of an
-        -- older period deducts from the item it was fulfilled into (R17).
-        select coalesce(b.fulfilled_item_id, b.item_id) as eff_item_id, sum(b.qty) as booked
-        from stock_bookings b
-        where b.status = any(${DEDUCTING as unknown as string[]})
-        group by 1
-      ) d on d.eff_item_id = i.id
-      left join (
-        select item_id, count(*)::int as pending
-        from stock_bookings
-        where status = 'overbooked'
-        group by item_id
-      ) pv on pv.item_id = i.id
-      where i.upload_id = ${upload.id}
-      order by i.sort_order asc, i.id asc
-    `;
-
-    const shaped = items.map((i) => {
-      const qtyInitial = Number(i.qty_initial);
-      const booked = Number(i.booked ?? 0);
-      const available = round2(qtyInitial - booked);
-      const p = i.p != null ? Number(i.p) : null;
-      const l = i.l != null ? Number(i.l) : null;
-      const available_m2 = p != null && l != null ? round2((available * p * l) / 1e6) : null;
-      return {
-        id: i.id,
-        name: i.name,
-        product_line: i.product_line,
-        warna: i.warna,
-        batch_warna: i.batch_warna,
-        coating: i.coating,
-        th: i.th != null ? Number(i.th) : null,
-        mm: i.mm != null ? Number(i.mm) : null,
-        p, l,
-        unit: i.unit,
-        qty_initial: qtyInitial,
-        booked,
-        available,
-        available_m2,
-        overbooked: available < 0,
-        pending_verifications: Number(i.pending_verifications ?? 0),
-      };
-    });
-
-    // Status tallies: this period's own bookings, plus every outstanding one —
-    // those are carried from older periods and belong to no active upload.
-    const statusRows = await db<{ status: string; cnt: number }[]>`
-      select status, count(*)::int as cnt
-      from stock_bookings
-      where upload_id = ${upload.id} or status = 'outstanding'
-      group by status
-    `;
-    const byStatus: Record<string, number> = {};
-    for (const r of statusRows) byStatus[r.status] = r.cnt;
-
-    // active_long: running bookings — aktif OR outstanding — past 24 jam (R14).
-    // An upload no longer stops a timer, so a long-carried booking counts here.
-    const [longRow] = await db<[{ cnt: number }]>`
-      select count(*)::int as cnt
-      from stock_bookings
-      where status in ('confirmed','overbooked','approved','outstanding')
-        and now() - created_at > make_interval(hours => ${LONG_THRESHOLD_HOURS})
-    `;
-
-    const booked_total = shaped.reduce((s, x) => s + x.booked, 0);
-    return {
-      upload: {
-        id: upload.id,
-        filename: upload.filename,
-        sheet_name: upload.sheet_name,
-        uploaded_by: upload.uploaded_by,
-        created_at: upload.created_at,
-        row_count: upload.row_count,
-      },
-      items: shaped,
-      totals: {
-        items: shaped.length,
-        items_available: shaped.filter((x) => x.available > 0).length,
-        booked_total: round2(booked_total),
-        confirmed: byStatus.confirmed ?? 0,
-        pending_overbooked: byStatus.overbooked ?? 0,
-        approved: byStatus.approved ?? 0,
-        outstanding: byStatus.outstanding ?? 0,
-        active_long: longRow?.cnt ?? 0,
-      },
-    };
-  });
-
-  // ── 2 · POST /api/stock/uploads ────────────────────────────────────────────
-  // New period from parsed Excel JSON. Server re-validates — never trusts the
-  // client parse (R9). Single transaction: archive current active, insert the
-  // new upload + its items. The partial unique index makes two simultaneous
-  // uploads safe: the loser gets a 409 (§8.5).
-  app.post<{ Body: Record<string, unknown> }>("/api/stock/uploads", async (request, reply) => {
-    const db = getSql();
-    if (!db) return dbErr(reply);
-
-    const b = request.body ?? {};
-    const filename = optStr(b.filename);
-    const sheet_name = optStr(b.sheet_name);
-    const uploaded_by = optStr(b.uploaded_by);
-    const note = optStr(b.note);
-    const rawItems = Array.isArray(b.items) ? b.items : [];
-
-    if (rawItems.length === 0)
-      return reply.code(400).send({ error: "File tidak berisi baris stok yang valid." });
-    if (rawItems.length > MAX_ROWS)
-      return reply.code(400).send({ error: "Maksimal 2000 baris." });
-
-    // Re-validate + normalize every row server-side.
-    interface CleanItem {
-      name: string; product_line: string | null; warna: string | null; batch_warna: string | null;
-      coating: string | null; th: number | null; mm: number | null; p: number | null; l: number | null;
-      unit: string; qty_initial: number;
-    }
-    const clean: CleanItem[] = [];
-    for (let idx = 0; idx < rawItems.length; idx++) {
-      const r = (rawItems[idx] ?? {}) as Record<string, unknown>;
-      const isStructured = str(r.warna) !== "" || str(r.brand) !== "" || str(r.product_line) !== "";
-      const warna = optStr(r.warna);
-      const genericName = optStr(r.name);
-      if (!warna && !genericName)
-        return reply.code(400).send({ error: `Baris tidak valid: baris ke-${idx + 1} tanpa warna/nama.` });
-
-      const qty = num(r.qty);
-      if (qty == null || qty < 0)
-        return reply.code(400).send({ error: `Baris tidak valid: qty baris ke-${idx + 1} bukan angka ≥ 0.` });
-
-      if (warna) {
-        // Structured (primary-map) row: server composes the display name.
-        const th = num(r.th), mm = num(r.mm), p = num(r.p), l = num(r.l);
-        const brand = optStr(r.brand) ?? optStr(r.product_line);
-        clean.push({
-          name: composeName(r),
-          product_line: brand,
-          warna,
-          batch_warna: optStr(r.batch_warna),
-          coating: optStr(r.coating),
-          th, mm, p, l,
-          unit: "lembar",
-          qty_initial: round2(qty),
-        });
-      } else {
-        // Generic (fallback-map) row.
-        clean.push({
-          name: genericName as string,
-          product_line: optStr(r.product_line),
-          warna: null, batch_warna: null, coating: null,
-          th: null, mm: null, p: null, l: null,
-          unit: optStr(r.unit) ?? "pcs",
-          qty_initial: round2(qty),
-        });
-      }
-    }
-
-    try {
-      const result = await db.begin(async (sql) => {
-        // Archive the current period and CARRY its open bookings (R1/R2): the
-        // numbers are replaced, but nothing a rep booked is ever wiped. Live
-        // bookings become 'outstanding' — deducting nowhere — until PPIC
-        // presses Penuhi (R17). Terminal ones (completed/cancelled/rejected)
-        // stay with their period as history.
-        const [current] = await sql<{ id: string }[]>`
-          select id from stock_uploads where status = 'active' for update
-        `;
-        let archived_upload_id: string | null = null;
-        let carried_outstanding = 0;
-        if (current) {
-          await sql`
-            update stock_uploads set status = 'archived', archived_at = now()
-            where id = ${current.id}
-          `;
-          const carried = await sql`
-            update stock_bookings set status = 'outstanding'
-            where upload_id = ${current.id}
-              and status = any(${LIVE_ON_UPLOAD as unknown as string[]})
-          `;
-          archived_upload_id = current.id;
-          carried_outstanding = carried.count ?? 0;
-        }
-
-        const [up] = await sql<{ id: string; created_at: string }[]>`
-          insert into stock_uploads (filename, sheet_name, note, uploaded_by, status, row_count)
-          values (${filename}, ${sheet_name}, ${note}, ${uploaded_by}, 'active', ${clean.length})
-          returning id, created_at
-        `;
-        if (!up) throw new HttpError(500, "Gagal menyimpan upload.");
-
-        // Bulk-insert items, sort_order = array index (preserves file order).
-        for (let i = 0; i < clean.length; i++) {
-          const it = clean[i]!;
-          await sql`
-            insert into stock_items
-              (upload_id, name, product_line, warna, batch_warna, coating, th, mm, p, l, unit, qty_initial, sort_order)
-            values
-              (${up.id}, ${it.name}, ${it.product_line}, ${it.warna}, ${it.batch_warna}, ${it.coating},
-               ${it.th}, ${it.mm}, ${it.p}, ${it.l}, ${it.unit}, ${it.qty_initial}, ${i})
-          `;
-        }
-
-        return {
-          upload: {
-            id: up.id, filename, sheet_name, uploaded_by,
-            created_at: up.created_at, row_count: clean.length,
-          },
-          archived_upload_id,
-          carried_outstanding,
-        };
-      });
-
-      return reply.code(201).send({ ok: true, ...result });
-    } catch (err) {
-      if (err instanceof HttpError) return reply.code(err.status).send({ error: err.message });
-      // Unique-index violation → a competing upload landed first (§8.5).
-      const msg = String((err as Error)?.message ?? "");
-      if (msg.includes("stock_uploads_one_active"))
-        return reply.code(409).send({ error: "Ada upload lain yang baru saja masuk. Muat ulang." });
-      request.log.error({ err }, "stock upload failed");
-      return reply.code(500).send({ error: "Gagal menyimpan upload." });
-    }
-  });
 
   // ── 3 · GET /api/stock/uploads?limit ───────────────────────────────────────
   app.get<{ Querystring: { limit?: string } }>("/api/stock/uploads", async (request, reply) => {
@@ -724,304 +452,6 @@ export async function stockRoutes(app: FastifyInstance): Promise<void> {
         return base;
       });
       return { count: bookings.length, bookings };
-    },
-  );
-
-  // ── 6 · POST /api/stock/bookings ───────────────────────────────────────────
-  // The booking write. Never blocks (R4). Row-locked transaction (R7): lock the
-  // item, recompute available inside the tx, decide status, insert.
-  app.post<{ Body: Record<string, unknown> }>("/api/stock/bookings", async (request, reply) => {
-    const db = getSql();
-    if (!db) return dbErr(reply);
-
-    const b = request.body ?? {};
-    const item_id = str(b.item_id);
-    const rep_key = optStr(b.rep_key);
-    const rep_name = optStr(b.rep_name);
-    const customer_name = optStr(b.customer_name);
-    // Optional: a booking often precedes its Sales Order, and R4 says nothing
-    // may block a sale — so an absent SO number never rejects the write.
-    const so_number = optStr(b.so_number);
-    const note = optStr(b.note);
-    const qty = num(b.qty);
-
-    if (!item_id || !/^\d+$/.test(item_id))
-      return reply.code(400).send({ error: "Produk tidak valid." });
-    if (!rep_name || !customer_name)
-      return reply.code(400).send({ error: "Nama sales / customer wajib diisi." });
-    if (qty == null || qty <= 0)
-      return reply.code(400).send({ error: "Jumlah tidak valid." });
-
-    try {
-      const result = await db.begin(async (sql) => {
-        // Lock the item row (R7). Two racing bookings serialize here.
-        const [item] = await sql<{ id: string; upload_id: string; unit: string }[]>`
-          select id, upload_id, unit from stock_items where id = ${item_id} for update
-        `;
-        if (!item) throw new HttpError(404, "Produk tidak ditemukan.");
-
-        // The item's upload must still be the active period (§8.2).
-        const [up] = await sql<{ status: string }[]>`
-          select status from stock_uploads where id = ${item.upload_id}
-        `;
-        if (!up || up.status !== "active")
-          throw new HttpError(409, "Data stok baru saja diperbarui. Muat ulang halaman.");
-
-        // Recompute available inside the tx, then decide status (R4).
-        const available = await availableOf(sql, item.id);
-        const status = qty <= available ? "confirmed" : "overbooked";
-
-        const [booking] = await sql<BookingRow[]>`
-          insert into stock_bookings
-            (upload_id, item_id, rep_key, rep_name, qty, customer_name, so_number, note, status)
-          values
-            (${item.upload_id}, ${item.id}, ${rep_key}, ${rep_name}, ${round2(qty)},
-             ${customer_name}, ${so_number}, ${note}, ${status})
-          returning *
-        `;
-        if (!booking) throw new HttpError(500, "Gagal menyimpan booking.");
-
-        const available_after = round2(available - qty);
-        return { booking, status, available_after };
-      });
-
-      const message = result.status === "overbooked"
-        ? "Melebihi stok — masuk antrean verifikasi PPIC."
-        : "Booking tersimpan.";
-      return reply.code(201).send({
-        ok: true,
-        booking: { ...result.booking, qty: Number(result.booking.qty) },
-        available_after: result.available_after,
-        message,
-      });
-    } catch (err) {
-      if (err instanceof HttpError) return reply.code(err.status).send({ error: err.message });
-      request.log.error({ err }, "stock booking failed");
-      return reply.code(500).send({ error: "Gagal menyimpan booking." });
-    }
-  });
-
-  // Shared helper for the three row-locked mutations (verify/cancel/complete).
-  // Loads + locks the item so `available_after` is computed consistently (R7).
-  async function mutateBooking(
-    db: Sql,
-    bookingId: string,
-    fn: (sql: Db, booking: BookingRow) => Promise<BookingRow>,
-  ): Promise<{ booking: BookingRow; available_after: number }> {
-    return db.begin(async (sql) => {
-      const [booking] = await sql<BookingRow[]>`
-        select * from stock_bookings where id = ${bookingId} for update
-      `;
-      if (!booking) throw new HttpError(404, "Booking tidak ditemukan.");
-      // Lock the item row too, so available_after reflects a settled state (R7).
-      await sql`select id from stock_items where id = ${booking.item_id} for update`;
-      const updated = await fn(sql, booking);
-      const available_after = await availableOf(sql, booking.item_id);
-      return { booking: updated, available_after };
-    });
-  }
-
-  // ── 7 · POST /api/stock/bookings/:id/verify ────────────────────────────────
-  app.post<{ Params: { id: string }; Body: Record<string, unknown> }>(
-    "/api/stock/bookings/:id/verify", async (request, reply) => {
-      const db = getSql();
-      if (!db) return dbErr(reply);
-      const id = str(request.params.id);
-      if (!/^\d+$/.test(id)) return reply.code(400).send({ error: "Booking tidak valid." });
-
-      const action = str(request.body?.action).toLowerCase();
-      const actor = optStr(request.body?.actor);
-      if (action !== "approve" && action !== "reject")
-        return reply.code(400).send({ error: "Aksi harus approve atau reject." });
-      if (!actor) return reply.code(400).send({ error: "Nama petugas wajib diisi." });
-
-      try {
-        const result = await mutateBooking(db, id, async (sql, booking) => {
-          // Setujui answers the overbook question (R5), so it only applies to an
-          // overbooked booking. Tolak is also how PPIC closes a dead OUTSTANDING
-          // order (R17) — same terminal state, same verified_by/at stamps.
-          if (action === "approve" && booking.status !== "overbooked")
-            throw new HttpError(409, "Booking bukan status menunggu verifikasi.");
-          if (action === "reject" && !["overbooked", "outstanding"].includes(booking.status))
-            throw new HttpError(409, "Booking bukan status menunggu verifikasi.");
-          const next = action === "approve" ? "approved" : "rejected";
-          const [updated] = await sql<BookingRow[]>`
-            update stock_bookings
-            set status = ${next}, verified_by = ${actor}, verified_at = now()
-            where id = ${id} returning *
-          `;
-          return updated!;
-        });
-        return { ok: true, booking: { ...result.booking, qty: Number(result.booking.qty) }, available_after: result.available_after };
-      } catch (err) {
-        if (err instanceof HttpError) return reply.code(err.status).send({ error: err.message });
-        request.log.error({ err }, "stock verify failed");
-        return reply.code(500).send({ error: "Gagal memverifikasi booking." });
-      }
-    },
-  );
-
-  // ── 8 · POST /api/stock/bookings/:id/cancel ────────────────────────────────
-  app.post<{ Params: { id: string }; Body: Record<string, unknown> }>(
-    "/api/stock/bookings/:id/cancel", async (request, reply) => {
-      const db = getSql();
-      if (!db) return dbErr(reply);
-      const id = str(request.params.id);
-      if (!/^\d+$/.test(id)) return reply.code(400).send({ error: "Booking tidak valid." });
-
-      const actor = optStr(request.body?.actor);
-      if (!actor) return reply.code(400).send({ error: "Nama pembatal wajib diisi." });
-
-      try {
-        const result = await mutateBooking(db, id, async (sql, booking) => {
-          // Outstanding is cancellable too (R6) — a carried booking whose deal
-          // died. Nothing to restore there; it was already deducting nowhere.
-          if (!["confirmed", "overbooked", "approved", "outstanding"].includes(booking.status))
-            throw new HttpError(409, "Booking sudah selesai / dibatalkan.");
-          const [updated] = await sql<BookingRow[]>`
-            update stock_bookings
-            set status = 'cancelled', cancelled_by = ${actor}, cancelled_at = now()
-            where id = ${id} returning *
-          `;
-          return updated!;
-        });
-        return { ok: true, booking: { ...result.booking, qty: Number(result.booking.qty) }, available_after: result.available_after };
-      } catch (err) {
-        if (err instanceof HttpError) return reply.code(err.status).send({ error: err.message });
-        request.log.error({ err }, "stock cancel failed");
-        return reply.code(500).send({ error: "Gagal membatalkan booking." });
-      }
-    },
-  );
-
-  // ── 9 · POST /api/stock/bookings/:id/complete ──────────────────────────────
-  // PPIC marks Selesai (R12). Only from confirmed | approved. On overbooked →
-  // verify-first 409. completed keeps deducting; terminal.
-  app.post<{ Params: { id: string }; Body: Record<string, unknown> }>(
-    "/api/stock/bookings/:id/complete", async (request, reply) => {
-      const db = getSql();
-      if (!db) return dbErr(reply);
-      const id = str(request.params.id);
-      if (!/^\d+$/.test(id)) return reply.code(400).send({ error: "Booking tidak valid." });
-
-      const actor = optStr(request.body?.actor);
-      if (!actor) return reply.code(400).send({ error: "Nama petugas wajib diisi." });
-
-      try {
-        const result = await mutateBooking(db, id, async (sql, booking) => {
-          if (booking.status === "overbooked")
-            throw new HttpError(409, "Verifikasi dulu (Setujui / Tolak) sebelum tandai selesai.");
-          if (!["confirmed", "approved"].includes(booking.status))
-            throw new HttpError(409, "Booking sudah selesai / dibatalkan.");
-          const [updated] = await sql<BookingRow[]>`
-            update stock_bookings
-            set status = 'completed', completed_by = ${actor}, completed_at = now()
-            where id = ${id} returning *
-          `;
-          return updated!;
-        });
-        return { ok: true, booking: { ...result.booking, qty: Number(result.booking.qty) }, available_after: result.available_after };
-      } catch (err) {
-        if (err instanceof HttpError) return reply.code(err.status).send({ error: err.message });
-        request.log.error({ err }, "stock complete failed");
-        return reply.code(500).send({ error: "Gagal menandai selesai." });
-      }
-    },
-  );
-
-  // ── 12 · POST /api/stock/bookings/:id/fulfill ──────────────────────────────
-  // Penuhi (R17): "this carried order is real — process it against the stock
-  // check that is active NOW." Matches the booking's origin item to the active
-  // period by normalized attribute key; matched → the qty starts deducting from
-  // the current item (may go negative, consistent with R4's never-block rule);
-  // unmatched → the product is gone from the new count, so completing it must
-  // be an explicit, confirmed no-deduction decision. Matching always runs at
-  // execution time, so an upload landing mid-click can never deduct stale stock
-  // (§8.10/§8.11).
-  app.post<{ Params: { id: string }; Body: Record<string, unknown> }>(
-    "/api/stock/bookings/:id/fulfill", async (request, reply) => {
-      const db = getSql();
-      if (!db) return dbErr(reply);
-      const id = str(request.params.id);
-      if (!/^\d+$/.test(id)) return reply.code(400).send({ error: "Booking tidak valid." });
-
-      const actor = optStr(request.body?.actor);
-      const confirmNoDeduct = request.body?.confirm_no_deduct === true;
-      if (!actor) return reply.code(400).send({ error: "Nama petugas wajib diisi." });
-
-      try {
-        const result = await db.begin(async (sql) => {
-          const [booking] = await sql<BookingRow[]>`
-            select * from stock_bookings where id = ${id} for update
-          `;
-          if (!booking) throw new HttpError(404, "Booking tidak ditemukan.");
-          if (booking.status !== "outstanding")
-            throw new HttpError(409, "Booking bukan status outstanding.");
-
-          // Origin item supplies the attribute key to match on.
-          const [origin] = await sql<{
-            name: string; product_line: string | null; warna: string | null;
-            batch_warna: string | null; coating: string | null;
-            th: string | null; mm: string | null; p: string | null; l: string | null;
-          }[]>`
-            select name, product_line, warna, batch_warna, coating, th, mm, p, l
-            from stock_items where id = ${booking.item_id}
-          `;
-          if (!origin) throw new HttpError(404, "Produk asal tidak ditemukan.");
-          const key = attrKey(origin);
-
-          // Candidates from whatever period is active right now.
-          const candidates = await sql<{
-            id: string; name: string; unit: string; product_line: string | null; warna: string | null;
-            batch_warna: string | null; coating: string | null;
-            th: string | null; mm: string | null; p: string | null; l: string | null;
-          }[]>`
-            select i.id, i.name, i.unit, i.product_line, i.warna, i.batch_warna, i.coating,
-                   i.th, i.mm, i.p, i.l
-            from stock_items i
-            join stock_uploads u on u.id = i.upload_id and u.status = 'active'
-          `;
-          const match = candidates.find((c) => attrKey(c) === key) ?? null;
-
-          if (!match) {
-            if (!confirmNoDeduct)
-              throw new HttpError(409, "Produk tidak ada di stock check aktif. Kirim confirm_no_deduct untuk tandai selesai tanpa potongan.");
-            const [updated] = await sql<BookingRow[]>`
-              update stock_bookings
-              set status = 'completed', completed_by = ${actor}, completed_at = now(),
-                  fulfilled_item_id = null
-              where id = ${id} returning *
-            `;
-            return { booking: updated!, matched_item: null, available_after: null as number | null };
-          }
-
-          // Lock the target item so available_after settles cleanly (R7/§8.10).
-          await sql`select id from stock_items where id = ${match.id} for update`;
-          const [updated] = await sql<BookingRow[]>`
-            update stock_bookings
-            set status = 'completed', completed_by = ${actor}, completed_at = now(),
-                fulfilled_item_id = ${match.id}
-            where id = ${id} returning *
-          `;
-          const available_after = await availableOf(sql, match.id);
-          return {
-            booking: updated!,
-            matched_item: { id: match.id, name: match.name, unit: match.unit },
-            available_after,
-          };
-        });
-
-        return {
-          ok: true,
-          booking: { ...result.booking, qty: Number(result.booking.qty) },
-          matched_item: result.matched_item,
-          available_after: result.available_after,
-        };
-      } catch (err) {
-        if (err instanceof HttpError) return reply.code(err.status).send({ error: err.message });
-        request.log.error({ err }, "stock fulfill failed");
-        return reply.code(500).send({ error: "Gagal memenuhi booking." });
-      }
     },
   );
 

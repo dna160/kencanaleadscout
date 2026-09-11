@@ -1,0 +1,102 @@
+{
+  "_comment": [
+    "WP-2 fixture — RAW Selaras live-FG rows (assumed shape only; nothing recorded).",
+    "PascalCase ON PURPOSE (A2, casing unverified). The two ACP-4MM Black Galaxy rolls",
+    "sum to 4,168 lembar, matching PRD §5A. Row 4 has an unreadable qty and row 5 has",
+    "no serial: both must degrade, never abort the page. Row 6 carries SEPARATOR-",
+    "AMBIGUOUS quantities (A22): '1.234' is 1234 in id notation and 1.234 in en, so",
+    "under SELARAS_NUMBER_FORMAT=auto it must be refused and counted, never guessed.",
+    "Row 7 carries NON-FINITE numerics (X11): NaN / Infinity are legal Postgres",
+    "numeric values, so they must be rejected at the adapter, never written through."
+  ],
+  "rows": [
+    {
+      "SnFg": "FG-0001",
+      "KodeBarang": "ACP-4MM",
+      "Warna": "004",
+      "Th": 0.3,
+      "P": 4880,
+      "L": 1220,
+      "Qty": 2084,
+      "QtyM2": 12408.6,
+      "BufferQty": 0,
+      "BufferStatus": "OK",
+      "Lokasi": "GD-01",
+      "UpdatedAt": "2026-09-01T04:00:00Z"
+    },
+    {
+      "SnFg": "FG-0002",
+      "KodeBarang": "ACP-4MM",
+      "Warna": "004",
+      "Th": "0.30",
+      "P": "4880",
+      "L": "1220",
+      "Qty": "2084",
+      "QtyM2": 12408.6,
+      "BufferQty": 50,
+      "BufferStatus": "BUFFER",
+      "Lokasi": "GD-02",
+      "UpdatedAt": "2026-09-01T05:00:00Z"
+    },
+    {
+      "SnFg": "FG-0003",
+      "KodeBarang": "ACP-3MM",
+      "Warna": "118",
+      "Th": 0.21,
+      "P": 2440,
+      "L": 1220,
+      "Qty": 100,
+      "QtyM2": 297.68,
+      "BufferQty": null,
+      "BufferStatus": null,
+      "Lokasi": "GD-01",
+      "UpdatedAt": "2026-09-01T06:00:00Z"
+    },
+    {
+      "SnFg": "FG-0004",
+      "KodeBarang": "ACP-3MM",
+      "Warna": "118",
+      "Th": 0.21,
+      "P": 2440,
+      "L": 1220,
+      "Qty": "tidak ada",
+      "QtyM2": "???",
+      "Lokasi": "GD-09",
+      "UpdatedAt": "2026-09-01T07:00:00Z",
+      "_why": "unreadable qty must become 0, never NaN (numeric column would reject NaN)"
+    },
+    {
+      "KodeBarang": "ACP-3MM",
+      "Qty": 7,
+      "UpdatedAt": "2026-09-01T08:00:00Z",
+      "_why": "no serial — unkeyable, dropped and counted"
+    },
+    {
+      "SnFg": "FG-0005",
+      "KodeBarang": "ACP-3MM",
+      "Warna": "118",
+      "Th": 0.21,
+      "P": 2440,
+      "L": 1220,
+      "Qty": "1.234",
+      "QtyM2": "2,500",
+      "Lokasi": "GD-03",
+      "UpdatedAt": "2026-09-01T09:00:00Z",
+      "_why": "A22: both quantities are separator-ambiguous. Under auto they are refused (qty -> 0, qty_m2 -> null), counted, and logged once per run."
+    },
+    {
+      "SnFg": "FG-0006",
+      "KodeBarang": "ACP-3MM",
+      "Warna": "118",
+      "Th": "NaN",
+      "P": "Infinity",
+      "L": "-Infinity",
+      "Qty": "NaN",
+      "QtyM2": "1e999",
+      "Lokasi": "GD-04",
+      "UpdatedAt": "2026-09-01T10:00:00Z",
+      "_why": "X11: 'NaN'::numeric and 'Infinity'::numeric are LEGAL in Postgres and the schema does not forbid them in th/p/l. One stored there would make erp_sku_key() render 'NaN' while canonicalSkuKey() renders '-', silently desynchronising that SKU. None may be written."
+    },
+    null
+  ]
+}

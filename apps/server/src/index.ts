@@ -44,7 +44,10 @@ import { exportAllRoutes } from "./routes/export-all.js";
 import { colorGatewayRoutes } from "./routes/color-gateway.js";
 import { syHunterRoutes } from "./routes/sy-hunter.js";
 import { stockRoutes } from "./routes/stock.js";
+import { stockAtpRoutes } from "./routes/stock-atp.js";
 import { runStockMigrations } from "./db/migrateStock.js";
+import { runErpStockMigrations } from "./db/migrateErpStock.js";
+import { startErpSync } from "./erp/syncWorker.js";
 
 const PUBLIC_DIR = fileURLToPath(new URL("../public", import.meta.url));
 
@@ -58,6 +61,7 @@ async function bootDatabase(app: ReturnType<typeof Fastify>): Promise<void> {
   try {
     await runMigrations(db);
     await runStockMigrations(db);
+    await runErpStockMigrations(db);
     const n = await seedLeads(db);
     app.log.info({ seeded: n }, "database ready (migrated + seeded)");
   } catch (err) {
@@ -168,11 +172,17 @@ async function main(): Promise<void> {
 
   // [STK] Stok Booking (Simple) — Excel upload · book · verify overbook.
   await app.register(stockRoutes);
+  // [STK 2.0] SO-driven Available-to-Promise. Owns GET /api/stock/summary —
+  // stockRoutes no longer registers it, so the path cannot be shadowed.
+  await app.register(stockAtpRoutes);
 
   await bootDatabase(app);
   startCadenceEngine();
   startProjectCadenceEngine();
   startDistributorCadenceEngine();
+  // [STK 2.0] ERP mirror poll. Self-guards on hasErp/hasDatabase, so it is safe
+  // unconditionally: with no ERP configured it logs once and does nothing.
+  startErpSync();
 
   try {
     await app.listen({ host: config.host, port: config.port });

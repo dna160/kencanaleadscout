@@ -5,10 +5,24 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Stok — PPIC</title>
 <style>
+  /* ── UX-SPEC §1.1 · inherited token block, carried forward byte for byte ──── */
   :root{
     --bg:#f2f4f7; --card:#fff; --ink:#17233b; --muted:#6b7280; --line:#e5e7eb;
     --accent:#157a46; --danger:#c03c2b;
     --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  /* ── UX-SPEC §1.2 · Stock 2.0 additions. Additive only. ──────────────────── */
+  :root{
+    --ink-2:#475569;            /* secondary numerals; --muted is too weak here */
+    --ok-bg:#dcfce7;   --ok-ink:#15803d;
+    --warn-bg:#fef3c7; --warn-ink:#b45309; --warn-line:#fde68a; --warn-ink-strong:#7a4f08;
+    --neg-bg:#fee2e2;  --neg-ink:#b91c1c;
+    --neutral-bg:#f3f4f6; --neutral-ink:#4b5563;
+    --offline-bg:#eef1f6; --offline-ink:#334155; --offline-line:#cbd5e1;
+    --age-old-bg:#ffedd5;     --age-old-ink:#9a3412;
+    --age-ancient-bg:#fee2e2; --age-ancient-ink:#b91c1c;
+    --focus:#1d4ed8;
+    --tap:44px;
   }
   *{box-sizing:border-box}
   html,body{margin:0}
@@ -20,7 +34,8 @@
   header a.pplink{color:#ffd27a;text-decoration:none;font-size:13px;font-weight:600;white-space:nowrap}
   .wrap{max-width:1000px;margin:0 auto;padding:14px 16px}
   label.fld{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted);font-weight:600}
-  select,input[type=text],input[type=number],input[type=file],textarea{font:inherit;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink);min-height:44px}
+  select,input[type=text],input[type=number],input[type=search],textarea{font:inherit;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink);min-height:44px;width:100%;max-width:100%}
+  textarea{min-height:76px;resize:vertical}
   .card{background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden;margin-bottom:14px}
   .card h2{font-size:14px;margin:0;padding:12px 14px;border-bottom:1px solid var(--line);background:#fafbfc;display:flex;justify-content:space-between;align-items:center;gap:8px}
   .card .body{padding:14px}
@@ -30,29 +45,23 @@
   tr.itemrow{cursor:pointer}tr.itemrow:hover{background:#f7fafc}
   .sub2{color:var(--muted);font-size:11px;margin-top:2px}
   .avail{font-weight:800;white-space:nowrap}.avail.neg{color:var(--danger)}
-  .badge{display:inline-block;font-size:10px;font-weight:800;padding:2px 6px;border-radius:6px;margin-left:6px;background:#ede9fe;color:#6d28d9}
   .chip{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;white-space:nowrap}
+  /* Inherited. UX-SPEC §9.2: 4.39:1, fails AA — archive modal only, which neither
+     2.0 page opens. `.chip.umur` replaces it on every new surface. */
   .chip.age{background:#f3f4f6;color:#6b7280}
-  .chip.lama{background:#fef3c7;color:#b45309;margin-left:4px}
-  .st-confirmed{background:#dcfce7;color:#15803d}.st-overbooked{background:#fef3c7;color:#b45309}
-  .st-approved{background:#ede9fe;color:#6d28d9}.st-rejected{background:#fee2e2;color:#b91c1c}
-  .st-cancelled{background:#f3f4f6;color:#6b7280}.st-completed{background:#dbeafe;color:#1d4ed8}
-  .st-outstanding{background:#ffedd5;color:#c2410c}
   button.btn{background:var(--accent);color:#fff;border:none;border-radius:10px;padding:0 14px;min-height:40px;font-weight:700;font-size:13px;cursor:pointer}
   button.btn:disabled{opacity:.55;cursor:default}
   button.btn.ghost{background:#fff;color:var(--ink);border:1px solid var(--line)}
   button.btn.danger{background:#fff;color:var(--danger);border:1px solid #f3c9c2}
-  button.btn.approve{background:#6d28d9}
   button.mini{padding:0 10px;min-height:34px;font-size:12px;border-radius:8px}
   .empty{padding:22px 16px;text-align:center;color:var(--muted);font-size:14px;line-height:1.5}
+  .empty a{color:var(--accent);font-weight:700}
+  .banner{background:#fef3c7;color:#7a4f08;border:1px solid #fde68a;border-radius:12px;padding:10px 14px;font-size:13px;display:flex;gap:10px;align-items:flex-start;margin-bottom:12px;line-height:1.45}
   .warnbox{background:#fef2f2;border:1px solid #fbcaca;color:#991b1b;border-radius:10px;padding:10px 12px;font-size:13px;margin:10px 0;font-weight:600}
   .warnbox.amber{background:#fffbeb;border-color:#fde68a;color:#92400e}
-  .metaline{font-size:12px;color:var(--muted);margin:6px 0}
+  .metaline{font-size:12px;color:var(--muted);margin:6px 0;line-height:1.5}
   .counts{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
   .countchip{background:#f3f4f6;border-radius:8px;padding:4px 10px;font-size:12px;font-weight:700;color:#374151}
-  .fltchips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
-  .fchip{border:1px solid var(--line);background:#fff;border-radius:999px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;color:var(--muted)}
-  .fchip.on{background:var(--ink);color:#fff;border-color:var(--ink)}
   .modal-bg{position:fixed;inset:0;background:rgba(15,23,42,.5);display:none;align-items:flex-end;justify-content:center;z-index:50}
   .modal-bg.on{display:flex}
   .modal{background:#fff;width:100%;max-width:640px;border-radius:16px 16px 0 0;max-height:92vh;overflow:auto;padding:16px}
@@ -60,8 +69,11 @@
   .modal h3{margin:0 0 4px;font-size:17px}.modal .mp{color:var(--muted);font-size:12px;margin:0 0 14px}
   .modal .actions{display:flex;gap:10px;margin-top:16px}.modal .actions .btn{flex:1;min-height:46px}
   .rev{text-decoration:line-through;opacity:.6}
+  /* FIX 5c — a row the server refused to close because it had left the declared
+     segment. It is still open and still reserving; it must not read as done. */
+  tr.skipped>td{background:var(--warn-bg)}
   .sisa{text-align:right;font-weight:700;white-space:nowrap}
-  .foot{font-size:12px;color:var(--muted);padding:10px 4px 0}
+  .foot{font-size:12px;color:var(--muted);padding:10px 14px;line-height:1.5}
   .scrollx{overflow-x:auto}
   #toast{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:80;display:flex;flex-direction:column;gap:8px;width:calc(100% - 32px);max-width:440px}
   .toast{background:var(--ink);color:#fff;padding:12px 14px;border-radius:12px;font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,.2);animation:tin .25s ease}
@@ -70,7 +82,121 @@
   @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
   .spin{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.5);border-top-color:#fff;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px;margin-right:6px}
   @keyframes sp{to{transform:rotate(360deg)}}
-  .reddot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--danger);margin-left:5px;vertical-align:middle}
+
+  /* ── UX-SPEC §1.3 · new classes, defined only from tokens ─────────────────── */
+  .st-tersedia      {background:var(--ok-bg);      color:var(--ok-ink)}
+  .st-habis         {background:var(--warn-bg);    color:var(--warn-ink)}
+  .st-kosong        {background:var(--neutral-bg); color:var(--neutral-ink)}
+  .st-perlu-produksi{background:var(--neg-bg);     color:var(--neg-ink)}
+
+  .chip.umur        {background:var(--neutral-bg); color:var(--neutral-ink)}
+  .chip.umur.old    {background:var(--age-old-bg); color:var(--age-old-ink)}
+  .chip.umur.ancient{background:var(--age-ancient-bg); color:var(--age-ancient-ink)}
+
+  .atp      {font-size:22px;font-weight:800;line-height:1.05;white-space:nowrap;
+             font-variant-numeric:tabular-nums;color:var(--ink)}
+  .atp.neg  {color:var(--danger)}
+  .atp .un  {font-size:12px;font-weight:700;color:var(--ink-2);margin-left:4px}
+  .atp-m2   {font-size:11px;color:var(--muted);font-weight:500;margin-top:1px}
+  .atp-sub  {font-size:11px;color:var(--ink-2);margin-top:3px;
+             font-variant-numeric:tabular-nums;line-height:1.35}
+  .atp-note {font-size:11px;color:var(--ink-2);margin-top:3px;line-height:1.35}
+
+  .offbox{background:var(--offline-bg);border:1px solid var(--offline-line);
+          color:var(--offline-ink);border-radius:12px;padding:12px 14px;
+          font-size:13px;line-height:1.45;display:flex;gap:10px;
+          align-items:flex-start;margin-bottom:12px}
+
+  /* ── filter chip row + totals strip — CANONICAL, byte-identical on both pages
+        (CONTRACTS "Open": the two pages had diverged; this is the reconciliation) ─ */
+  .fltchips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+  .fchip{border:1px solid var(--line);background:var(--card);color:var(--ink-2);
+         border-radius:999px;padding:0 12px;min-height:var(--tap);font:inherit;
+         font-size:12px;font-weight:700;cursor:pointer;display:inline-flex;
+         align-items:center;gap:6px}
+  .fchip[aria-pressed="true"],
+  .fchip[aria-selected="true"]{background:var(--ink);color:var(--card);border-color:var(--ink)}
+  .fchip:disabled{opacity:.55;cursor:default}
+  .fchip .n{font-variant-numeric:tabular-nums;font-weight:800}
+
+  .tabs{display:flex;gap:6px;overflow-x:auto;scroll-snap-type:x proximity;
+        -webkit-overflow-scrolling:touch;margin-bottom:12px;padding-bottom:2px}
+  .tabs::-webkit-scrollbar{display:none}
+  .tab{scroll-snap-align:start;flex:0 0 auto;border:1px solid var(--line);
+       background:var(--card);color:var(--ink-2);border-radius:999px;
+       padding:0 14px;min-height:var(--tap);font:inherit;font-size:13px;
+       font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+  .tab[aria-selected="true"]{background:var(--ink);color:var(--card);border-color:var(--ink)}
+  .tab .n{font-size:11px;font-weight:800;opacity:.85}
+
+  .pager{display:flex;gap:8px;align-items:center;justify-content:space-between;
+         padding:10px 14px;border-top:1px solid var(--line);font-size:12px;
+         color:var(--ink-2);flex-wrap:wrap}
+
+  .sk{background:var(--line);border-radius:6px;height:12px;animation:skp 1.1s ease-in-out infinite}
+  .sk.lg{height:20px}
+  @keyframes skp{0%,100%{opacity:.55}50%{opacity:1}}
+
+  @keyframes flup{from{background:var(--ok-bg)}to{background:transparent}}
+  @keyframes fldn{from{background:var(--neg-bg)}to{background:transparent}}
+  .f-up{animation:flup 1.2s ease-out}
+  .f-dn{animation:fldn 1.2s ease-out}
+
+  .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
+           overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+  :focus-visible{outline:3px solid var(--focus);outline-offset:2px;border-radius:6px}
+  header :focus-visible{outline-color:var(--card)}
+  .btn.tap{min-height:var(--tap)}
+  .mini.tap{min-height:var(--tap);padding:0 12px}
+
+  /* ── layout-only additions for the PPIC console (no colour invented) ─────── */
+  .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}
+  .toolbar label.fld{flex:1 1 180px;min-width:0}
+  .toolbar .grow{flex:3 1 260px}
+  .cbline{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;
+          color:var(--muted);min-height:var(--tap);cursor:pointer}
+  .cbline input{width:20px;height:20px;flex:none;margin:0}
+  .resline{font-size:12px;color:var(--ink-2);padding:0 14px 10px;line-height:1.5;font-weight:600}
+  .tblwrap{transition:opacity .15s ease}
+  .tblwrap.loading{opacity:.5}
+  td.cbcell,th.cbcell{width:34px;padding-right:0}
+  td.cbcell input{width:20px;height:20px;margin:2px 0 0}
+  /* §8.2 — the SKU column stays anchored while a narrow screen scrolls the table */
+  .stick1 th:first-child,.stick1 td:first-child{position:sticky;left:0;background:var(--card);z-index:1}
+  .stick1 th:first-child{background:#fafbfc}
+  .cust{overflow-wrap:anywhere;max-width:190px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .nums{font-variant-numeric:tabular-nums}
+  .gain{color:var(--ok-ink);font-weight:800;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .bulkbar{position:sticky;bottom:0;z-index:18;background:var(--ink);color:var(--card);
+           display:flex;gap:10px;align-items:center;flex-wrap:wrap;
+           padding:10px 14px;border-radius:12px;margin:10px 0;font-size:13px;font-weight:700;
+           box-shadow:0 -4px 18px rgba(0,0,0,.16)}
+  .bulkbar .sp{flex:1 1 auto;min-width:0}
+  /* §6.6.2 — the inline confirm expander on the Tanpa ETA segment */
+  tr.expander td{background:var(--warn-bg);border-top:2px solid var(--warn-line);
+                 color:var(--warn-ink-strong);font-size:13px;line-height:1.5}
+  tr.expander .xrow{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:10px}
+  tr.expander .xrow label.fld{flex:1 1 260px;color:var(--warn-ink-strong)}
+  .updpill{display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:var(--warn-bg);
+           border:1px solid var(--warn-line);color:var(--warn-ink-strong);border-radius:10px;
+           padding:8px 12px;font-size:12px;font-weight:700;margin:0 14px 10px}
+  .arith{width:100%;border-collapse:collapse;font-size:13px}
+  .arith td{border:none;padding:5px 0}
+  .arith td.op{width:18px;color:var(--ink-2);text-align:center}
+  .arith td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:700}
+  .arith tr.tot td{border-top:1px solid var(--line);padding-top:8px;font-weight:800}
+  .steprow{display:flex;gap:8px;align-items:stretch}
+  .steprow input{flex:1 1 auto;text-align:center}
+  .steprow button{flex:0 0 52px;min-height:var(--tap)}
+  .grid3{display:grid;grid-template-columns:1fr;gap:14px}
+  @media(min-width:960px){.grid3{grid-template-columns:repeat(3,1fr)}}
+  .shsm{display:none}
+  @media(max-width:559px){
+    .hidesm{display:none!important}
+    .shsm{display:inline}
+    .cust{max-width:none}
+    .toolbar label.fld{flex:1 1 100%}
+  }
 </style>
 </head>
 <body>
@@ -85,757 +211,1650 @@
 </header>
 
 <div class="wrap">
-  <label class="fld" style="margin-bottom:12px;max-width:280px">Petugas PPIC
-    <input type="text" id="actor" placeholder="Nama Anda" />
+  <label class="fld" style="margin-bottom:12px;max-width:280px" for="actor">Petugas PPIC
+    <input type="text" id="actor" placeholder="Nama Anda" autocomplete="off" />
   </label>
 
-  <!-- Card 1 — Upload -->
-  <div class="card">
-    <h2>Upload Stok</h2>
-    <div class="body">
-      <input type="file" id="file" accept=".xlsx,.xls,.csv" />
-      <div id="parseErr" class="warnbox" style="display:none"></div>
-      <div id="preview"></div>
-    </div>
-  </div>
+  <div id="freshBox"></div>
 
-  <!-- Card 1b — End of day: export movements + new stock check -->
-  <div class="card">
-    <h2>Akhir Hari <span class="chip age" id="eodMeta">—</span></h2>
-    <div class="body">
-      <p class="metaline">Tutup hari: <b>export laporan pergerakan</b> (Ringkasan + Pergerakan stok + daftar Booking, satu file Excel) untuk arsip,
-        lalu <b>buat file stock check baru</b> berisi sisa stok saat ini — sesuaikan dengan hitungan fisik (mis. produksi baru dari pabrik) lalu upload untuk memulai periode baru.</p>
-      <div style="display:flex;gap:10px;flex-wrap:wrap">
-        <button class="btn ghost" id="expEod">⬇ Export Laporan Akhir Hari (XLSX)</button>
-        <button class="btn" id="genCheck">＋ Buat Stock Check Baru (XLSX)</button>
+  <div class="tabs" id="tabs" role="tablist" aria-label="Bagian PPIC"></div>
+
+  <!-- ══ Tab 1 · Kekurangan (ST-R11) ═════════════════════════════════════════ -->
+  <section class="panel" id="panel-kekurangan" role="tabpanel" aria-labelledby="tab-kekurangan" hidden>
+    <div class="card">
+      <h2>Kekurangan</h2>
+      <div class="body" style="padding-bottom:0">
+        <p class="metaline">SKU yang jumlah pesanan aktifnya melebihi Stok Fisik. Ini pemicu produksi, bukan antrean yang harus dikosongkan.</p>
       </div>
-      <p class="metaline" style="margin-top:10px">File stock check baru memakai format PPIC yang sama (BRAND/WARNA/…/SALDO AKHIR) sehingga langsung bisa di-upload kembali di kartu di atas.</p>
+      <div id="sfBody" class="scrollx"></div>
+      <div class="foot">Diurutkan dari kekurangan terbesar, lalu pengiriman pesanan terdekat.</div>
     </div>
-  </div>
+  </section>
 
-  <!-- Card 2 — Verify queue -->
-  <div class="card">
-    <h2>Antrean Verifikasi <span class="chip st-overbooked" id="vqCount">0</span></h2>
-    <div id="vqBody" class="scrollx"></div>
-  </div>
-
-  <!-- Card 3 — Booking Outstanding (R17) -->
-  <div class="card">
-    <h2>Booking Outstanding <span class="chip st-outstanding" id="outCount">0</span></h2>
-    <div id="outBody" class="scrollx"></div>
-    <div class="foot" style="padding:0 14px 12px">Booking yang terbawa dari stock check sebelumnya — belum memotong stok aktif sampai dipenuhi.</div>
-  </div>
-
-  <!-- Card 4 — Tracker -->
-  <div class="card">
-    <h2>Tracker Booking per Sales</h2>
-    <div id="trackBody" class="scrollx"></div>
-    <div class="foot" style="padding:0 14px 12px">Lama = durasi &gt; 24 jam · dihitung dari semua periode.</div>
-  </div>
-
-  <!-- Card 5 — All bookings -->
-  <div class="card">
-    <h2>Semua Booking (periode aktif)</h2>
-    <div class="body">
-      <div class="fltchips" id="stFilters"></div>
-      <div id="allBody" class="scrollx"></div>
+  <!-- ══ Tab 2 · Tinjau Pesanan (ST-R18 + AMENDMENT 1/6) — the centrepiece ═══ -->
+  <section class="panel" id="panel-lama" role="tabpanel" aria-labelledby="tab-lama" hidden>
+    <!-- FIX 5b — the bulk-close outcome report. Persistent (never a toast):
+         a non-zero atp_delta_by_sku after a bulk close means promiseable stock
+         just moved, and that must not scroll away in 3.5 s. Nothing else
+         writes to this node. -->
+    <div id="lmAlarm"></div>
+    <div id="trayBox"></div>
+    <div class="card">
+      <h2>Tinjau Pesanan <span class="chip umur" id="lmCount">—</span></h2>
+      <div class="body" style="padding-bottom:0">
+        <div class="fltchips" id="lmSeg" role="tablist" aria-label="Jenis tinjauan"></div>
+        <p class="metaline" id="lmSubtitle"></p>
+        <div class="fltchips" id="lmAgeChips"></div>
+        <div class="toolbar">
+          <label class="fld grow" for="lmQ">Cari
+            <input type="search" id="lmQ" placeholder="Cari SKU / customer / No. SO…" />
+          </label>
+          <label class="fld" id="lmStatusWrap" for="lmStatus">Status SO
+            <select id="lmStatus"><option value="">Semua status</option></select>
+          </label>
+          <label class="cbline" style="flex:0 0 auto" for="lmOnlyDo">
+            <input type="checkbox" id="lmOnlyDo" /> Hanya status DO
+          </label>
+        </div>
+        <div class="fltchips" id="lmActiveChips" style="margin-top:10px"></div>
+      </div>
+      <div id="lmUpdPill"></div>
+      <div id="lmResLine" class="resline"></div>
+      <div id="lmPagerTop" class="hidesm"></div>
+      <div id="lmBody" class="tblwrap scrollx"></div>
+      <div id="lmPager"></div>
+      <div class="foot" id="lmFoot"></div>
     </div>
-  </div>
+    <div id="lmBulkBar"></div>
+  </section>
 
-  <!-- Card 6 — Upload history -->
-  <div class="card">
-    <h2>Riwayat Upload</h2>
-    <div id="histBody" class="scrollx"></div>
-    <div id="archivePanel"></div>
-  </div>
+  <!-- ══ Tab 3 · Belum Cocok (ST-R5.3) ═══════════════════════════════════════ -->
+  <section class="panel" id="panel-cocok" role="tabpanel" aria-labelledby="tab-cocok" hidden>
+    <div class="card">
+      <h2>Belum Cocok <span class="chip umur" id="exCount">—</span>
+        <button class="btn ghost mini tap hidesm" id="exCopyAll" style="margin-left:auto">Salin semua</button></h2>
+      <div class="body" style="padding-bottom:0">
+        <p class="metaline">Baris Sales Order di bawah belum cocok dengan SKU barang jadi mana pun, jadi belum bisa ikut dihitung.
+          Biasanya karena barang dibuat khusus (make-to-order), SKU-nya baru, atau penulisan kodenya berbeda antara SO dan stok.
+          Permintaannya tetap nyata — bukan kesalahan input.</p>
+        <div class="toolbar">
+          <label class="fld grow" for="exQ">Cari
+            <input type="search" id="exQ" placeholder="Cari SKU / customer / No. SO…" />
+          </label>
+        </div>
+      </div>
+      <div id="exBody" class="scrollx"></div>
+      <div id="exPager"></div>
+      <div class="foot" id="exFoot"></div>
+    </div>
+  </section>
+
+  <!-- ══ Tab 4 · Penyesuaian (ST-R12 / ST-R20) ═══════════════════════════════ -->
+  <section class="panel" id="panel-penyesuaian" role="tabpanel" aria-labelledby="tab-penyesuaian" hidden>
+    <div class="card">
+      <h2>Penyesuaian Stok</h2>
+      <div class="body">
+        <label class="fld" style="margin-bottom:4px" for="adjSku">SKU
+          <input type="text" id="adjSku" list="skuList" placeholder="Cari warna atau kode barang…" autocomplete="off" />
+        </label>
+        <datalist id="skuList"></datalist>
+        <div id="adjSkuHint" class="metaline"></div>
+        <div id="adjSkuErr" class="metaline" style="color:var(--danger);font-weight:700"></div>
+
+        <label class="fld" style="margin-bottom:4px" for="adjQty">Jumlah Penyesuaian
+          <div class="steprow">
+            <button type="button" class="btn ghost tap" id="adjMinus" aria-label="Kurangi stok (tanda minus)">−</button>
+            <input type="number" id="adjQty" inputmode="decimal" min="0" step="any" placeholder="0" />
+            <button type="button" class="btn ghost tap" id="adjPlus" aria-label="Tambah stok (tanda plus)">+</button>
+          </div>
+        </label>
+        <p class="metaline" id="adjSignHint">Positif = stok bertambah (mis. barang ketemu saat opname). Negatif = stok berkurang (mis. pecah, salah catat).</p>
+        <div id="adjQtyErr" class="metaline" style="color:var(--danger);font-weight:700"></div>
+
+        <label class="fld" style="margin-bottom:4px" for="adjReason">Alasan (wajib)
+          <textarea id="adjReason" minlength="4" rows="3" placeholder='Contoh: "Stock opname 11 Sep — 12 lembar pecah di rak B."'></textarea>
+        </label>
+        <div id="adjReasonErr" class="metaline" style="color:var(--danger);font-weight:700"></div>
+
+        <p class="atp-sub" id="adjEffect"></p>
+        <div id="adjWarn"></div>
+        <div style="margin-top:12px"><button class="btn tap" id="adjSubmit" disabled>Simpan Penyesuaian</button></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Riwayat Penyesuaian <span class="chip umur" id="adjCount">—</span></h2>
+      <div class="body" style="padding-bottom:0">
+        <div class="toolbar">
+          <label class="fld grow" for="adjQ">Cari
+            <input type="search" id="adjQ" placeholder="Cari Kode SKU / Petugas / alasan…" />
+          </label>
+        </div>
+      </div>
+      <div id="adjBody" class="scrollx"></div>
+      <div id="adjPager"></div>
+      <div class="foot">Penyesuaian tidak bisa dihapus. Untuk membatalkan, buat penyesuaian kebalikannya.</div>
+    </div>
+  </section>
+
+  <!-- ══ Tab 5 · Sinkronisasi ════════════════════════════════════════════════ -->
+  <section class="panel" id="panel-sinkron" role="tabpanel" aria-labelledby="tab-sinkron" hidden>
+    <div id="syTop"></div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+      <button class="btn tap" id="syncNow">Sinkron Sekarang</button>
+      <button class="btn ghost tap" id="syReload">Muat ulang status</button>
+    </div>
+    <div id="syBody" class="grid3"></div>
+    <div class="card"><div class="foot">Sinkronisasi otomatis berjalan setiap ±3 menit.</div></div>
+  </section>
 </div>
 
-<div class="modal-bg" id="rwBg"><div class="modal" id="rwModal"></div></div>
+<div class="modal-bg" id="mBg"><div class="modal" id="mBox" role="dialog" aria-modal="true"></div></div>
 <div id="toast"></div>
+<div id="srlive" class="sr-only" aria-live="polite" aria-atomic="true"></div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
 "use strict";
-const $ = (s,r=document)=>r.querySelector(s);
-const NF = new Intl.NumberFormat("id-ID",{maximumFractionDigits:2});
-const eq=(a,b)=>String(a)===String(b);
-function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
-function wib(iso){ if(!iso) return "—"; return new Intl.DateTimeFormat("id-ID",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",hour12:false,timeZone:"Asia/Jakarta"}).format(new Date(iso)).replace(/\./g,":"); }
-function dur(sec){ sec=Math.max(0,Math.floor(sec)); const d=Math.floor(sec/86400),h=Math.floor((sec%86400)/3600),m=Math.floor((sec%3600)/60); if(d>0)return `${d}h ${h}j`; if(h>0)return `${h}j`; return `${m}m`; }
-function ageSec(iso){ return (Date.now()-Date.parse(iso))/1000; }
-function round2(n){ return Math.round((Number(n)||0)*100)/100; }
-function dateStamp(){ return new Intl.DateTimeFormat("en-CA",{year:"numeric",month:"2-digit",day:"2-digit",timeZone:"Asia/Jakarta"}).format(new Date()); } // yyyy-mm-dd WIB
-function nowWib(){ return wib(new Date().toISOString()); }
-function toast(msg,kind){ const t=document.createElement("div"); t.className="toast"+(kind?(" "+kind):""); t.textContent=msg; $("#toast").appendChild(t); setTimeout(()=>t.remove(),3500); }
-const STLABEL={confirmed:"Terkonfirmasi",overbooked:"Menunggu Verifikasi",approved:"Disetujui (overbook)",rejected:"Ditolak",cancelled:"Dibatalkan",completed:"Selesai",outstanding:"Outstanding"};
-const DEDUCTING_SET=new Set(["confirmed","overbooked","approved","completed"]); // count against stock; outstanding deducts nowhere (R17)
+/* ════════════════════════════════════════════════════════════════════════════
+   /stock-ppic — PPIC console for Stock 2.0 (WP-6).
 
-// petugas persist
+   Contract: CONTRACTS.md §4 + AMENDMENT 1 (undated approved lines are LIVE and
+   reserve), AMENDMENT 3 (/sku/:sku_key body), AMENDMENT 4 (page/limit/q + total
+   on all four list endpoints), AMENDMENT 5 (encodeURIComponent on sku_key),
+   AMENDMENT 6 (atp_delta · close-batch · ?segment=), AMENDMENT 7 (a11y palette).
+   Visual and copy contract: UX-SPEC §1–§10. Every user-visible string below is
+   from that document's glossary (§1.5) or its copy tables.
+
+   THE SAFETY RULE OF THIS PAGE (AMENDMENT 6 / UX-SPEC §6.2.1): the review queue
+   holds two populations whose close has OPPOSITE consequences. Closing a stale
+   line moves ATP by zero; closing an undated line RAISES ATP by its whole
+   balance, i.e. releases reserved stock. They are therefore never mixed in one
+   list, never share a confirm behaviour, and never share a button colour.
+   ════════════════════════════════════════════════════════════════════════════ */
+const $  = (s,r=document)=>r.querySelector(s);
+const $$ = (s,r=document)=>Array.from(r.querySelectorAll(s));
+
+// ── UX-SPEC §1.4 · formatting, identical on both pages ───────────────────────
+const NF  = new Intl.NumberFormat("id-ID",{maximumFractionDigits:2});
+const num = v => NF.format(Number(v)||0).replace("-","−");          // U+2212 MINUS
+const n   = v => { const x=Number(v); return Number.isFinite(x)?x:0; };
+const nOrNull = v => { if(v==null||v==="") return null; const x=Number(v); return Number.isFinite(x)?x:null; };
+const eq  = (a,b)=>String(a)===String(b);
+function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+const signed = v => (n(v)>0?"+":"")+num(v);
+
+function wib(iso,withDate=true){
+  if(!iso) return "—";
+  const d=new Date(iso);
+  if(isNaN(d)) return "—";
+  const opt=withDate
+    ? {day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",hour12:false,timeZone:"Asia/Jakarta"}
+    : {hour:"2-digit",minute:"2-digit",hour12:false,timeZone:"Asia/Jakarta"};
+  return new Intl.DateTimeFormat("id-ID",opt).format(d).replace(/\./g,":").replace(/:(\w{3}):/," $1 ");
+}
+function jakDay(d){ return new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Jakarta",year:"numeric",month:"2-digit",day:"2-digit"}).format(d); }
+function wibAuto(iso){
+  if(!iso) return "—";
+  const d=new Date(iso); if(isNaN(d)) return "—";
+  return wib(iso, jakDay(d)!==jakDay(new Date()));
+}
+// UX-SPEC §1.4: ETA short, with the year appended whenever it is not this year —
+// a 2020 ETA reading "27 Agu" is the single most misleading thing on this screen.
+function wibShort(v){
+  if(!v) return "—";
+  const d=new Date(String(v).length<=10?String(v)+"T00:00:00+07:00":v);
+  if(isNaN(d)) return String(v);
+  const y=new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Jakarta",year:"numeric"}).format(d);
+  const thisY=new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Jakarta",year:"numeric"}).format(new Date());
+  const opt=y===thisY?{day:"2-digit",month:"short",timeZone:"Asia/Jakarta"}
+                     :{day:"2-digit",month:"short",year:"numeric",timeZone:"Asia/Jakarta"};
+  return new Intl.DateTimeFormat("id-ID",opt).format(d);
+}
+function rel(iso){
+  if(!iso) return "";
+  const ms=Date.now()-Date.parse(iso);
+  if(!isFinite(ms)) return "";
+  if(ms<60000) return "baru saja";
+  if(ms<3600000) return `${Math.floor(ms/60000)} mnt lalu`;
+  if(ms<86400000) return `${Math.floor(ms/3600000)} jam lalu`;
+  return "";
+}
+function todayJakMs(){ return Date.parse(jakDay(new Date())+"T00:00:00+07:00"); }
+function daysSince(dateStr){
+  if(!dateStr) return null;
+  const t=Date.parse(String(dateStr).slice(0,10)+"T00:00:00+07:00");
+  if(!isFinite(t)) return null;
+  return Math.floor((todayJakMs()-t)/86400000);
+}
+// Tiers per UX-SPEC §6.5 (the tier table is authoritative over the unit line
+// below it — ratified). Math.floor throughout: overstating age would overstate
+// confidence in closing the line.
+function umurChip(days,label){
+  if(days==null) return `<span class="chip umur">—</span>`;
+  const txt=days<0?`${num(-days)} hari lagi`
+    :days<=180?`${num(days)} hari`
+    :days<=365?`${num(Math.floor(days/30))} bulan`
+    :`${num(Math.floor(days/365))} tahun`;
+  const cls=days<=180?"chip umur":days<=365?"chip umur old":"chip umur ancient";
+  return `<span class="${cls}">${esc(label?label.replace("{}",txt):txt)}</span>`;
+}
+function toast(msg,kind){
+  const t=document.createElement("div"); t.className="toast"+(kind?(" "+kind):"");
+  t.textContent=msg; $("#toast").appendChild(t); setTimeout(()=>t.remove(),4500);
+  announce(msg);                            // §9.4: one announcement channel only
+}
+function announce(msg){ $("#srlive").textContent=msg; }
+async function copyText(txt,okMsg){
+  try{ await navigator.clipboard.writeText(txt); toast(okMsg||"Disalin.","ok"); }
+  catch{ toast("Gagal menyalin. Salin manual dari layar.","warn"); }
+}
+
+// ── fetch wrapper — never throws, so every surface renders an honest state ───
+async function api(path,opts){
+  try{
+    const r=await fetch(path,opts);
+    let j=null; try{ j=await r.json(); }catch{ j=null; }
+    const res={ ok:r.ok, status:r.status, json:j||{}, netfail:false };
+    if(r.status===410) handle410();                        // §7.9
+    return res;
+  }catch{ return { ok:false, status:0, json:{}, netfail:true }; }
+}
+function errText(res,fallback){
+  if(res.netfail) return "Gagal terhubung ke server.";
+  if(res.status===503) return (res.json&&res.json.error)||"Database tidak tersedia.";
+  return (res.json&&res.json.error)||fallback||"Terjadi kesalahan.";
+}
+// §7.9 — a cached 1.0 HTML file in a browser is a real thing. Do not render the
+// server's 410 body: it explains bookings to someone who is not trying to book.
+let SAW_410=false;
+function handle410(){
+  if(SAW_410) return; SAW_410=true;
+  const d=document.createElement("div");
+  d.className="warnbox"; d.style.margin="0 16px 12px";
+  d.innerHTML=`Halaman ini sudah diperbarui. Muat ulang untuk melanjutkan.
+    <button class="btn tap" id="reload410" style="margin-left:10px">Muat Ulang</button>`;
+  document.querySelector(".wrap").prepend(d);
+  $("#reload410").addEventListener("click",()=>location.reload());
+}
+// CONTRACTS §4.2/AMENDMENT 4 name page/limit/q and "a total"; the envelope key is
+// still unspecified, so accept the plausible set rather than guessing one.
+function readRows(j){
+  if(Array.isArray(j)) return j;
+  for(const k of ["rows","items","data","results","lines","commitments","exceptions","adjustments","shortfall"]){
+    if(Array.isArray(j&&j[k])) return j[k];
+  }
+  return [];
+}
+function readTotal(j){
+  if(!j||Array.isArray(j)) return null;
+  for(const k of ["total","count","total_rows","total_count","filtered_total"]){
+    const v=nOrNull(j[k]); if(v!=null) return v;
+  }
+  return null;
+}
+function pick(o,...keys){ for(const k of keys){ if(o&&o[k]!=null&&o[k]!=="") return o[k]; } return null; }
+function debounce(fn,ms){ let h; return (...a)=>{ clearTimeout(h); h=setTimeout(()=>fn(...a),ms||350); }; }
+
+// §7.1 — nothing shows a loading state for less than 200ms.
+function skelAfter(el,rows){
+  const t=setTimeout(()=>{ el.innerHTML=`<div style="padding:14px">${Array.from({length:rows||6},()=>
+    `<div class="sk lg" style="margin-bottom:10px"></div>`).join("")}</div>`; },200);
+  return ()=>clearTimeout(t);
+}
+// §7.4 — first load with nothing on screen.
+function failBox(el,msg,retryFn){
+  el.innerHTML=`<div class="empty">${esc(msg)}<br>Periksa koneksi Anda.
+    <br><button class="btn tap" data-retry="1" style="margin-top:12px">Coba Lagi</button></div>`;
+  const b=$("[data-retry]",el); if(b) b.addEventListener("click",retryFn);
+}
+// §7.5 — render the server's 503 message verbatim; do not substitute our own.
+function box503(el,msg){ el.innerHTML=`<div class="empty">${esc(msg)}<br>Hubungi tim IT.</div>`; }
+function renderFail(el,res,retryFn){
+  if(res.status===503){ box503(el,errText(res)); DB_DOWN=true; applyLocks(); }
+  else failBox(el,"Gagal memuat data.",retryFn);
+}
+// §7.4 — one error toast per 60s so a tunnel does not produce twenty.
+let LAST_ERR_TOAST=0;
+function errToastThrottled(msg){
+  const t=Date.now(); if(t-LAST_ERR_TOAST<60000) return;
+  LAST_ERR_TOAST=t; toast(msg,"err");
+}
+
+// ── actor (audit: every write carries it) ────────────────────────────────────
 $("#actor").value=localStorage.getItem("stk_actor")||"";
 $("#actor").addEventListener("input",()=>localStorage.setItem("stk_actor",$("#actor").value.trim()));
 function actor(){ return $("#actor").value.trim(); }
 function requireActor(){ if(!actor()){ toast("Isi nama petugas PPIC dulu.","warn"); $("#actor").focus(); return false; } return true; }
 
-// ══ R9 · client-side Excel parsing ════════════════════════════════════════════
-const norm=s=>String(s==null?"":s).replace(/\s+/g," ").trim().toUpperCase();
-// Recognizable headers (primary set + generic synonyms) for header-row detection.
-const KNOWN=new Set(["BRAND","WARNA","BATCH WARNA","COATING","TH","MM","P","L",
-  "SALDO AKHIR (LBR)","SALDO AKHIR (M2)","NAMA PRODUK","NAMA","PRODUK","PRODUCT","NAME","ITEM",
-  "LINI","LINE","KATEGORI","CATEGORY","SATUAN","UNIT","UOM","QTY","JUMLAH","STOK","STOCK","QUANTITY"]);
-function headerScore(row){
-  let n=0; for(const c of row){ const k=norm(c); if(!k) continue;
-    if(KNOWN.has(k)) n++;
-    else if(k.includes("SALDO AKHIR")) n++; }
-  return n;
+// ── modal (§9.3: focus to h3, Esc closes, focus returns, background inert) ───
+let LAST_FOCUS=null;
+function modalOpen(){ return $("#mBg").classList.contains("on"); }
+function openModal(html){
+  if(!modalOpen()) LAST_FOCUS=document.activeElement;
+  $("#mBox").innerHTML=html; $("#mBg").classList.add("on");
+  const w=document.querySelector(".wrap");
+  if("inert" in HTMLElement.prototype) w.inert=true; else w.setAttribute("aria-hidden","true");
+  const h=$("#mBox h3"); if(h){ h.setAttribute("tabindex","-1"); h.focus(); }
 }
-// A row is a header if it has ≥3 known headers (R9 — skips title blocks), OR it
-// pairs a name/warna column with a qty/saldo column — so a minimal generic file
-// (just "Nama Produk" + "Qty", 2 columns) is still recognized (decision log).
-const NAME_HDRS=new Set(["WARNA","NAMA PRODUK","NAMA","PRODUK","PRODUCT","NAME","ITEM"]);
-const QTY_HDRS=new Set(["QTY","JUMLAH","STOK","STOCK","QUANTITY","SALDO AKHIR (LBR)"]);
-function looksLikeHeader(row){
-  if(headerScore(row)>=3) return true;
-  let hasName=false, hasQty=false;
-  for(const c of row){ const k=norm(c); if(!k) continue;
-    if(NAME_HDRS.has(k)) hasName=true;
-    if(QTY_HDRS.has(k)||k.includes("SALDO AKHIR")) hasQty=true; }
-  return hasName&&hasQty;
+function closeModal(){
+  $("#mBg").classList.remove("on"); $("#mBox").innerHTML="";
+  const w=document.querySelector(".wrap");
+  if("inert" in HTMLElement.prototype) w.inert=false; else w.removeAttribute("aria-hidden");
+  if(LAST_FOCUS&&LAST_FOCUS.focus) try{ LAST_FOCUS.focus(); }catch{}
+  LAST_FOCUS=null;
+  if(PENDING_SUMMARY){ const s=PENDING_SUMMARY; PENDING_SUMMARY=null; applySummary(s); }
 }
-// Locate a column index by trying a list of exact normalized names, then a contains test.
-function findCol(headers,exacts,contains){
-  for(let i=0;i<headers.length;i++){ if(exacts.includes(norm(headers[i]))) return i; }
-  if(contains){ for(let i=0;i<headers.length;i++){ const k=norm(headers[i]); if(contains.every(t=>k.includes(t))) return i; } }
-  return -1;
-}
-function toNum(v){
-  // id-locale (PRD §8.4): dot = thousands, comma = decimal. Kept byte-identical
-  // in logic to the server's num() so client preview === server re-validation.
-  if(v==null||v==="") return null;
-  if(typeof v==="number") return isFinite(v)?v:null;
-  let s=String(v).trim(); if(!s) return null;
-  const neg=/^-/.test(s), hasComma=s.includes(","), hasDot=s.includes(".");
-  if(hasComma&&hasDot){ if(s.lastIndexOf(",")>s.lastIndexOf(".")) s=s.replace(/\./g,"").replace(",","."); else s=s.replace(/,/g,""); }
-  else if(hasComma){ const parts=s.split(","); const after=parts[parts.length-1].length; s=(parts.length>2||after===3)?s.replace(/,/g,""):s.replace(",","."); }
-  else if(hasDot){ const parts=s.split("."); const after=parts[parts.length-1].length; if(parts.length>2||after===3) s=s.replace(/\./g,""); }
-  s=s.replace(/[^0-9.]/g,""); const n=Number(s); if(!isFinite(n)) return null; return neg?-n:n;
-}
-// Parse one sheet's 2D rows → structured result, or null if no header detected.
-function parseSheet(rows){
-  let hdrIdx=-1;
-  for(let i=0;i<Math.min(10,rows.length);i++){ if(looksLikeHeader(rows[i]||[])){ hdrIdx=i; break; } }
-  if(hdrIdx<0) return null;
-  const headers=rows[hdrIdx]||[];
-  const col={
-    brand:findCol(headers,["BRAND"]),
-    warna:findCol(headers,["WARNA"]),
-    batch:findCol(headers,["BATCH WARNA"]),
-    coating:findCol(headers,["COATING"]),
-    th:findCol(headers,["TH"]),
-    mm:findCol(headers,["MM"]),
-    p:findCol(headers,["P"]),
-    l:findCol(headers,["L"]),
-    qtyLbr:findCol(headers,["SALDO AKHIR (LBR)"],["SALDO AKHIR","LBR"]),
-  };
-  const primary = col.warna>-1 && col.qtyLbr>-1;
-  let mapType, dataRows=[], brands=new Set();
-  let zero=0,skipped=0;
-  const merge=new Map();
-
-  if(primary){
-    mapType="primary";
-    for(let i=hdrIdx+1;i<rows.length;i++){
-      const r=rows[i]||[];
-      const warna=String(r[col.warna]==null?"":r[col.warna]).trim();
-      const qty=toNum(r[col.qtyLbr]);
-      if(!warna || qty==null || qty<0){ if(warna||r.some(x=>x!=null&&String(x).trim()!=="")) skipped++; continue; }
-      if(qty===0) zero++;
-      const brand=col.brand>-1?String(r[col.brand]==null?"":r[col.brand]).trim():"";
-      if(brand) brands.add(brand);
-      const item={
-        brand:brand||null, warna,
-        batch_warna:col.batch>-1?(String(r[col.batch]==null?"":r[col.batch]).trim()||null):null,
-        coating:col.coating>-1?(String(r[col.coating]==null?"":r[col.coating]).trim()||null):null,
-        th:col.th>-1?toNum(r[col.th]):null, mm:col.mm>-1?toNum(r[col.mm]):null,
-        p:col.p>-1?toNum(r[col.p]):null, l:col.l>-1?toNum(r[col.l]):null,
-        qty,
-      };
-      const key=structKey(item);
-      if(merge.has(key)){ merge.get(key).qty+=qty; merge.get(key)._merged=true; }
-      else merge.set(key,item);
-    }
-  }else{
-    mapType="generic";
-    const gc={
-      name:findCol(headers,["NAMA PRODUK","NAMA","PRODUK","PRODUCT","NAME","ITEM"]),
-      line:findCol(headers,["LINI","LINE","KATEGORI","CATEGORY"]),
-      unit:findCol(headers,["SATUAN","UNIT","UOM"]),
-      qty:findCol(headers,["QTY","JUMLAH","STOK","STOCK","QUANTITY"]),
-    };
-    if(gc.name<0||gc.qty<0) return null;
-    for(let i=hdrIdx+1;i<rows.length;i++){
-      const r=rows[i]||[];
-      const name=String(r[gc.name]==null?"":r[gc.name]).trim();
-      const qty=toNum(r[gc.qty]);
-      if(!name || qty==null || qty<0){ if(name||r.some(x=>x!=null&&String(x).trim()!=="")) skipped++; continue; }
-      if(qty===0) zero++;
-      const line=gc.line>-1?(String(r[gc.line]==null?"":r[gc.line]).trim()||null):null;
-      if(line) brands.add(line);
-      const item={ name, product_line:line, unit:gc.unit>-1?(String(r[gc.unit]==null?"":r[gc.unit]).trim()||"pcs"):"pcs", qty };
-      const key=genKey(item);
-      if(merge.has(key)){ merge.get(key).qty+=qty; merge.get(key)._merged=true; }
-      else merge.set(key,item);
-    }
-  }
-  dataRows=[...merge.values()];
-  const merged=dataRows.filter(x=>x._merged).length;
-  dataRows.forEach(x=>delete x._merged);
-  return { mapType, headerRow:hdrIdx+1, rows:dataRows, brands, zero, skipped, merged, valid:dataRows.length };
-}
-function structKey(it){ return ["s",it.brand,it.warna,it.batch_warna,it.coating,it.th,it.mm,it.p,it.l].map(v=>String(v==null?"":v).trim().toLowerCase()).join("|"); }
-function genKey(it){ return ["g",it.name,it.product_line].map(v=>String(v==null?"":v).trim().toLowerCase()).join("|"); }
-// Same key derived from a live summary item, for reconciliation matching.
-function itemKey(i){
-  if(i.warna!=null) return ["s",i.product_line,i.warna,i.batch_warna,i.coating,i.th,i.mm,i.p,i.l].map(v=>String(v==null?"":v).trim().toLowerCase()).join("|");
-  return ["g",i.name,i.product_line].map(v=>String(v==null?"":v).trim().toLowerCase()).join("|");
-}
-
-// ── upload flow state ─────────────────────────────────────────────────────────
-let PARSED=null;     // { filename, sheets:[{name,result}] }
-let SELSHEET=null;   // selected sheet name
-let LIVEKEYS={};     // key → available (from summary), for reconciliation
-
-$("#file").addEventListener("change",async e=>{
-  const f=e.target.files[0]; if(!f) return;
-  $("#parseErr").style.display="none"; $("#preview").innerHTML=`<div class="empty">Membaca file…</div>`;
-  try{
-    const buf=await f.arrayBuffer();
-    const wb=XLSX.read(buf,{type:"array"});
-    const sheets=[];
-    for(const name of wb.SheetNames){
-      // Keep blank rows so the detected header row number matches the real
-      // spreadsheet (the sample's master header genuinely sits on row 5, R9);
-      // all-null rows are harmlessly skipped and never counted as invalid.
-      const rows=XLSX.utils.sheet_to_json(wb.Sheets[name],{header:1,defval:null,blankrows:true});
-      const result=parseSheet(rows);
-      if(result) sheets.push({name,result});
-    }
-    if(sheets.length===0){
-      $("#preview").innerHTML="";
-      $("#parseErr").style.display=""; $("#parseErr").textContent="File tidak dikenali. Pastikan ada kolom BRAND/WARNA/SALDO AKHIR atau Nama Produk/Qty.";
-      PARSED=null; return;
-    }
-    PARSED={ filename:f.name, sheets };
-    // default = most distinct brands, ties → most rows (R9)
-    sheets.sort((a,b)=> (b.result.brands.size-a.result.brands.size) || (b.result.valid-a.result.valid));
-    SELSHEET=sheets[0].name;
-    renderPreview();
-  }catch(err){
-    $("#preview").innerHTML="";
-    $("#parseErr").style.display=""; $("#parseErr").textContent="File tidak bisa dibaca. Pastikan format .xlsx/.xls/.csv.";
-    PARSED=null;
-  }
+$("#mBg").addEventListener("click",e=>{ if(e.target.id==="mBg") closeModal(); });
+document.addEventListener("keydown",e=>{
+  if(e.key!=="Escape") return;
+  if(modalOpen()){ closeModal(); return; }
+  if(EXPANDED) collapseExpander(true);
 });
 
-function currentSheet(){ return PARSED?PARSED.sheets.find(s=>s.name===SELSHEET):null; }
-function renderPreview(){
-  const cs=currentSheet(); if(!cs){ $("#preview").innerHTML=""; return; }
-  const res=cs.result;
-  const active=SUMMARY&&SUMMARY.upload;
-  const mapLabel=res.mapType==="primary"?"Format PPIC (BRAND/WARNA/…)":"Format umum (Nama/Qty)";
-  const sheetOpts=PARSED.sheets.map(s=>`<option ${s.name===SELSHEET?"selected":""} value="${esc(s.name)}">${esc(s.name)} — ${s.result.valid} baris · ${s.result.brands.size} brand</option>`).join("");
-  const over=res.valid>2000;
-  const first=res.rows.slice(0,15);
-  const isPrimary=res.mapType==="primary";
-  const rowsHtml=first.map(r=>{
-    const liveKey=itemKeyFromParsed(r); // reconciliation match against the active period
-    const avail=LIVEKEYS[liveKey];
-    const availTxt=avail==null?"":NF.format(avail);
-    if(isPrimary){
-      return `<tr><td>${esc(r.brand||"")}</td><td>${esc(r.warna)}<div class="sub2">${esc([r.batch_warna,r.coating].filter(Boolean).join(" · "))}</div></td>
-        <td>${[r.th,r.mm?r.mm+"mm":"",r.p&&r.l?r.p+"×"+r.l:""].filter(Boolean).map(esc).join(" · ")}</td>
-        <td style="text-align:right">${NF.format(r.qty)}</td><td style="text-align:right">${availTxt}</td></tr>`;
-    }
-    return `<tr><td>${esc(r.product_line||"")}</td><td>${esc(r.name)}</td><td>${esc(r.unit)}</td>
-      <td style="text-align:right">${NF.format(r.qty)}</td><td style="text-align:right">${availTxt}</td></tr>`;
-  }).join("");
-  const head=isPrimary
-    ? `<tr><th>Brand</th><th>Warna</th><th>Spec</th><th style="text-align:right">Qty</th><th style="text-align:right">Tersedia sekarang</th></tr>`
-    : `<tr><th>Lini</th><th>Nama</th><th>Satuan</th><th style="text-align:right">Qty</th><th style="text-align:right">Tersedia sekarang</th></tr>`;
-  $("#preview").innerHTML=`
-    <label class="fld" style="margin-top:12px;max-width:100%">Sheet
-      <select id="sheetSel">${sheetOpts}</select>
-    </label>
-    <div class="metaline">Kolom terpetakan: <b>${mapLabel}</b> · header baris ${res.headerRow}</div>
-    <div class="counts">
-      <span class="countchip">${res.valid} baris valid</span>
-      <span class="countchip">${res.zero} stok 0</span>
-      <span class="countchip">${res.skipped} dilewati</span>
-      <span class="countchip">${res.merged} duplikat digabung</span>
-    </div>
-    ${over?`<div class="warnbox">Terlalu banyak baris (${res.valid}). Maksimal 2000.</div>`:""}
-    ${active?`<div class="warnbox amber">Upload baru akan MENGGANTI stok. ${openNow()} booking aktif akan menjadi OUTSTANDING — tidak memotong stok baru sampai dipenuhi PPIC.</div>`:""}
-    <div class="scrollx"><table><thead>${head}</thead><tbody>${rowsHtml}</tbody></table></div>
-    <div class="metaline">Menampilkan ${first.length} dari ${res.valid} baris.</div>
-    <label class="fld" style="margin-top:8px;max-width:100%">Catatan (opsional)<input type="text" id="upNote" placeholder="—"/></label>
-    <div style="margin-top:12px"><button class="btn" id="doUpload" ${over?"disabled":""}>Konfirmasi Upload</button></div>`;
-  $("#sheetSel").addEventListener("change",e=>{ SELSHEET=e.target.value; renderPreview(); });
-  $("#doUpload").addEventListener("click",doUpload);
+/* ════════════════════════════════════════════════════════════════════════════
+   Summary + freshness — CONTRACTS §4.1, UX-SPEC §4.
+   Precedence: erp_connected===false → .offbox · stale → .banner · else line only.
+   ════════════════════════════════════════════════════════════════════════════ */
+let SUMMARY={freshness:{last_ok_at:null,stale:false,erp_connected:false},totals:{},items:[]};
+let SUMMARY_ERR=null, HAD_SUMMARY=false, WAS_STALE=false, WAS_OFF=null, DB_DOWN=false;
+let PENDING_SUMMARY=null;
+
+function typing(){
+  const a=document.activeElement;
+  return a&&(a.tagName==="INPUT"||a.tagName==="TEXTAREA"||a.tagName==="SELECT");
 }
-function itemKeyFromParsed(r){
-  if(r.warna!=null) return ["s",r.brand,r.warna,r.batch_warna,r.coating,r.th,r.mm,r.p,r.l].map(v=>String(v==null?"":v).trim().toLowerCase()).join("|");
-  return ["g",r.name,r.product_line].map(v=>String(v==null?"":v).trim().toLowerCase()).join("|");
-}
-
-async function doUpload(){
-  if(!requireActor()) return;
-  const cs=currentSheet(); if(!cs) return;
-  const res=cs.result;
-  if(res.valid>2000){ toast("Maksimal 2000 baris.","err"); return; }
-  if(res.valid===0){ toast("File tidak berisi baris stok yang valid.","err"); return; }
-  const active=SUMMARY&&SUMMARY.upload;
-  if(!confirm(active?`Upload akan mengganti stok. ${openNow()} booking aktif menjadi OUTSTANDING. Lanjut?`:"Konfirmasi upload periode baru?")) return;
-  const items=res.rows.map(r=> res.mapType==="primary"
-    ? {brand:r.brand,warna:r.warna,batch_warna:r.batch_warna,coating:r.coating,th:r.th,mm:r.mm,p:r.p,l:r.l,qty:r.qty}
-    : {name:r.name,product_line:r.product_line,unit:r.unit,qty:r.qty});
-  const btn=$("#doUpload"); btn.disabled=true; btn.innerHTML=`<span class="spin"></span>Mengupload`;
-  try{
-    const r=await fetch("/api/stock/uploads",{method:"POST",headers:{"content-type":"application/json"},
-      body:JSON.stringify({filename:PARSED.filename,sheet_name:SELSHEET,uploaded_by:actor(),note:$("#upNote").value.trim()||null,items})});
-    const j=await r.json();
-    if(!r.ok){ toast(j.error||"Gagal upload.","err"); btn.disabled=false; btn.textContent="Konfirmasi Upload"; if((j.error||"").includes("Muat ulang")) refreshAll(); return; }
-    toast(`Upload berhasil — ${j.upload.row_count} baris.`+(j.carried_outstanding?` ${j.carried_outstanding} booking jadi outstanding.`:""),"ok");
-    $("#file").value=""; $("#preview").innerHTML=""; PARSED=null;
-    refreshAll();
-  }catch{ toast("Gagal terhubung.","err"); btn.disabled=false; btn.textContent="Konfirmasi Upload"; }
-}
-
-// ══ Akhir Hari — export movements report + generate a fresh stock check ════════
-// Both use the same SheetJS framework as the upload (client-side, zero server
-// deps). The export is a single workbook with three sheets:
-//   Ringkasan   — period header, totals, and a per-item stok awal/terbooking/
-//                 tersedia table (the summary that ties everything together).
-//   Pergerakan  — the elaborated movement ledger: per product, a Stok Awal row
-//                 then every booking as a signed qty with a running Sisa (mirror
-//                 of the per-product riwayat; final Sisa === Tersedia).
-//   Booking     — the flat booking list with timers, outcomes, and stamps.
-function xlsxReady(){ if(typeof XLSX==="undefined"){ toast("Library Excel belum siap. Muat ulang halaman.","err"); return false; } return true; }
-function setCols(ws,widths){ ws["!cols"]=widths.map(w=>({wch:w})); }
-
-async function exportEndOfDay(){
-  if(!xlsxReady()) return;
-  if(!SUMMARY.upload){ toast("Belum ada periode aktif untuk diexport.","warn"); return; }
-  const btn=$("#expEod"); btn.disabled=true; const label=btn.textContent; btn.innerHTML=`<span class="spin"></span>Menyiapkan`;
-  try{
-    // Pull every booking of the active period (all statuses, with timer fields).
-    let bookings=[];
-    try{ const r=await fetch("/api/stock/bookings"); bookings=(await r.json()).bookings||[]; }catch{ toast("Gagal ambil data booking.","err"); btn.disabled=false; btn.textContent=label; return; }
-    const items=SUMMARY.items, t=SUMMARY.totals||{}, u=SUMMARY.upload;
-
-    // ── Sheet: Ringkasan ──────────────────────────────────────────────────────
-    const bytStatus={}; for(const b of bookings){ bytStatus[b.status]=(bytStatus[b.status]||0)+1; }
-    const sumAoa=[
-      ["RINGKASAN AKHIR HARI — STOK BOOKING"],
-      ["Periode (file)", u.filename||"—"],
-      ["Sheet", u.sheet_name||"—"],
-      ["Data per (WIB)", wib(u.created_at)],
-      ["Diekspor (WIB)", nowWib()],
-      ["Petugas", actor()||"—"],
-      [],
-      ["TOTAL"],
-      ["Total item", items.length],
-      ["Item tersedia (>0)", t.items_available||0],
-      ["Total qty terbooking", round2(t.booked_total||0)],
-      ["Total booking", bookings.length],
-      ["— Terkonfirmasi", bytStatus.confirmed||0],
-      ["— Menunggu verifikasi (overbook)", bytStatus.overbooked||0],
-      ["— Outstanding (menunggu Penuhi)", bytStatus.outstanding||0],
-      ["— Disetujui (overbook)", bytStatus.approved||0],
-      ["— Selesai", bytStatus.completed||0],
-      ["— Dibatalkan", bytStatus.cancelled||0],
-      ["— Ditolak", bytStatus.rejected||0],
-      ["Booking terbuka > 24 jam (LAMA)", t.active_long||0],
-      [],
-      ["RINGKASAN PER PRODUK"],
-      ["Brand","Produk","Warna","Satuan","Stok Awal","Terbooking","Tersedia","Tersedia (M2)","Overbooked?","Menunggu Verifikasi"],
-    ];
-    for(const i of items){
-      sumAoa.push([
-        i.product_line||"", i.name, i.warna||"", i.unit,
-        round2(i.qty_initial), round2(i.booked), round2(i.available),
-        i.available_m2==null?"":round2(i.available_m2),
-        i.available<0?"YA":"", i.pending_verifications||0,
-      ]);
-    }
-    const wsSum=XLSX.utils.aoa_to_sheet(sumAoa);
-    setCols(wsSum,[16,30,18,8,10,10,10,13,11,18]);
-
-    // ── Sheet: Pergerakan (movement ledger) ───────────────────────────────────
-    const byItem=new Map();
-    // Effective item = where the qty actually counts (R17): a booking Penuhi'd
-    // into this period deducts from fulfilled_item_id, not its origin item.
-    for(const b of bookings){
-      const eff=b.fulfilled_item_id||b.item_id;
-      if(!byItem.has(eff)) byItem.set(eff,[]); byItem.get(eff).push(b);
-    }
-    for(const arr of byItem.values()) arr.sort((a,b)=>Date.parse(a.created_at)-Date.parse(b.created_at)||(String(a.id)<String(b.id)?-1:1));
-    const movAoa=[["Produk","Brand","Waktu (WIB)","Tipe","Sales","Customer","No. SO","Qty (±)","Status","Hasil","Durasi (jam)","Sisa","Catatan"]];
-    for(const i of items){
-      let sisa=round2(i.qty_initial);
-      movAoa.push([i.name, i.product_line||"", wib(u.created_at), "Stok Awal", "", "", "", round2(i.qty_initial), "", "", "", sisa, ""]);
-      const arr=byItem.get(i.id)||[];
-      for(const b of arr){
-        const deduct=DEDUCTING_SET.has(b.status);
-        if(deduct) sisa=round2(sisa-Number(b.qty));
-        const via=b.fulfilled_item_id&&!eq(b.fulfilled_item_id,b.item_id);
-        movAoa.push([
-          i.name, i.product_line||"", wib(via?(b.completed_at||b.created_at):b.created_at),
-          via?"Booking (Penuhi)":"Booking", b.rep_name, b.customer_name, b.so_number||"",
-          deduct? -round2(b.qty) : 0, STLABEL[b.status]||b.status, b.outcome,
-          round2(b.duration_seconds/3600), sisa, b.note||"",
-        ]);
-      }
-    }
-    const wsMov=XLSX.utils.aoa_to_sheet(movAoa);
-    setCols(wsMov,[30,14,16,10,14,20,16,10,20,10,12,10,24]);
-
-    // ── Sheet: Booking (flat detail) ──────────────────────────────────────────
-    const bkAoa=[["Produk","Brand","Sales","Qty","Satuan","Customer","No. SO","Status","Hasil","Durasi (jam)","Lama?","Waktu Booking (WIB)","Diverifikasi (WIB)","Selesai (WIB)","Dibatalkan (WIB)","Catatan"]];
-    for(const b of bookings){
-      const it=itemById(b.item_id);
-      bkAoa.push([
-        it?it.name:("#"+b.item_id), it?(it.product_line||""):"", b.rep_name, round2(b.qty),
-        it?it.unit:"", b.customer_name, b.so_number||"", STLABEL[b.status]||b.status, b.outcome,
-        round2(b.duration_seconds/3600), b.long?"LAMA":"",
-        wib(b.created_at), b.verified_at?wib(b.verified_at):"", b.completed_at?wib(b.completed_at):"",
-        b.cancelled_at?wib(b.cancelled_at):"", b.note||"",
-      ]);
-    }
-    const wsBk=XLSX.utils.aoa_to_sheet(bkAoa);
-    setCols(wsBk,[30,14,14,8,8,20,16,20,10,12,7,18,18,18,18,24]);
-
-    const wb=XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb,wsSum,"Ringkasan");
-    XLSX.utils.book_append_sheet(wb,wsMov,"Pergerakan");
-    XLSX.utils.book_append_sheet(wb,wsBk,"Booking");
-    XLSX.writeFile(wb,`laporan-akhir-hari-${dateStamp()}.xlsx`);
-    toast("Laporan akhir hari diunduh.","ok");
-  }finally{ btn.disabled=false; btn.textContent=label; }
-}
-
-// Generate a fresh STOCK_CHECK file seeded with current remaining stock, in the
-// exact primary format (or generic when the period is generic) so PPIC adjusts
-// it against the physical count and re-uploads it to open the next period.
-function generateNewStockCheck(){
-  if(!xlsxReady()) return;
-  if(!SUMMARY.upload){ toast("Belum ada periode aktif.","warn"); return; }
-  const items=SUMMARY.items;
-  if(items.length===0){ toast("Tidak ada item untuk dibuat.","warn"); return; }
-  const structured=items.some(i=>i.warna!=null);
-  let aoa;
-  if(structured){
-    aoa=[["BRAND","WARNA","BATCH WARNA","COATING","TH","MM","P","L","SALDO AKHIR (Lbr)","SALDO AKHIR (M2)"]];
-    for(const i of items){
-      const qty=Math.max(0,round2(i.available)); // carry forward remaining stock (a count can't be negative)
-      const m2=(i.p!=null&&i.l!=null)?round2(qty*i.p*i.l/1e6):"";
-      aoa.push([i.product_line||"", i.warna||i.name||"", i.batch_warna||"", i.coating||"",
-        i.th==null?"":i.th, i.mm==null?"":i.mm, i.p==null?"":i.p, i.l==null?"":i.l, qty, m2]);
-    }
-  }else{
-    aoa=[["Nama Produk","Kategori","Satuan","Qty"]];
-    for(const i of items){ aoa.push([i.name||"", i.product_line||"", i.unit||"pcs", Math.max(0,round2(i.available))]); }
-  }
-  const ws=XLSX.utils.aoa_to_sheet(aoa);
-  setCols(ws, structured?[16,20,14,10,7,6,8,8,16,16]:[30,16,10,10]);
-  const wb=XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb,ws,"STOCK CHECK");
-  XLSX.writeFile(wb,`stock-check-baru-${dateStamp()}.xlsx`);
-  toast("File stock check baru dibuat — sesuaikan dengan hitungan fisik lalu upload.","ok");
-}
-
-// ══ summary + cards ═══════════════════════════════════════════════════════════
-let SUMMARY={upload:null,items:[],totals:{}};
 async function loadSummary(){
-  try{ const r=await fetch("/api/stock/summary"); if(r.status===503){toast("Database tidak tersedia.","err");return;} SUMMARY=await r.json(); }catch{ return; }
-  // build reconciliation key map
-  LIVEKEYS={};
-  for(const i of SUMMARY.items){ LIVEKEYS[itemKey(i)]=i.available; }
-  const u=SUMMARY.upload;
-  $("#dataPer").textContent=u?`Data per ${wib(u.created_at)} · ${u.filename||"tanpa nama"}${u.sheet_name?` · ${u.sheet_name}`:""}`:"Belum ada data stok";
-  const t=SUMMARY.totals||{};
-  $("#eodMeta").textContent=u?`${t.items||0} item · ${round2(t.booked_total||0)} terbooking`:"—";
-  const dis=!u;
-  $("#expEod").disabled=dis; $("#genCheck").disabled=dis;
-  if(PARSED) renderPreview(); // refresh reconciliation column
+  const res=await api("/api/stock/summary");
+  if(!res.ok){
+    SUMMARY_ERR=errText(res,"Gagal memuat data.");
+    if(res.status===503){ DB_DOWN=true; applyLocks(); }
+    if(HAD_SUMMARY) errToastThrottled("Gagal memuat data. Mencoba lagi otomatis.");
+    renderFreshness(); renderTabs(); return;
+  }
+  DB_DOWN=false; SUMMARY_ERR=null;
+  const j=res.json||{};
+  const next={
+    freshness:Object.assign({last_ok_at:null,stale:false,erp_connected:false},j.freshness||{}),
+    totals:j.totals||{},
+    items:Array.isArray(j.items)?j.items:[],
+  };
+  // §6.9 — never re-render while a modal is open or while the user is typing.
+  if(modalOpen()||typing()){ PENDING_SUMMARY=next; HAD_SUMMARY=true; return; }
+  applySummary(next);
 }
-function itemById(id){ return SUMMARY.items.find(x=>eq(x.id,id)); }
-// Bookings that would flip to OUTSTANDING if a new stock check landed now (R1).
-function openNow(){ const t=SUMMARY.totals||{}; return (t.confirmed||0)+(t.pending_overbooked||0)+(t.approved||0); }
-function availOf(id){ const i=itemById(id); return i?i.available:null; }
+function applySummary(next){
+  const prevStale=SUMMARY.totals?nOrNull(SUMMARY.totals.stale_commitments):null;
+  SUMMARY=next; HAD_SUMMARY=true;
+  // §9.4 — one announcement per transition, never per poll.
+  if(WAS_STALE&&SUMMARY.freshness.stale===false) toast("Data ERP sudah diperbarui.","ok");
+  else if(!WAS_STALE&&SUMMARY.freshness.stale===true) announce(`Peringatan: data ERP belum diperbarui sejak ${wib(SUMMARY.freshness.last_ok_at,false)}.`);
+  WAS_STALE=Boolean(SUMMARY.freshness.stale);
+  if(WAS_OFF===false&&SUMMARY.freshness.erp_connected===false) announce("ERP tidak terhubung.");
+  WAS_OFF=SUMMARY.freshness.erp_connected===false;
+  // §6.9 — tab 2 never auto-refreshes its rows; it offers the choice instead.
+  const nowStale=nOrNull(SUMMARY.totals.stale_commitments);
+  if(TAB==="lama"&&LM.rows.length&&prevStale!=null&&nowStale!=null&&prevStale!==nowStale) LM.changed=true;
+  renderFreshness(); renderTabs(); renderSkuList(); applyLocks();
+  if(TAB==="lama") renderUpdPill();
+}
+function erpOff(){ return SUMMARY.freshness && SUMMARY.freshness.erp_connected===false; }
 
-// Card 2 — verify queue
-async function loadQueue(){
-  let rows=[];
-  try{ const r=await fetch("/api/stock/bookings?status=overbooked"); rows=(await r.json()).bookings||[]; }catch{}
-  $("#vqCount").textContent=rows.length;
-  if(rows.length===0){ $("#vqBody").innerHTML=`<div class="empty">Tidak ada yang menunggu verifikasi. 👍</div>`; return; }
-  $("#vqBody").innerHTML=`<table><thead><tr><th>Produk</th><th>Sales</th><th>Qty</th><th>Customer</th><th>Tersedia</th><th>Umur</th><th>Waktu</th><th></th></tr></thead>
-    <tbody>${rows.map(b=>{
-      const av=availOf(b.item_id);
-      const lama=b.long?`<span class="chip lama">LAMA</span>`:"";
-      const age=b.running?dur(ageSec(b.created_at)):dur(b.duration_seconds);
-      return `<tr>
-        <td>${esc(b.item_name||nameOf(b.item_id))}</td><td>${esc(b.rep_name)}</td><td>${NF.format(b.qty)}</td><td>${esc(b.customer_name)}${b.so_number?`<div class="sub2">SO ${esc(b.so_number)}</div>`:""}</td>
-        <td class="avail ${av!=null&&av<0?"neg":""}">${av!=null?NF.format(av):"—"}</td>
-        <td><span class="chip age" data-age="${b.running?b.created_at:''}">${age}</span>${lama}</td>
-        <td>${wib(b.created_at)}</td>
-        <td style="white-space:nowrap">
-          <button class="btn approve mini" data-approve="${b.id}">Setujui</button>
-          <button class="btn danger mini" data-reject="${b.id}">Tolak</button>
-        </td></tr>`;
-    }).join("")}</tbody></table>`;
-  $("#vqBody").querySelectorAll("[data-approve]").forEach(x=>x.addEventListener("click",()=>verify(x.getAttribute("data-approve"),"approve")));
-  $("#vqBody").querySelectorAll("[data-reject]").forEach(x=>x.addEventListener("click",()=>verify(x.getAttribute("data-reject"),"reject")));
+function renderFreshness(){
+  const f=SUMMARY.freshness||{};
+  const sub=$("#dataPer"), box=$("#freshBox");
+  if(!HAD_SUMMARY&&SUMMARY_ERR){ sub.textContent="Gagal memuat data"; }
+  else if(f.erp_connected===false){ sub.textContent="ERP tidak terhubung"; }
+  else if(!f.last_ok_at){ sub.textContent="Menunggu sinkronisasi pertama…"; }
+  else {
+    const r=rel(f.last_ok_at);
+    sub.textContent=`Data ERP per ${wibAuto(f.last_ok_at)}${r?` · ${r}`:""}`
+      + (SUMMARY_ERR?" · gagal memuat ulang":"");
+  }
+  if(f.erp_connected===false){
+    const populated=SUMMARY.items.length>0;
+    box.innerHTML=`<div class="offbox" role="status">
+      <span aria-hidden="true">🔌</span>
+      <div><b>ERP tidak terhubung.</b><br>${populated
+        ? "Angka di bawah adalah data terakhir sebelum koneksi dimatikan dan tidak lagi diperbarui."
+        : "Integrasi ke sistem ERP belum diaktifkan, jadi angka stok belum bisa ditampilkan. Hubungi tim IT untuk mengaktifkan."}</div>
+    </div>`;
+    return;
+  }
+  if(f.stale){
+    box.innerHTML=`<div class="banner" id="staleBanner" role="status">
+      <span aria-hidden="true">⚠️</span>
+      <span>Data ERP belum diperbarui sejak <b>${esc(wib(f.last_ok_at,false))}</b>. Angka di bawah mungkin
+        sudah tidak akurat — jalankan sinkronisasi ulang.</span>
+      <button class="btn mini tap ghost" id="syncNowBanner" style="margin-left:auto">Sinkron sekarang</button>
+    </div>`;
+    $("#syncNowBanner").addEventListener("click",kickSync);
+    return;
+  }
+  box.innerHTML="";
 }
-function nameOf(id){ const i=itemById(id); return i?i.name:("#"+id); }
-async function verify(id,action){
-  if(!requireActor()) return;
-  if(!confirm(action==="approve"?"Setujui booking overbook ini?":"Tolak booking ini? Stok akan dikembalikan.")) return;
-  try{
-    const r=await fetch(`/api/stock/bookings/${id}/verify`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action,actor:actor()})});
-    const j=await r.json();
-    if(!r.ok){ toast(j.error||"Gagal.","err"); refreshAll(); return; }
-    toast(action==="approve"?"Disetujui.":"Ditolak — stok dikembalikan.","ok");
-    refreshAll();
-  }catch{ toast("Gagal terhubung.","err"); }
-}
+setInterval(()=>{ if(HAD_SUMMARY&&!modalOpen()) renderFreshness(); },30000);
 
-// Card 3 — Booking Outstanding (R17). Placed right under the verification queue
-// so it prompts on every visit. The match line is resolved server-side against
-// the CURRENTLY active period, so it shows exactly what Penuhi would do.
-let OUTSTANDING=[];
-async function loadOutstanding(){
-  let rows=[];
-  try{ const r=await fetch("/api/stock/bookings?status=outstanding"); rows=(await r.json()).bookings||[]; }catch{}
-  OUTSTANDING=rows;
-  const badge=$("#outCount"); badge.textContent=rows.length;
-  badge.className="chip "+(rows.length>0?"st-outstanding":"age");
-  if(rows.length===0){ $("#outBody").innerHTML=`<div class="empty">Tidak ada booking outstanding. 👍</div>`; return; }
-  $("#outBody").innerHTML=`<table><thead><tr><th>Produk asal</th><th>Sales</th><th>Qty</th><th>Customer</th><th>Umur</th><th>Periode asal</th><th>Cocok di stok aktif</th><th></th></tr></thead>
-    <tbody>${rows.map(b=>{
-      const lama=b.long?`<span class="chip lama">LAMA</span>`:"";
-      const age=b.running?dur(ageSec(b.created_at)):dur(b.duration_seconds);
-      const m=b.match;
-      const matchLine=m
-        ? `→ ${esc(m.name)}<div class="sub2">Tersedia <b class="${m.available<0?"avail neg":""}">${NF.format(m.available)}</b> ${esc(m.unit)}</div>`
-        : `<span style="color:var(--danger);font-weight:700">Produk tidak ada di stock check aktif</span>`;
-      return `<tr>
-        <td>${esc(b.item_name)}${b.item_product_line?`<div class="sub2">${esc(b.item_product_line)}</div>`:""}</td>
-        <td>${esc(b.rep_name)}</td>
-        <td>${NF.format(b.qty)} ${esc(b.item_unit||"")}</td>
-        <td>${esc(b.customer_name)}${b.so_number?`<div class="sub2">SO ${esc(b.so_number)}</div>`:""}</td>
-        <td><span class="chip age" data-age="${b.running?b.created_at:''}">${age}</span>${lama}</td>
-        <td>${esc(b.origin_period||"—")}<div class="sub2">${wib(b.created_at)}</div></td>
-        <td>${matchLine}</td>
-        <td style="white-space:nowrap">
-          <button class="btn mini" data-fulfil="${b.id}">Penuhi</button>
-          <button class="btn danger mini" data-reject="${b.id}">Tolak</button>
-        </td></tr>`;
-    }).join("")}</tbody></table>`;
-  $("#outBody").querySelectorAll("[data-fulfil]").forEach(x=>x.addEventListener("click",()=>fulfil(x.getAttribute("data-fulfil"))));
-  $("#outBody").querySelectorAll("[data-reject]").forEach(x=>x.addEventListener("click",()=>verify(x.getAttribute("data-reject"),"reject")));
+// §4.3 / §7.5 — write controls are disabled, never hidden.
+function applyLocks(){
+  const off=erpOff()||DB_DOWN;
+  $$("[data-write]").forEach(b=>{
+    b.disabled=off||b.hasAttribute("data-busy");
+    if(off) b.title="ERP tidak terhubung"; else b.removeAttribute("title");
+  });
 }
-// Penuhi: matched → deducts from the active period (may go negative, R4);
-// unmatched → needs an explicit no-deduction confirmation (R17).
-async function fulfil(id){
-  if(!requireActor()) return;
-  const b=OUTSTANDING.find(x=>eq(x.id,id));
-  const m=b&&b.match;
-  const msg=m
-    ? `Potong ${NF.format(b.qty)} ${m.unit} dari stok aktif?`
-    : `Produk tidak ada di stock check aktif — tandai selesai tanpa memotong stok?`;
-  if(!confirm(msg)) return;
-  try{
-    const body={actor:actor()};
-    if(!m) body.confirm_no_deduct=true;
-    const r=await fetch(`/api/stock/bookings/${id}/fulfill`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
-    const j=await r.json();
-    if(!r.ok){ toast(j.error||"Gagal.","err"); refreshAll(); return; }
-    toast(j.matched_item?`Dipenuhi — stok ${j.matched_item.name} kini ${NF.format(j.available_after)}.`:"Ditandai selesai tanpa potongan stok.","ok");
-    refreshAll();
-  }catch{ toast("Gagal terhubung.","err"); }
-}
-
-// Card 4 — tracker
-async function loadTracker(){
-  let d={reps:[]};
-  try{ const r=await fetch("/api/stock/rep-stats"); d=await r.json(); }catch{}
-  if(!d.reps||d.reps.length===0){ $("#trackBody").innerHTML=`<div class="empty">Belum ada booking untuk dianalisis.</div>`; return; }
-  $("#trackBody").innerHTML=`<table><thead><tr><th>Sales</th><th>Total</th><th>Lama</th><th>Rata² Durasi</th><th>Selesai</th><th>Batal/Tolak</th><th>Terbuka</th></tr></thead>
-    <tbody>${d.reps.map(r=>{
-      const lamaCls=r.long_count>0?'style="color:#b45309;font-weight:800"':"";
-      // red dot when ANY open booking (aktif or outstanding) is already lama
-      const openLama=(r.active_long_now+(r.outstanding_long_now||0))>0?`<span class="reddot"></span>`:"";
-      const outs=r.outstanding_now||0;
-      return `<tr>
-        <td>${esc(r.rep_name)}</td><td>${r.total}</td>
-        <td ${lamaCls}>${r.long_count} · ${NF.format(r.long_pct)}%</td>
-        <td>${NF.format(r.avg_duration_hours)} j</td>
-        <td>${r.outcomes.selesai}</td>
-        <td>${r.outcomes.dibatalkan+r.outcomes.ditolak}</td>
-        <td>${r.active_now}+${outs}${openLama}<div class="sub2">aktif+outstanding</div></td></tr>`;
-    }).join("")}</tbody></table>`;
-}
-
-// Card 4 — all bookings
-let ALLFILTER="";
-const STATUSES=["confirmed","overbooked","approved","outstanding","rejected","cancelled","completed"];
-function renderStFilters(){
-  $("#stFilters").innerHTML=[["","Semua"],...STATUSES.map(s=>[s,STLABEL[s]])].map(([v,l])=>
-    `<span class="fchip ${ALLFILTER===v?"on":""}" data-f="${v}">${l}</span>`).join("");
-  $("#stFilters").querySelectorAll("[data-f]").forEach(c=>c.addEventListener("click",()=>{ ALLFILTER=c.getAttribute("data-f"); renderStFilters(); loadAll(); }));
-}
-async function loadAll(){
-  let rows=[];
-  try{ const r=await fetch("/api/stock/bookings"+(ALLFILTER?`?status=${ALLFILTER}`:"")); rows=(await r.json()).bookings||[]; }catch{}
-  if(rows.length===0){ $("#allBody").innerHTML=`<div class="empty">Tidak ada booking.</div>`; return; }
-  $("#allBody").innerHTML=`<table><thead><tr><th>Produk</th><th>Sales</th><th>Qty</th><th>Customer</th><th>Status</th><th>Umur/Durasi</th><th>Waktu</th><th></th></tr></thead>
-    <tbody>${rows.map(b=>{
-      const canDone=["confirmed","approved"].includes(b.status);
-      const canFulfil=b.status==="outstanding";
-      const canCancel=["confirmed","overbooked","approved","outstanding"].includes(b.status);
-      const lama=b.long?`<span class="chip lama">LAMA</span>`:"";
-      const ageTxt=b.running?dur(ageSec(b.created_at)):`${dur(b.duration_seconds)} · ${b.outcome}`;
-      return `<tr>
-        <td>${esc(b.item_name||nameOf(b.item_id))}</td><td>${esc(b.rep_name)}</td><td>${NF.format(b.qty)}</td><td>${esc(b.customer_name)}${b.so_number?`<div class="sub2">SO ${esc(b.so_number)}</div>`:""}</td>
-        <td><span class="chip st-${b.status}">${STLABEL[b.status]||b.status}</span></td>
-        <td><span class="chip age" data-age="${b.running?b.created_at:''}">${ageTxt}</span>${lama}</td>
-        <td>${wib(b.created_at)}</td>
-        <td style="white-space:nowrap">
-          ${canDone?`<button class="btn mini" data-done="${b.id}">Selesai</button>`:""}
-          ${canFulfil?`<button class="btn mini" data-fulfil="${b.id}">Penuhi</button>`:""}
-          ${canCancel?`<button class="btn danger mini" data-cancel="${b.id}">Batalkan</button>`:""}
-        </td></tr>`;
-    }).join("")}</tbody></table>`;
-  $("#allBody").querySelectorAll("[data-done]").forEach(x=>x.addEventListener("click",()=>complete(x.getAttribute("data-done"))));
-  $("#allBody").querySelectorAll("[data-fulfil]").forEach(x=>x.addEventListener("click",()=>fulfil(x.getAttribute("data-fulfil"))));
-  $("#allBody").querySelectorAll("[data-cancel]").forEach(x=>x.addEventListener("click",()=>cancelBk(x.getAttribute("data-cancel"))));
-}
-async function complete(id){
-  if(!requireActor()) return;
-  if(!confirm("Tandai selesai — pesanan sudah dikirim?")) return;
-  try{
-    const r=await fetch(`/api/stock/bookings/${id}/complete`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({actor:actor()})});
-    const j=await r.json(); if(!r.ok){ toast(j.error||"Gagal.","err"); refreshAll(); return; }
-    toast("Ditandai selesai.","ok"); refreshAll();
-  }catch{ toast("Gagal terhubung.","err"); }
-}
-async function cancelBk(id){
-  if(!requireActor()) return;
-  if(!confirm("Batalkan booking ini? Stok dikembalikan.")) return;
-  try{
-    const r=await fetch(`/api/stock/bookings/${id}/cancel`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({actor:actor()})});
-    const j=await r.json(); if(!r.ok){ toast(j.error||"Gagal.","err"); refreshAll(); return; }
-    toast("Dibatalkan.","ok"); refreshAll();
-  }catch{ toast("Gagal terhubung.","err"); }
-}
-
-// Card 5 — upload history + archived view
-async function loadHistory(){
-  let rows=[];
-  try{ const r=await fetch("/api/stock/uploads?limit=20"); rows=(await r.json()).uploads||[]; }catch{}
-  if(rows.length===0){ $("#histBody").innerHTML=`<div class="empty">Belum ada upload.</div>`; return; }
-  $("#histBody").innerHTML=`<table><thead><tr><th>File</th><th>Sheet</th><th>Oleh</th><th>Waktu</th><th>Baris</th><th>Status</th><th></th></tr></thead>
-    <tbody>${rows.map(u=>`<tr>
-      <td>${esc(u.filename||"—")}</td><td>${esc(u.sheet_name||"—")}</td><td>${esc(u.uploaded_by||"—")}</td>
-      <td>${wib(u.created_at)}</td><td>${u.row_count}</td>
-      <td><span class="chip ${u.status==="active"?"st-confirmed":"st-cancelled"}">${u.status==="active"?"Aktif":"Diarsipkan"}</span></td>
-      <td>${u.status==="archived"?`<button class="btn ghost mini" data-view="${u.id}">Lihat</button>`:""}</td>
-    </tr>`).join("")}</tbody></table>`;
-  $("#histBody").querySelectorAll("[data-view]").forEach(x=>x.addEventListener("click",()=>viewArchive(x.getAttribute("data-view"))));
-}
-async function viewArchive(id){
-  $("#archivePanel").innerHTML=`<div class="empty">Memuat periode…</div>`;
-  try{
-    const r=await fetch(`/api/stock/uploads/${id}`); const j=await r.json();
-    if(!r.ok){ $("#archivePanel").innerHTML=`<div class="empty">${esc(j.error||"Gagal.")}</div>`; return; }
-    ARCHIVE_ITEMS=j.items;
-    const itemsHtml=j.items.map(i=>{
-      const neg=i.available<0;
-      return `<tr class="itemrow" data-riw="${i.id}">
-        <td>${esc(i.product_line||"—")}</td><td>${esc(i.warna||i.name)}</td>
-        <td style="text-align:right">${NF.format(i.qty_initial)}</td>
-        <td style="text-align:right"><span class="avail ${neg?"neg":""}">${NF.format(i.available)}</span>${neg?'<span class="badge">OVERBOOKED</span>':""}</td></tr>`;
-    }).join("");
-    const bkHtml=j.bookings.map(b=>`<tr class="${["cancelled","rejected"].includes(b.status)?"rev":""}">
-      <td>${esc(archName(b.item_id))}</td><td>${esc(b.rep_name)}</td><td>${NF.format(b.qty)}</td><td>${esc(b.customer_name)}</td>
-      <td><span class="chip st-${b.status}">${STLABEL[b.status]||b.status}</span></td>
-      <td>${dur(b.duration_seconds)} · ${b.outcome}</td><td>${wib(b.created_at)}</td></tr>`).join("");
-    $("#archivePanel").innerHTML=`
-      <div class="body" style="border-top:1px solid var(--line)">
-        <div class="metaline"><b>${esc(j.upload.filename||"—")}</b> · diarsipkan ${wib(j.upload.archived_at)} · read-only</div>
-        <div class="scrollx"><table><thead><tr><th>Brand</th><th>Produk</th><th style="text-align:right">Stok awal</th><th style="text-align:right">Sisa akhir</th></tr></thead><tbody>${itemsHtml}</tbody></table></div>
-        <h2 style="background:none;border:none;padding:14px 0 6px;font-size:13px">Booking periode ini</h2>
-        <div class="scrollx"><table><thead><tr><th>Produk</th><th>Sales</th><th>Qty</th><th>Customer</th><th>Status</th><th>Durasi</th><th>Waktu</th></tr></thead><tbody>${bkHtml||`<tr><td colspan="7" class="empty">Tidak ada booking.</td></tr>`}</tbody></table></div>
-        <div style="margin-top:10px"><button class="btn ghost" id="closeArch">Tutup periode</button></div>
-      </div>`;
-    $("#closeArch").addEventListener("click",()=>$("#archivePanel").innerHTML="");
-    $("#archivePanel").querySelectorAll("[data-riw]").forEach(x=>x.addEventListener("click",()=>openRiwayat(x.getAttribute("data-riw"))));
-  }catch{ $("#archivePanel").innerHTML=`<div class="empty">Gagal terhubung.</div>`; }
-}
-let ARCHIVE_ITEMS=[];
-function archName(id){ const i=ARCHIVE_ITEMS.find(x=>eq(x.id,id)); return i?(i.name||i.warna):("#"+id); }
-
-// ── Riwayat modal (shared render — identical to sales page) ────────────────────
-async function openRiwayat(itemId){
-  $("#rwModal").innerHTML=`<div class="empty">Memuat riwayat…</div>`; $("#rwBg").classList.add("on");
-  try{
-    const r=await fetch(`/api/stock/items/${itemId}/riwayat`); const j=await r.json();
-    if(!r.ok){ $("#rwModal").innerHTML=`<div class="empty">${esc(j.error||"Gagal.")}</div>`; return; }
-    $("#rwModal").innerHTML=renderRiwayat(j);
-    $("#rwClose").addEventListener("click",()=>$("#rwBg").classList.remove("on"));
-  }catch{ $("#rwModal").innerHTML=`<div class="empty">Gagal terhubung.</div>`; }
-}
-$("#rwBg").addEventListener("click",e=>{ if(e.target.id==="rwBg") $("#rwBg").classList.remove("on"); });
-function renderRiwayat(j){
-  const active=j.upload&&j.upload.status==="active";
-  const periodLabel=active?"Periode aktif":(j.upload?`Diarsipkan ${wib(j.upload.archived_at)}`:"—");
-  const rows=j.events.map(ev=>{
-    if(ev.type==="upload") return `<tr><td colspan="4"><b>Stok awal</b> · ${wib(ev.at)}</td><td class="sisa">${NF.format(ev.sisa)}</td></tr>`;
-    const b=ev.booking;
-    const stamps=[b.completed_at?`selesai ${wib(b.completed_at)}`:"",b.verified_at?`verif ${wib(b.verified_at)}`:"",b.cancelled_at?`batal ${wib(b.cancelled_at)}`:""].filter(Boolean).join(" · ");
-    const lama=b.long?`<span class="chip lama">LAMA</span>`:"";
-    // R16 markers: where a booking's qty went, when it no longer counts here.
-    const mark=ev.moved==="outstanding"
-      ? `<div class="sub2" style="color:#c2410c">→ outstanding</div>`
-      : ev.moved==="fulfilled"
-        ? `<div class="sub2" style="color:#1d4ed8">→ dipenuhi di periode ${esc(ev.moved_period||"—")}</div>`
-        : ev.via_penuhi
-          ? `<div class="sub2" style="color:#1d4ed8">via Penuhi · dari ${esc(ev.origin_period||"—")}</div>`
-          : "";
-    return `<tr class="${ev.reversed?"rev":""}">
-      <td>${esc(b.rep_name)}${mark}${stamps?`<div class="sub2">${esc(stamps)}</div>`:""}</td>
-      <td>−${NF.format(b.qty)}</td><td>${esc(b.customer_name||"—")}${b.so_number?`<div class="sub2">SO ${esc(b.so_number)}</div>`:""}</td>
-      <td><span class="chip st-${b.status}">${STLABEL[b.status]||b.status}</span> <span class="chip age">${dur(b.duration_seconds)}</span>${lama}</td>
-      <td class="sisa">${NF.format(ev.sisa)}</td></tr>`;
+function renderSkuList(){
+  $("#skuList").innerHTML=SUMMARY.items.map(i=>{
+    const spec=[i.kode_barang,i.th!=null?num(i.th):null,
+                (i.p!=null&&i.l!=null)?`${num(i.p)}×${num(i.l)}`:null].filter(Boolean).join(" · ");
+    return `<option value="${esc(i.sku_key)}">${esc(i.warna||i.name||i.sku_key)}${spec?" · "+esc(spec):""}</option>`;
   }).join("");
-  return `<h3>${esc(j.item.name)}</h3><p class="mp">${periodLabel}${j.upload&&j.upload.filename?` · ${esc(j.upload.filename)}`:""}</p>
-    <div class="scrollx"><table><thead><tr><th>Sales</th><th>Qty</th><th>Customer</th><th>Status</th><th style="text-align:right">Sisa</th></tr></thead><tbody>${rows}</tbody></table></div>
-    ${active?`<div class="foot">Sisa akhir = Tersedia saat ini.</div>`:""}
-    <div class="actions"><button class="btn" id="rwClose">Tutup</button></div>`;
+}
+function skuByKey(k){ return SUMMARY.items.find(i=>eq(i.sku_key,k))||null; }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   Tabs — UX-SPEC §6.0 / §9.3
+   ════════════════════════════════════════════════════════════════════════════ */
+const TABS=[
+  {id:"kekurangan", label:"Kekurangan",    badge:()=>SF.fail?"!":SF.total},
+  {id:"lama",       label:"Tinjau Pesanan",badge:()=>LM.fail?"!":lamaBadge()},
+  {id:"cocok",      label:"Belum Cocok",   badge:()=>EX.fail?"!":nOrNull(SUMMARY.totals.exceptions)},
+  {id:"penyesuaian",label:"Penyesuaian",   badge:()=>null},
+  {id:"sinkron",    label:"Sinkronisasi",  badge:()=>null},
+];
+// §6.2.1 — the badge is stale + undated combined, with a title breaking it down.
+function lamaBadge(){
+  const s=nOrNull(SUMMARY.totals.stale_commitments), u=SEGTOTAL.undated;
+  if(s==null&&u==null) return null;
+  return n(s)+n(u);
+}
+function lamaTitle(){
+  const s=nOrNull(SUMMARY.totals.stale_commitments), u=SEGTOTAL.undated;
+  return `${s==null?"—":num(s)} ETA lewat${u==null?"":` · ${num(u)} tanpa ETA`}`;
+}
+const hashTab=()=>(location.hash||"").replace(/^#/,"").split(":")[0].split("?")[0];
+const hashSeg=()=>((location.hash||"").split(":")[1]||"").split("?")[0];
+let TAB=hashTab(); if(!TABS.some(t=>t.id===TAB)) TAB="kekurangan";
+
+function renderTabs(){
+  $("#tabs").innerHTML=TABS.map(t=>{
+    const b=t.badge();
+    const title=t.id==="lama"?` title="${esc(lamaTitle())}"`:(b==="!"?` title="Gagal memuat"`:"");
+    const bn=b==="!"?`<span class="n" style="color:var(--danger)">!</span>`
+                    :(b==null?`<span class="n">—</span>`:`<span class="n">${esc(num(b))}</span>`);
+    return `<button class="tab" role="tab" id="tab-${t.id}" data-tab="${t.id}"${title}
+      aria-selected="${TAB===t.id?"true":"false"}" aria-controls="panel-${t.id}"
+      tabindex="${TAB===t.id?"0":"-1"}">${esc(t.label)}${bn}</button>`;
+  }).join("");
+  $$("#tabs [data-tab]").forEach(b=>{
+    b.addEventListener("click",()=>selectTab(b.getAttribute("data-tab")));
+    b.addEventListener("keydown",e=>{
+      const i=TABS.findIndex(t=>t.id===b.getAttribute("data-tab"));
+      let j=null;
+      if(e.key==="ArrowRight") j=(i+1)%TABS.length;
+      else if(e.key==="ArrowLeft") j=(i+TABS.length-1)%TABS.length;
+      else if(e.key==="Home") j=0;
+      else if(e.key==="End") j=TABS.length-1;
+      if(j==null) return;
+      e.preventDefault(); selectTab(TABS[j].id);
+      const el=$("#tab-"+TABS[j].id); if(el) el.focus();
+    });
+  });
+  TABS.forEach(t=>{ $("#panel-"+t.id).hidden=(TAB!==t.id); });
+  const on=$("#tab-"+TAB); if(on&&on.scrollIntoView) on.scrollIntoView({block:"nearest",inline:"nearest"});
+}
+function selectTab(id){
+  if(TAB===id) return;
+  TAB=id;
+  history.replaceState(null,"","#"+id+(id==="lama"&&LM.seg!=="stale"?":"+LM.seg:""));
+  renderTabs(); loadTab(id);
+}
+function loadTab(id){
+  if(id==="kekurangan") loadShortfall();
+  else if(id==="lama"){ if(!TINJAU_LOADED){ TINJAU_LOADED=true; loadLama(); } else { renderLama(); renderTray(); } }
+  else if(id==="cocok") loadExceptions();
+  else if(id==="penyesuaian") loadAdjustments();
+  else if(id==="sinkron") loadSync();
 }
 
-// live age tick
-setInterval(()=>{ document.querySelectorAll(".chip.age[data-age]").forEach(el=>{ const iso=el.getAttribute("data-age"); if(iso) el.textContent=dur(ageSec(iso)); }); },60000);
+/* ════════════════════════════════════════════════════════════════════════════
+   TAB 1 · Kekurangan (ST-R11) — GET /api/stock/shortfall
+   Ranked server-side by deficit desc then nearest_eta asc. The client NEVER
+   re-sorts (UX-SPEC §6.1). No sortable headers, no filters, no write action.
 
-// ── Akhir Hari buttons ────────────────────────────────────────────────────────
-$("#expEod").addEventListener("click",exportEndOfDay);
-$("#genCheck").addEventListener("click",generateNewStockCheck);
+   `nearest_eta` is the nearest OUTBOUND commitment date — the soonest a Sales
+   Order takes this stock away, i.e. the deadline the shortfall must be produced
+   against. The column is labelled "Kirim Pesanan Terdekat", never "ETA
+   terdekat", because the latter reads as incoming restock and the two mean
+   opposite things. PRD §9 reserves the incoming-supply vocabulary for the
+   later "+ incoming" term; nothing on this page may pre-empt it.
+   ════════════════════════════════════════════════════════════════════════════ */
+const SF={total:null,rows:[],fail:false};
+function normShortfall(r){
+  const on_hand=n(pick(r,"on_hand")), committed=n(pick(r,"committed"));
+  const adjustment=n(r.adjustment);
+  const atp=r.atp!=null?n(r.atp):(on_hand+adjustment-committed);
+  const deficit=r.deficit!=null?n(r.deficit):Math.max(0,committed-(on_hand+adjustment));
+  return {
+    sku_key:String(pick(r,"sku_key")||""), name:pick(r,"name"),
+    kode_barang:pick(r,"kode_barang"), warna:pick(r,"warna"),
+    th:nOrNull(r.th), p:nOrNull(r.p), l:nOrNull(r.l), unit:pick(r,"unit")||"lembar",
+    on_hand, committed, adjustment, atp, deficit,
+    stale_committed:n(r.stale_committed), nearest_eta:pick(r,"nearest_eta"),
+  };
+}
+function skuCell(r){
+  const head=r.warna||r.name||r.sku_key;
+  const spec=[r.kode_barang,r.th!=null?num(r.th):null,
+              (r.p!=null&&r.l!=null)?`${num(r.p)}×${num(r.l)}`:null].filter(Boolean).join(" · ");
+  return `<b>${esc(head)}</b>${spec?`<div class="sub2">${esc(spec)}</div>`:""}`;
+}
+async function loadShortfall(){
+  const el=$("#sfBody"); const stop=SF.rows.length?()=>{}:skelAfter(el,4);
+  const res=await api("/api/stock/shortfall");
+  stop();
+  if(!res.ok){
+    SF.fail=true; renderTabs();
+    if(SF.rows.length){ errToastThrottled("Gagal memuat data. Mencoba lagi otomatis."); return; }
+    renderFail(el,res,loadShortfall); return;
+  }
+  SF.fail=false;
+  SF.rows=readRows(res.json).map(normShortfall);
+  SF.total=readTotal(res.json)!=null?readTotal(res.json):SF.rows.length;
+  renderTabs(); renderShortfall();
+}
+function renderShortfall(){
+  const el=$("#sfBody");
+  if(erpOff()&&SF.rows.length===0){
+    el.innerHTML=`<div class="empty">Data stok belum tersedia.<br>Halaman ini akan terisi otomatis setelah ERP terhubung.</div>`; return;
+  }
+  if(SF.rows.length===0){
+    el.innerHTML=`<div class="empty">Tidak ada SKU yang kekurangan stok.<br>Semua pesanan aktif masih tertutup stok fisik.</div>`; return;
+  }
+  el.innerHTML=`<table class="stick1"><caption class="sr-only">Daftar SKU yang kekurangan stok</caption><thead><tr>
+      <th>SKU</th><th style="text-align:right">Kekurangan</th><th class="hidesm" style="text-align:right">Fisik</th>
+      <th class="hidesm" style="text-align:right">Dipesan</th><th>Kirim Pesanan Terdekat</th><th></th>
+    </tr></thead><tbody>${SF.rows.map(r=>{
+      const d=daysSince(r.nearest_eta);
+      return `<tr>
+        <td>${skuCell(r)}</td>
+        <td style="text-align:right"><span class="atp neg">${esc(num(-r.deficit))}<span class="un">${esc(r.unit)}</span></span></td>
+        <td class="hidesm nums" style="text-align:right">${esc(num(r.on_hand))}${r.adjustment?`<div class="atp-sub">penyesuaian ${esc(signed(r.adjustment))}</div>`:""}</td>
+        <td class="hidesm nums" style="text-align:right">${esc(num(r.committed))}${r.stale_committed?`<div class="atp-note">ETA lewat ${esc(num(r.stale_committed))}</div>`:""}</td>
+        <td>${esc(wibShort(r.nearest_eta))}${d!=null&&d>0?`<div style="margin-top:3px">${umurChip(d)}</div>`:""}</td>
+        <td><button class="btn ghost mini tap" data-detail="${esc(r.sku_key)}">Detail</button></td>
+      </tr>`;
+    }).join("")}</tbody></table>`;
+  $$("[data-detail]",el).forEach(b=>b.addEventListener("click",()=>openSku(b.getAttribute("data-detail"))));
+}
 
-// ── refresh all + poll ────────────────────────────────────────────────────────
-async function refreshAll(){ await loadSummary(); await Promise.all([loadQueue(),loadOutstanding(),loadTracker(),loadAll(),loadHistory()]); }
-renderStFilters();
-refreshAll();
-setInterval(refreshAll,30000);
+/* ════════════════════════════════════════════════════════════════════════════
+   TAB 2 · Tinjau Pesanan (ST-R18 / ST-R21 / AMENDMENT 1 + 6) — the centrepiece.
+
+   Two segments, never mixed (AMENDMENT 6 / UX-SPEC §6.2.1):
+     segment=stale    ETA past the window. Closing is COSMETIC — ATP unchanged.
+                      One tap, composed reason, bulk close available.
+     segment=undated  ETA null. These are LIVE and reserving. Closing RAISES ATP
+                      by qty_balance. Inline confirm + typed reason every time,
+                      per-row "efek jika ditutup" in the row, NO bulk close at all.
+     segment=closed   the recovery path once the session tray is gone.
+
+   The ~4,158-row triage problem is solved by: server paging at limit=50 (one
+   desk screenful, and it bounds "select all on this page" to ≤50 by
+   construction) · narrowing filters whose state lives entirely in the query
+   string · one tap on the safe segment, because a modal per row is what makes
+   PPIC abandon a 4,158-row queue · and an undo path that survives the row
+   leaving v_stale_commitments (the row stays put, plus the session tray, plus
+   segment=closed).
+   ════════════════════════════════════════════════════════════════════════════ */
+const AGE_CHIPS=[["0","Semua"],["180","> 6 bulan"],["365","> 1 tahun"],["1095","> 3 tahun"]];
+const SEG_LABEL={stale:"ETA Lewat",undated:"Tanpa ETA",closed:"Yang sudah ditutup"};
+const SEGTOTAL={stale:null,undated:null};
+const LM={seg:"stale",page:1,limit:50,q:"",age:0,status:"",onlyDo:false,
+          rows:[],total:null,grand:null,loading:false,sel:new Set(),fail:false,
+          changed:false,facets:false};
+let TINJAU_LOADED=false, EXPANDED=null, TRAY=[];
+const TRAY_CAP=200;
+{ const s=hashSeg(); if(s==="undated"||s==="closed") LM.seg=s; }
+
+function normStale(r){
+  const eta=pick(r,"estimate_delivery");
+  const st=pick(r,"state")||((r.override&&r.override.state)||null);
+  return {
+    so_line_id:String(pick(r,"so_line_id","id")||""),
+    sku_key:String(pick(r,"sku_key")||""), name:pick(r,"name"),
+    kode_barang:pick(r,"kode_barang"), warna:pick(r,"warna"),
+    th:nOrNull(r.th), p:nOrNull(r.p), l:nOrNull(r.l),
+    so_number:pick(r,"so_number"),
+    customer:pick(r,"customer_name_text","customer_name"),
+    sales:pick(r,"sales_name_text","sales_name"),
+    po_date:pick(r,"po_date"),
+    qty_balance:n(pick(r,"qty_balance")),
+    status_order:pick(r,"status_order"),
+    estimate_delivery:eta,
+    undated:r.undated===true||eta==null,                  // AMENDMENT 1
+    ov_actor:(r.override&&r.override.actor)||pick(r,"override_actor"),
+    ov_reason:(r.override&&r.override.reason)||pick(r,"override_reason"),
+    _closed:st==="closed",
+  };
+}
+// AMENDMENT 6c — one `segment` parameter replaces the ad-hoc state/undated pair.
+function lmQuery(){
+  const p=new URLSearchParams();
+  p.set("segment",LM.seg);
+  p.set("page",String(LM.page)); p.set("limit",String(LM.limit));
+  if(LM.q) p.set("q",LM.q);
+  if(LM.seg==="stale"&&LM.age) p.set("min_age_days",String(LM.age));
+  if(LM.status) p.set("status",LM.status);
+  if(LM.onlyDo) p.set("only_do","true");
+  return p.toString();
+}
+async function loadLama(){
+  LM.loading=true; LM.changed=false; collapseExpander();
+  renderLamaChrome(); renderUpdPill();
+  const el=$("#lmBody");
+  let stop=()=>{};
+  if(!LM.rows.length) stop=skelAfter(el,6); else el.classList.add("loading");
+  if(LM.rows.length){ $("#lmPagerTop").innerHTML=lmPagerHtml(); $("#lmPager").innerHTML=lmPagerHtml(); }
+  const res=await api("/api/stock/stale-commitments?"+lmQuery());
+  stop(); LM.loading=false; el.classList.remove("loading");
+  if(!res.ok){
+    LM.fail=true; renderTabs();
+    if(LM.rows.length){ errToastThrottled("Gagal memuat data. Mencoba lagi otomatis."); renderLama(); return; }
+    $("#lmPager").innerHTML=""; $("#lmPagerTop").innerHTML=""; $("#lmResLine").textContent="";
+    renderFail(el,res,loadLama); return;
+  }
+  LM.fail=false;
+  let rows=readRows(res.json).map(normStale);
+  LM.total=readTotal(res.json);
+  LM.grand=nOrNull(pick(res.json,"grand_total","unfiltered_total"));
+  if(LM.grand==null&&LM.seg==="stale") LM.grand=nOrNull(SUMMARY.totals.stale_commitments);
+  if(LM.seg!=="closed"&&LM.total!=null&&!LM.q&&!LM.age&&!LM.status&&!LM.onlyDo) SEGTOTAL[LM.seg]=LM.total;
+  // Safety net only: if the endpoint ever ignores page/limit, page here so the
+  // DOM still never holds thousands of rows.
+  if(rows.length>LM.limit){
+    if(LM.total==null) LM.total=rows.length;
+    rows=rows.slice((LM.page-1)*LM.limit,LM.page*LM.limit);
+  }
+  LM.rows=rows; LM.sel.clear();
+  // Status facet: OQ-1 leaves the enum open.
+  const sel=$("#lmStatus"); const have=new Set($$("option",sel).map(o=>o.value));
+  LM.facets=Array.isArray(res.json&&res.json.status_facets);
+  const facets=LM.facets?res.json.status_facets:rows.map(r=>r.status_order);
+  facets.filter(Boolean).forEach(s=>{ if(!have.has(String(s))){ have.add(String(s));
+    const o=document.createElement("option"); o.value=String(s); o.textContent=String(s); sel.appendChild(o); } });
+  sel.value=LM.status;
+  const lbl=$("#lmStatusWrap").firstChild;
+  if(lbl&&lbl.nodeType===3) lbl.nodeValue=LM.facets?"Status SO":"Status (halaman ini)";
+  renderLama(); renderTray(); renderTabs();
+  announce(`Menampilkan ${num(LM.rows.length)}${LM.total!=null?` dari ${num(LM.total)}`:""} baris.`);
+  // Learn the other segment's count once, so the segmented control and the tab
+  // badge can both state real numbers (no combined total exists in /summary).
+  if(SEGTOTAL.undated==null&&LM.seg!=="undated") probeUndatedCount();
+}
+async function probeUndatedCount(){
+  const r=await api("/api/stock/stale-commitments?segment=undated&page=1&limit=1");
+  if(!r.ok) return;
+  const t=readTotal(r.json); if(t!=null){ SEGTOTAL.undated=t; renderLamaChrome(); renderTabs(); }
+}
+const SUBTITLE={
+  stale:`Sales Order di bawah masih punya sisa, tapi ETA-nya sudah lewat lebih dari 60 hari. Baris ini <b>TIDAK</b> memotong angka Bisa Dijual. Tutup baris yang sudah jelas selesai atau batal agar antrean ini bersih.`,
+  undated:`Sales Order di bawah sudah disetujui dan masih punya sisa, tapi belum punya tanggal kirim. Baris ini <b>TETAP</b> memotong angka Bisa Dijual — pesanannya nyata, hanya belum dijadwalkan. Menutup baris di sini akan <b>MENAMBAH</b> angka Bisa Dijual, jadi tutup hanya kalau pesanannya memang sudah batal.`,
+  closed:`Baris yang sudah ditutup. Ini jalur pemulihan kalau daftar "Baru Ditutup" sudah hilang — aktifkan lagi baris yang ternyata masih berjalan.`,
+};
+const FOOTER={
+  stale:`Diurutkan dari ETA paling lama. Untuk penutupan massal di luar halaman ini, hubungi tim IT.`,
+  undated:`Diurutkan dari sisa pesanan terbesar. Baris tanpa ETA ditutup satu per satu karena masing-masing menambah angka Bisa Dijual.`,
+  closed:`Penutupan tercatat permanen di log audit; mengaktifkan lagi tidak menghapus catatannya.`,
+};
+function renderLamaChrome(){
+  // §6.2.1 segmented control — two populations, never a "Semua" option.
+  $("#lmSeg").innerHTML=["stale","undated"].map(s=>{
+    const c=SEGTOTAL[s];
+    return `<button class="fchip" role="tab" data-seg="${s}" aria-selected="${LM.seg===s?"true":"false"}">${esc(SEG_LABEL[s])}${c==null?"":`<span class="n">${esc(num(c))}</span>`}</button>`;
+  }).join("")
+   + `<button class="fchip" data-seg="closed" aria-pressed="${LM.seg==="closed"?"true":"false"}">Yang sudah ditutup</button>`;
+  $$("#lmSeg [data-seg]").forEach(b=>b.addEventListener("click",()=>{
+    const s=b.getAttribute("data-seg");
+    if(LM.seg===s) return;
+    LM.seg=s; LM.page=1; LM.sel.clear(); if(s!=="stale") LM.age=0;
+    history.replaceState(null,"","#lama"+(s==="stale"?"":":"+s));
+    loadLama();
+  }));
+  $("#lmSubtitle").innerHTML=SUBTITLE[LM.seg];
+  $("#lmFoot").textContent=FOOTER[LM.seg];
+  // Umur filter is meaningless without an ETA — hidden on the Tanpa ETA segment.
+  $("#lmAgeChips").innerHTML=LM.seg==="stale"
+    ? AGE_CHIPS.map(([v,l])=>`<button class="fchip" data-age="${v}" aria-pressed="${String(LM.age)===v?"true":"false"}">${esc(l)}</button>`).join("")
+    : "";
+  $$("#lmAgeChips [data-age]").forEach(b=>b.addEventListener("click",()=>{
+    LM.age=n(b.getAttribute("data-age")); LM.page=1; LM.sel.clear(); loadLama();
+  }));
+
+  const act=[];
+  if(LM.seg==="stale"&&LM.age){ const a=AGE_CHIPS.find(x=>x[0]===String(LM.age)); act.push([`Umur ${a?a[1]:LM.age}`,"age"]); }
+  if(LM.q) act.push([`Cari "${LM.q}"`,"q"]);
+  if(LM.status) act.push([`Status ${LM.status}`,"status"]);
+  if(LM.onlyDo) act.push(["Hanya status DO","onlyDo"]);
+  $("#lmActiveChips").innerHTML=act.length
+    ? act.map(([l,k])=>`<button class="fchip" aria-pressed="true" data-clr="${k}">${esc(l)} <span aria-hidden="true">✕</span><span class="sr-only">hapus filter</span></button>`).join("")
+      + `<button class="fchip" data-clr="__all">Bersihkan filter</button>` : "";
+  $$("#lmActiveChips [data-clr]").forEach(c=>c.addEventListener("click",()=>clearFilter(c.getAttribute("data-clr"))));
+}
+function anyFilter(){ return Boolean(LM.q||LM.age||LM.status||LM.onlyDo); }
+function clearFilter(k){
+  if(k==="__all"){ LM.age=0; LM.q=""; LM.status=""; LM.onlyDo=false;
+    $("#lmQ").value=""; $("#lmStatus").value=""; $("#lmOnlyDo").checked=false; }
+  else if(k==="age") LM.age=0;
+  else if(k==="q"){ LM.q=""; $("#lmQ").value=""; }
+  else if(k==="status"){ LM.status=""; $("#lmStatus").value=""; }
+  else if(k==="onlyDo"){ LM.onlyDo=false; $("#lmOnlyDo").checked=false; }
+  LM.page=1; loadLama();
+}
+function renderUpdPill(){
+  // §6.9 — the ground never moves under a finger; the user chooses when.
+  $("#lmUpdPill").innerHTML=LM.changed
+    ? `<div class="updpill" role="status"><span>Ada perubahan di antrean.</span>
+        <button class="btn ghost mini tap" id="lmRefresh">Perbarui</button></div>` : "";
+  const b=$("#lmRefresh"); if(b) b.addEventListener("click",loadLama);
+}
+function lmPagerHtml(){
+  const pages=LM.total!=null?Math.max(1,Math.ceil(LM.total/LM.limit)):null;
+  const from=(LM.page-1)*LM.limit+1, to=(LM.page-1)*LM.limit+LM.rows.length;
+  const mid=LM.loading?"Memuat…"
+    :(LM.total!=null?`${num(from)}–${num(to)} dari ${num(LM.total)} · Halaman ${num(LM.page)} dari ${num(pages)}`:`${num(from)}–${num(to)}`);
+  const midShort=LM.loading?"Memuat…":(pages!=null?`Hal. ${num(LM.page)}/${num(pages)}`:`Hal. ${num(LM.page)}`);
+  const canPrev=LM.page>1&&!LM.loading;
+  const canNext=!LM.loading&&(pages!=null?LM.page<pages:LM.rows.length===LM.limit);
+  return `<div class="pager">
+    <button class="btn ghost mini tap" data-pg="prev" ${canPrev?"":"disabled"} aria-label="Halaman sebelumnya">
+      <span class="hidesm">← Sebelumnya</span><span class="shsm" aria-hidden="true">←</span></button>
+    <span><span class="hidesm">${esc(mid)}</span><span class="shsm">${esc(midShort)}</span></span>
+    <button class="btn ghost mini tap" data-pg="next" ${canNext?"":"disabled"} aria-label="Halaman berikutnya">
+      <span class="hidesm">Berikutnya →</span><span class="shsm" aria-hidden="true">→</span></button>
+  </div>`;
+}
+function bindPager(root){
+  $$("[data-pg]",root).forEach(b=>b.addEventListener("click",()=>{
+    LM.page=Math.max(1,LM.page+(b.getAttribute("data-pg")==="prev"?-1:1));
+    loadLama().then(()=>{ const h=$("#lmBody thead"); if(h&&h.scrollIntoView) h.scrollIntoView({block:"start"}); });
+  }));
+}
+function bulkAllowed(){ return LM.seg==="stale"&&window.innerWidth>=560; }
+function renderLama(){
+  const el=$("#lmBody");
+  renderLamaChrome(); renderUpdPill();
+  if(LM.rows.length===0){
+    $("#lmResLine").textContent=""; $("#lmPager").innerHTML=""; $("#lmPagerTop").innerHTML=""; $("#lmBulkBar").innerHTML="";
+    // §7.3 is never the same as §7.2 — the escape hatch must be in the message.
+    if(anyFilter()){
+      el.innerHTML=`<div class="empty">Tidak ada baris yang cocok dengan filter ini.<br>
+        <a href="#" id="clearFlt">Bersihkan filter</a>${LM.grand!=null?` untuk melihat semua ${esc(num(LM.grand))} baris.`:"."}</div>`;
+      $("#clearFlt").addEventListener("click",e=>{ e.preventDefault(); clearFilter("__all"); });
+    }else{
+      el.innerHTML=`<div class="empty">${LM.seg==="closed"
+        ? "Belum ada baris yang ditutup."
+        : LM.seg==="undated"
+          ? "Tidak ada pesanan tanpa tanggal kirim.<br>Semua Sales Order yang disetujui sudah punya ETA."
+          : "Tidak ada pesanan dengan ETA lewat.<br>Semua Sales Order terbuka punya ETA dalam 60 hari terakhir."}</div>`;
+    }
+    return;
+  }
+  const filtered=LM.total!=null?LM.total:LM.rows.length;
+  $("#lmResLine").textContent=`Menampilkan ${num(LM.rows.length)} dari ${num(filtered)} baris`
+    + (anyFilter()&&LM.grand!=null?` (difilter dari ${num(LM.grand)}).`:".");
+
+  const bulk=bulkAllowed();
+  const closable=LM.rows.filter(r=>!r._closed);
+  const selHere=LM.rows.filter(r=>LM.sel.has(r.so_line_id)).length;
+  const und=LM.seg==="undated";
+  const cap=und?"Antrean pesanan tanpa tanggal kirim":LM.seg==="closed"?"Baris yang sudah ditutup":"Antrean pesanan dengan ETA lewat";
+  const head=`<tr>
+    ${bulk?`<th class="cbcell"><input type="checkbox" id="lmAll" ${selHere>0&&selHere===closable.length?"checked":""}
+      aria-label="Pilih semua di halaman ini (${LM.rows.length})" /></th>`:""}
+    <th>SKU</th><th>Customer</th><th>No. SO</th><th>ETA</th><th>Umur</th>
+    <th style="text-align:right">Sisa Pesanan</th><th>Status SO</th>
+    ${und?`<th>Efek jika ditutup</th>`:""}<th>Aksi</th></tr>`;
+  el.innerHTML=`<table class="stick1"><caption class="sr-only">${esc(cap)}</caption>
+    <thead>${head}</thead><tbody>${LM.rows.map(r=>rowLama(r,bulk,und)).join("")}</tbody></table>`;
+  $("#lmPagerTop").innerHTML=lmPagerHtml(); bindPager($("#lmPagerTop"));
+  $("#lmPager").innerHTML=lmPagerHtml();     bindPager($("#lmPager"));
+  bindLamaRows(); renderBulkBar(); applyLocks();
+}
+function colspan(){ return (bulkAllowed()?1:0)+(LM.seg==="undated"?1:0)+8; }
+function rowLama(r,bulk,und){
+  const days=daysSince(r.estimate_delivery);
+  const statusChip=r.status_order
+    ? `<span class="chip umur${String(r.status_order).toUpperCase()==="DO"?" old":""}">${esc(r.status_order)}</span>` : "—";
+  // §6.2.2 — on the undated segment age comes from po_date, never from a null ETA.
+  const umurCell=und
+    ? (r.po_date?umurChip(daysSince(r.po_date),"dipesan {} lalu"):"—")
+    : umurChip(days);
+  const etaCell=r.undated
+    ? `<span class="chip st-habis">Tanpa ETA</span>`      // never a bare em dash
+    : esc(wibShort(r.estimate_delivery));
+  const aksi=r._closed
+    ? `<span class="chip st-kosong">Ditutup</span> <button class="btn ghost mini tap" data-write data-reinstate="${esc(r.so_line_id)}">Aktifkan Lagi</button>`
+    : und
+      ? `<button class="btn danger mini tap" data-write data-expand="${esc(r.so_line_id)}">Tutup</button>`
+      : `<button class="btn ghost mini tap" data-write data-close="${esc(r.so_line_id)}">Tutup</button>`;
+  // FIX 5c — a row the server refused to close (it had left the segment the
+  // selection was assembled from) stays open and keeps reserving. It gets its
+  // own row tint and an explicit "Tidak ditutup" chip, because the one thing it
+  // must never look like is a row that went through.
+  const skipChip=(!r._closed&&r._skipped)
+    ? `<span class="chip st-perlu-produksi">Tidak ditutup</span> ` : "";
+  return `<tr class="${r._closed?"rev":""}${!r._closed&&r._skipped?" skipped":""}" data-row="${esc(r.so_line_id)}">
+    ${bulk?`<td class="cbcell">${r._closed?"":`<input type="checkbox" data-sel="${esc(r.so_line_id)}" ${LM.sel.has(r.so_line_id)?"checked":""} aria-label="Pilih baris SO ${esc(r.so_number||r.so_line_id)}" />`}</td>`:""}
+    <td><a href="#" data-detail="${esc(r.sku_key)}" style="color:inherit;text-decoration:none">${skuCell(r)}</a></td>
+    <td><div class="cust">${esc(r.customer||"—")}</div></td>
+    <td class="nums">${esc(r.so_number||"—")}</td>
+    <td>${etaCell}</td>
+    <td>${umurCell}</td>
+    <td class="sisa nums">${esc(num(r.qty_balance))}</td>
+    <td>${statusChip}</td>
+    ${und?`<td class="gain">${r._closed?"—":`Bisa Dijual ${esc(signed(r.qty_balance))}`}</td>`:""}
+    <td style="white-space:nowrap">${skipChip}${aksi}</td>
+  </tr>`;
+}
+function bindLamaRows(){
+  const el=$("#lmBody");
+  const all=$("#lmAll");
+  if(all) all.addEventListener("change",e=>{
+    LM.rows.filter(r=>!r._closed).forEach(r=>{ if(e.target.checked) LM.sel.add(r.so_line_id); else LM.sel.delete(r.so_line_id); });
+    $$("[data-sel]",el).forEach(cb=>{ cb.checked=e.target.checked; });
+    renderBulkBar();
+  });
+  $$("[data-sel]",el).forEach(cb=>cb.addEventListener("change",()=>{
+    const id=cb.getAttribute("data-sel");
+    if(cb.checked) LM.sel.add(id); else LM.sel.delete(id);
+    renderBulkBar();
+  }));
+  $$("[data-close]",el).forEach(b=>b.addEventListener("click",()=>closeStale(b.getAttribute("data-close"),b)));
+  $$("[data-expand]",el).forEach(b=>b.addEventListener("click",()=>openExpander(b.getAttribute("data-expand"),b)));
+  $$("[data-reinstate]",el).forEach(b=>b.addEventListener("click",()=>reinstateOne(b.getAttribute("data-reinstate"),b)));
+  $$("[data-detail]",el).forEach(a=>a.addEventListener("click",e=>{ e.preventDefault(); openSku(a.getAttribute("data-detail")); }));
+}
+function renderBulkBar(){
+  const box=$("#lmBulkBar");
+  if(!bulkAllowed()){ box.innerHTML=""; return; }          // §6.8: stale segment, ≥560px
+  const picked=LM.rows.filter(r=>LM.sel.has(r.so_line_id));
+  if(picked.length===0){ box.innerHTML=""; return; }
+  const qty=picked.reduce((s,r)=>s+r.qty_balance,0);
+  box.innerHTML=`<div class="bulkbar">
+    <span class="sp">${esc(num(picked.length))} baris dipilih · ${esc(num(qty))} lembar</span>
+    <button class="btn ghost mini tap" id="bulkClear">Batal pilih</button>
+    <button class="btn danger mini tap" data-write id="bulkGo">Tutup ${esc(num(picked.length))} Baris</button>
+  </div>`;
+  $("#bulkClear").addEventListener("click",()=>{ LM.sel.clear(); renderLama(); });
+  $("#bulkGo").addEventListener("click",()=>askBulk(picked));
+  applyLocks();
+}
+function busy(btn,label){ btn.setAttribute("data-busy","1"); btn.disabled=true; btn.innerHTML=`<span class="spin"></span>${esc(label)}`; }
+function unbusy(btn,html){ btn.removeAttribute("data-busy"); btn.disabled=false; btn.innerHTML=html; applyLocks(); }
+
+// ── writes ───────────────────────────────────────────────────────────────────
+async function postClose(id,reason){
+  return api(`/api/stock/stale-commitments/${encodeURIComponent(id)}/close`,{
+    method:"POST",headers:{"content-type":"application/json"},
+    body:JSON.stringify({actor:actor(),reason}),
+  });
+}
+async function postReinstate(id){
+  return api(`/api/stock/stale-commitments/${encodeURIComponent(id)}/reinstate`,{
+    method:"POST",headers:{"content-type":"application/json"},
+    body:JSON.stringify({actor:actor()}),
+  });
+}
+// §7.8.4 — two consecutive failures on one control swap the toast for a
+// persistent inline warnbox.
+const FAILS={};
+function writeFailed(key,res,generic,btn,restoreHtml){
+  if(btn) unbusy(btn,restoreHtml);
+  if(res.status===409||res.status===422){                   // §7.8.5 — not an error
+    toast("Baris ini sudah diperbarui oleh orang lain.","warn"); loadLama(); return;
+  }
+  FAILS[key]=(FAILS[key]||0)+1;
+  const msg=(res.json&&res.json.error)||generic;
+  if(FAILS[key]>=2){
+    const w=$("#lmUpdPill");
+    w.innerHTML=`<div class="warnbox" style="margin:0 14px 10px">Perubahan belum tersimpan. Periksa koneksi, lalu coba lagi.</div>`;
+  } else toast(msg,"err");
+  if(btn&&btn.focus) try{ btn.focus(); }catch{}             // §9.3
+}
+function writeOk(key){ FAILS[key]=0; }
+
+// ── segment=stale · one tap, no dialog (UX-SPEC §6.6.1) ─────────────────────
+function autoReason(r){
+  const d=daysSince(r.estimate_delivery);
+  return `Ditutup dari antrean ETA Lewat (ETA ${String(r.estimate_delivery).slice(0,10)}, umur ${d==null?"?":d} hari)`;
+}
+async function closeStale(id,btn){
+  if(!requireActor()) return;
+  const r=LM.rows.find(x=>eq(x.so_line_id,id)); if(!r) return;
+  busy(btn,"Menutup…");
+  const res=await postClose(id,autoReason(r));
+  if(!res.ok){ writeFailed("close_"+id,res,"Gagal menutup baris. Coba lagi.",btn,"Tutup"); return; }
+  writeOk("close_"+id);
+  const j=res.json||{};
+  markClosed(r,nOrNull(j.atp_delta));
+  // AMENDMENT 6a — state the real consequence. For a stale line it is genuinely
+  // zero, and saying so plainly is the point.
+  toast(n(j.atp_delta)===0||j.atp_delta==null
+    ? "Baris ditutup. Bisa diaktifkan lagi. Angka Bisa Dijual tidak berubah."
+    : `Baris ditutup. Bisa Dijual ${skuLabel(r)} naik ${num(j.atp_delta)} lembar.`,"ok");
+  loadSummary();
+}
+function skuLabel(r){ return r.warna||r.name||r.sku_key; }
+
+// ── segment=undated · inline confirm expander (UX-SPEC §6.6.2) ──────────────
+function collapseExpander(refocus){
+  if(!EXPANDED) return;
+  const {id,tr}=EXPANDED; EXPANDED=null;
+  if(tr&&tr.parentNode) tr.parentNode.removeChild(tr);
+  if(refocus){ const b=$(`[data-expand="${CSS.escape(id)}"]`,$("#lmBody")); if(b) b.focus(); }
+}
+function openExpander(id,btn){
+  if(!requireActor()) return;
+  if(EXPANDED&&EXPANDED.id===id){ collapseExpander(true); return; }
+  collapseExpander();                                       // only one at a time
+  const r=LM.rows.find(x=>eq(x.so_line_id,id)); if(!r) return;
+  const row=$(`[data-row="${CSS.escape(id)}"]`,$("#lmBody"));
+  if(!row) return;
+  const tr=document.createElement("tr");
+  tr.className="expander";
+  tr.innerHTML=`<td colspan="${colspan()}">
+    Menutup baris ini akan <b>MENAMBAH</b> Bisa Dijual sebanyak <b>${esc(num(r.qty_balance))} lembar</b>
+    untuk ${esc(skuLabel(r))}. Pastikan pesanan ${esc(r.customer||"pelanggan ini")} memang sudah batal.
+    <div class="xrow">
+      <label class="fld" for="xr_${esc(id)}">Alasan (wajib)
+        <input type="text" id="xr_${esc(id)}" placeholder='Contoh: "Dikonfirmasi batal via telepon, 11 Sep."' />
+      </label>
+      <button class="btn ghost tap" data-xcancel="1">Batal</button>
+      <button class="btn danger tap" data-xok="1" disabled>Ya, Tutup Baris</button>
+    </div></td>`;
+  row.after(tr);
+  EXPANDED={id,tr};
+  const inp=$("input[type=text]",tr);
+  const okb=$("[data-xok]",tr);
+  inp.addEventListener("input",()=>{ okb.disabled=inp.value.trim().length<4; });
+  inp.addEventListener("keydown",e=>{ if(e.key==="Enter"&&!okb.disabled){ e.preventDefault(); okb.click(); } });
+  $("[data-xcancel]",tr).addEventListener("click",()=>collapseExpander(true));
+  okb.addEventListener("click",()=>closeUndated(id,inp.value.trim(),okb));
+  inp.focus();
+}
+async function closeUndated(id,reason,okb){
+  const r=LM.rows.find(x=>eq(x.so_line_id,id)); if(!r) return;
+  busy(okb,"Menutup…");
+  const res=await postClose(id,reason);                     // sent as typed, never composed
+  if(!res.ok){ writeFailed("close_"+id,res,"Gagal menutup baris. Coba lagi.",okb,"Ya, Tutup Baris"); return; }
+  writeOk("close_"+id);
+  const j=res.json||{};
+  const delta=nOrNull(j.atp_delta);
+  collapseExpander();
+  markClosed(r,delta);
+  toast(delta==null||delta===0
+    ? "Baris ditutup. Bisa diaktifkan lagi."
+    : `Baris ditutup. Bisa Dijual ${skuLabel(r)} naik ${num(delta)} lembar.`,"ok");
+  loadSummary();
+}
+function markClosed(r,delta){
+  r._closed=true; LM.sel.delete(r.so_line_id);
+  pushTray(r,delta);
+  const tr=$(`[data-row="${CSS.escape(r.so_line_id)}"]`,$("#lmBody"));
+  if(tr){ tr.outerHTML=rowLama(r,bulkAllowed(),LM.seg==="undated"); bindLamaRows(); }
+  renderBulkBar(); renderTray(); applyLocks();
+}
+async function reinstateOne(id,btn){
+  if(!requireActor()) return;
+  busy(btn,"Mengaktifkan…");
+  const res=await postReinstate(id);
+  if(!res.ok){ writeFailed("rein_"+id,res,"Gagal mengaktifkan lagi. Coba lagi.",btn,"Aktifkan Lagi"); return; }
+  writeOk("rein_"+id);
+  const j=res.json||{}; const delta=nOrNull(j.atp_delta);
+  const r=LM.rows.find(x=>eq(x.so_line_id,id));
+  TRAY=TRAY.filter(t=>!eq(t.so_line_id,id));
+  if(r){ r._closed=false;
+    const tr=$(`[data-row="${CSS.escape(id)}"]`,$("#lmBody"));
+    if(tr){ tr.outerHTML=rowLama(r,bulkAllowed(),LM.seg==="undated"); bindLamaRows(); } }
+  renderTray(); applyLocks();
+  toast(delta==null||delta===0
+    ? "Baris aktif lagi. Angka Bisa Dijual tidak berubah."
+    : `Baris aktif lagi. Bisa Dijual ${r?skuLabel(r):""} turun ${num(Math.abs(delta))} lembar.`.replace("  "," "),"ok");
+  loadSummary();
+}
+// ── the "Baru Ditutup" tray (UX-SPEC §6.7) ──────────────────────────────────
+function pushTray(r,delta){
+  TRAY.unshift({so_line_id:r.so_line_id,sku:skuLabel(r),qty:r.qty_balance,
+                eta:r.estimate_delivery,undated:r.undated,delta:delta,at:new Date().toISOString()});
+  TRAY=TRAY.slice(0,TRAY_CAP);
+}
+let TRAY_OPEN=window.innerWidth>=560;
+function renderTray(){
+  const box=$("#trayBox");
+  if(TRAY.length===0){ box.innerHTML=""; return; }
+  box.innerHTML=`<div class="card" id="undoTray">
+    <h2><button class="fchip" id="trayToggle" aria-expanded="${TRAY_OPEN?"true":"false"}" style="border:none;padding:0;min-height:auto;background:none;color:inherit;font-size:14px">
+        Baru Ditutup <span class="chip st-kosong">${esc(num(TRAY.length))}</span> <span aria-hidden="true">${TRAY_OPEN?"▾":"▸"}</span></button>
+      <button class="btn mini tap ghost" data-write id="undoAll" style="margin-left:auto">Aktifkan Lagi Semua</button></h2>
+    ${TRAY_OPEN?`<div class="scrollx"><table><caption class="sr-only">Baris yang baru ditutup di sesi ini</caption>
+      <tbody>${TRAY.map(t=>`<tr>
+        <td><b>${esc(t.sku)}</b><div class="sub2">${t.undated?"Tanpa ETA":"ETA "+esc(wibShort(t.eta))}</div></td>
+        <td class="sisa nums">${esc(num(t.qty))}</td>
+        <td class="nums">${t.delta?`<span class="gain">Bisa Dijual ${esc(signed(t.delta))}</span>`:`<span class="sub2">Bisa Dijual tetap</span>`}</td>
+        <td>${esc(wib(t.at,false))}</td>
+        <td style="white-space:nowrap"><button class="btn ghost mini tap" data-write data-untray="${esc(t.so_line_id)}">Aktifkan Lagi</button></td>
+      </tr>`).join("")}</tbody></table></div>
+    <div class="foot">Daftar ini hilang jika halaman dimuat ulang. Penutupan tetap tercatat dan bisa dibatalkan lewat pencarian.
+      ${TRAY.length>=TRAY_CAP?"<br>Hanya 200 penutupan terakhir yang bisa dibatalkan dari sini.":""}</div>`:""}
+  </div>`;
+  $("#trayToggle").addEventListener("click",()=>{ TRAY_OPEN=!TRAY_OPEN; renderTray(); });
+  $("#undoAll").addEventListener("click",askUndoAll);
+  $$("[data-untray]",box).forEach(b=>b.addEventListener("click",()=>reinstateOne(b.getAttribute("data-untray"),b)));
+  applyLocks();
+}
+function askUndoAll(){
+  if(!requireActor()) return;
+  const ids=TRAY.map(t=>t.so_line_id);
+  openModal(`<h3>Aktifkan lagi ${esc(num(ids.length))} baris?</h3>
+    <p class="mp">Semua baris yang Anda tutup di sesi ini akan masuk kembali ke antrean.</p>
+    <div class="actions"><button class="btn ghost tap" id="mNo">Batal</button>
+      <button class="btn tap" id="mYes">Aktifkan Lagi Semua</button></div>`);
+  $("#mNo").addEventListener("click",closeModal);
+  $("#mYes").addEventListener("click",async ()=>{
+    const y=$("#mYes"); busy(y,"Mengaktifkan…");
+    let ok=0;
+    for(const id of ids){ const r=await postReinstate(id); if(r.ok){ ok++; TRAY=TRAY.filter(t=>!eq(t.so_line_id,id)); } }
+    closeModal(); renderTray(); toast(`${num(ok)} baris aktif lagi.`,"ok"); loadSummary(); loadLama();
+  });
+}
+/* ── bulk close · AMENDMENT 6b ────────────────────────────────────────────────
+   POST /stale-commitments/close-batch — one transaction, all-or-nothing, capped
+   at 200 server-side, guarded by expected_count. Because it cannot partially
+   apply there is no progress bar, no cancel, no per-row retry: the batch either
+   applies or nothing is written. Offered on the ETA Lewat segment only.        */
+function askBulk(rows){
+  if(!requireActor()) return;
+  const qty=rows.reduce((s,r)=>s+r.qty_balance,0);
+  // The segment the selection was assembled from, captured at confirm time and
+  // sent with the write (FIX 5c). bulkAllowed() only permits `stale`, but it is
+  // read rather than hard-coded so a future segment cannot silently inherit
+  // copy and guarantees written for this one.
+  const seg=LM.seg;
+  // FIX 5a — this modal used to assert, unconditionally, "Angka Bisa Dijual
+  // TIDAK berubah". That is only true if every selected line is STILL stale at
+  // the instant the write lands. It is not knowable here: a sync between the
+  // selection and the click can push a line's ETA into the future, at which
+  // point the line is LIVE and reserving, and closing it releases its whole
+  // balance to be re-sold (AMENDMENT 6 — the two populations have opposite
+  // consequences). So state what is actually guaranteed — the provenance of the
+  // selection — and promise a report, not a number.
+  openModal(`<h3>Tutup ${esc(num(rows.length))} baris pesanan lama?</h3>
+    <p class="mp">Total ${esc(num(qty))} lembar. Baris ini akan hilang dari antrean dan tercatat atas nama
+      <b>${esc(actor())}</b>.</p>
+    <p class="mp">Semua baris ini dipilih dari antrean <b>ETA Lewat</b>, dan menutup baris ETA Lewat
+      biasanya <b>tidak</b> mengubah angka Bisa Dijual — baris itu memang sudah tidak dihitung.
+      <b>Tapi antrean bisa berubah:</b> kalau ETA salah satu baris sudah diperbarui di ERP sejak Anda memilih,
+      baris itu sekarang <b>ikut memotong</b> Bisa Dijual, dan menutupnya akan <b>menaikkan</b> angka —
+      artinya stok yang sudah dijanjikan ke pelanggan jadi bisa dijual lagi.</p>
+    <p class="mp">Baris seperti itu akan <b>ditolak dan tidak ditutup</b>, lalu ditandai di daftar.
+      Setiap perubahan angka Bisa Dijual dilaporkan per SKU begitu selesai — jadi jangan menganggap angkanya
+      pasti tetap sebelum laporan itu muncul.</p>
+    <label class="fld" for="bulkReason">Alasan (wajib)
+      <textarea id="bulkReason" minlength="4" placeholder='Contoh: "Hasil verifikasi PPIC Sep 2026 — SO sudah dikirim/batal."'></textarea>
+    </label>
+    <p class="metaline">Semua baris ditutup dalam satu transaksi — kalau ada yang gagal, tidak ada yang tersimpan.</p>
+    <div id="bulkErr"></div>
+    <div class="actions">
+      <button class="btn ghost tap" id="bulkNo">Batal</button>
+      <button class="btn danger tap" id="bulkYes" disabled>Tutup ${esc(num(rows.length))} Baris</button>
+    </div>`);
+  const ta=$("#bulkReason"), yes=$("#bulkYes");
+  ta.addEventListener("input",()=>{ yes.disabled=ta.value.trim().length<4; });
+  $("#bulkNo").addEventListener("click",closeModal);
+  yes.addEventListener("click",()=>runBulk(rows,ta.value.trim(),seg));
+}
+
+// A `skipped` entry is `{ so_line_id, reason }` (AMENDMENT 12), but be tolerant
+// of a bare id so an older server shape still reports rather than silently
+// counting the row as closed.
+function normSkip(s){
+  if(s==null) return {so_line_id:"",reason:""};
+  if(typeof s==="string"||typeof s==="number") return {so_line_id:String(s),reason:""};
+  return {so_line_id:String(pick(s,"so_line_id","id")||""),reason:String(pick(s,"reason","code")||"")};
+}
+// The refusal that matters: the line left the declared segment between the
+// selection and the write, so the server would not close it. Matched loosely on
+// purpose — the exact enum is the server's to name, and a reason this page does
+// not recognise must still read as "not closed", never as "done".
+function skipMovedOut(reason){
+  return /segment|not_stale|no_longer|moved|live|undated|now_live/i.test(String(reason||""));
+}
+function skipLabel(reason){
+  const r=String(reason||"");
+  if(skipMovedOut(r)) return "ETA-nya sudah diperbarui di ERP — baris ini sekarang memotong Bisa Dijual, jadi TIDAK ditutup.";
+  if(/already_closed|closed/i.test(r)) return "Sudah ditutup sebelumnya.";
+  if(/not_found|missing/i.test(r))     return "Baris tidak ditemukan lagi di antrean.";
+  return r ? `Tidak ditutup (${r}).` : "Tidak ditutup.";
+}
+
+async function runBulk(rows,reason,seg){
+  const yes=$("#bulkYes");
+  busy(yes,"Menutup…");
+  const ids=rows.map(r=>r.so_line_id);
+  const res=await api("/api/stock/stale-commitments/close-batch",{
+    method:"POST",headers:{"content-type":"application/json"},
+    // FIX 5c — `expected_count` is derived from the very array being posted, so
+    // it only ever compares a list's length to itself: it can never detect that
+    // the queue moved underneath the operator. `segment` is what can. The server
+    // restricts the write to ids still in the caller's declared segment at write
+    // time, and refuses the rest into `skipped` without closing them.
+    body:JSON.stringify({so_line_ids:ids,reason,actor:actor(),expected_count:ids.length,segment:seg}),
+  });
+  if(!res.ok){
+    unbusy(yes,`Tutup ${num(rows.length)} Baris`);
+    // §7.8.3 — never lose typed input: the modal stays open with its reason.
+    if(res.status===409){
+      $("#bulkErr").innerHTML=`<div class="warnbox">Antrean sudah berubah sejak Anda memilih. Tidak ada yang ditutup.
+        <div style="font-weight:400;margin-top:6px">Muat ulang antrean lalu pilih lagi.</div></div>`;
+      return;
+    }
+    $("#bulkErr").innerHTML=`<div class="warnbox">${esc((res.json&&res.json.error)||"Gagal menutup baris. Coba lagi.")}</div>`;
+    return;
+  }
+  const j=res.json||{};
+  const skipped=(Array.isArray(j.skipped)?j.skipped:[]).map(normSkip);
+  const skippedIds=new Set(skipped.map(s=>s.so_line_id));
+  const closedRows=rows.filter(r=>!skippedIds.has(r.so_line_id));
+  const deltas=(j.atp_delta_by_sku&&typeof j.atp_delta_by_sku==="object")?j.atp_delta_by_sku:{};
+  closedRows.forEach(r=>markClosed(r,nOrNull(deltas[r.sku_key])));
+  // Mark the refused rows in place: still open, still reserving, visibly not done.
+  skipped.forEach(s=>{
+    const r=rows.find(x=>eq(x.so_line_id,s.so_line_id))||LM.rows.find(x=>eq(x.so_line_id,s.so_line_id));
+    if(!r) return;
+    r._skipped=s.reason||"skipped";
+    LM.sel.delete(r.so_line_id);
+    const tr=$(`[data-row="${CSS.escape(r.so_line_id)}"]`,$("#lmBody"));
+    if(tr){ tr.outerHTML=rowLama(r,bulkAllowed(),LM.seg==="undated"); }
+  });
+  if(skipped.length){ bindLamaRows(); renderBulkBar(); applyLocks(); }
+  closeModal();
+  const nClosed=nOrNull(j.closed)!=null?n(j.closed):closedRows.length;
+  renderBulkOutcome({nClosed,skipped,deltas,rows});
+  loadSummary();
+}
+
+/* FIX 5b — the outcome report. `atp_delta_by_sku` is the server telling the
+   truth about what it did; the old code fetched it, used it only to tint the
+   undo tray, and then covered the whole thing with a success toast. A non-zero
+   delta after a bulk close means promiseable stock MOVED — stock that was owed
+   to a paying customer is now sellable again — and a 3.5-second toast is not
+   where that belongs. This box is persistent, sits at the top of the tab, names
+   the SKU and the quantity, and puts the undo path one tap away.             */
+function renderBulkOutcome({nClosed,skipped,deltas,rows}){
+  const box=$("#lmAlarm"); if(!box) return;
+  const moved=Object.keys(deltas)
+    .map(k=>({sku_key:k,delta:n(deltas[k])}))
+    .filter(x=>x.delta!==0)
+    .sort((a,b)=>Math.abs(b.delta)-Math.abs(a.delta));
+  const label=k=>{ const r=(rows||[]).find(x=>eq(x.sku_key,k))||LM.rows.find(x=>eq(x.sku_key,k)); return r?skuLabel(r):k; };
+
+  if(moved.length===0&&skipped.length===0){
+    box.innerHTML="";
+    toast(`${num(nClosed)} baris ditutup. Angka Bisa Dijual tidak berubah.`,"ok");
+    return;
+  }
+  const movedBlock=moved.length?`
+    <div class="warnbox" role="alert">
+      Angka Bisa Dijual BERUBAH setelah penutupan ini — stok yang tadinya sudah dipesan kini bisa dijual lagi.
+      <div style="font-weight:400;margin-top:8px">Periksa setiap SKU di bawah. Kalau ini tidak disengaja,
+        batalkan lewat <b>Baru Ditutup</b> di bawah (Aktifkan Lagi).</div>
+      <div class="scrollx" style="margin-top:8px"><table><caption class="sr-only">SKU yang angkanya berubah</caption>
+        <thead><tr><th>SKU</th><th style="text-align:right">Perubahan Bisa Dijual</th></tr></thead>
+        <tbody>${moved.map(m=>`<tr>
+          <td><b>${esc(label(m.sku_key))}</b><div class="sub2">${esc(m.sku_key)}</div></td>
+          <td class="sisa nums gain">${esc(signed(m.delta))} lembar</td>
+        </tr>`).join("")}</tbody></table></div>
+    </div>`:"";
+  // Only claim "the queue moved" when the server actually said so. An
+  // unrecognised reason still reads as NOT closed — never as done — but it must
+  // not borrow a specific explanation it has not earned.
+  const anyMoved=skipped.some(s=>skipMovedOut(s.reason));
+  const skipBlock=skipped.length?`
+    <div class="warnbox amber">
+      ${esc(num(skipped.length))} baris <b>tidak ditutup</b>. Alasannya ada di tiap baris.
+      <div style="font-weight:400;margin-top:6px">${anyMoved
+        ? "Baris yang ETA-nya sudah diperbarui ditolak dengan sengaja — itu justru menyelamatkan angka Bisa Dijual, karena baris tersebut masih menahan stok."
+        : "Baris ini masih terbuka dan masih menahan stok."}
+        Barisnya ditandai di daftar di bawah.</div>
+      <div class="scrollx" style="margin-top:8px"><table><caption class="sr-only">Baris yang tidak ditutup</caption>
+        <tbody>${skipped.map(s=>{
+          const r=(rows||[]).find(x=>eq(x.so_line_id,s.so_line_id));
+          return `<tr>
+            <td><b>${esc(r?skuLabel(r):s.so_line_id)}</b><div class="sub2">${esc(r&&r.so_number||s.so_line_id)}</div></td>
+            <td class="sisa nums">${r?esc(num(r.qty_balance))+" lembar":"—"}</td>
+            <td style="font-weight:400">${esc(skipLabel(s.reason))}</td>
+          </tr>`;
+        }).join("")}</tbody></table></div>
+    </div>`:"";
+  box.innerHTML=`<div class="card" style="padding:12px 14px">
+    <div style="font-size:13px;font-weight:700;margin-bottom:4px">Hasil penutupan massal — ${esc(num(nClosed))} baris ditutup</div>
+    ${movedBlock}${skipBlock}
+    <div class="actions" style="margin-top:4px">
+      <button class="btn ghost mini tap" id="alarmReload">Muat ulang antrean</button>
+      <button class="btn ghost mini tap" id="alarmDismiss">Tutup pesan ini</button>
+    </div>
+  </div>`;
+  $("#alarmReload").addEventListener("click",()=>{ box.innerHTML=""; loadLama(); loadSummary(); });
+  $("#alarmDismiss").addEventListener("click",()=>{ box.innerHTML=""; });
+  try{ box.scrollIntoView({block:"nearest"}); }catch{}
+}
+$("#lmQ").addEventListener("input",debounce(e=>{
+  const v=e.target.value.trim();
+  if(v.length===1) return;                                  // min 2 chars (§6.3)
+  LM.q=v; LM.page=1; loadLama();
+},350));
+$("#lmStatus").addEventListener("change",e=>{ LM.status=e.target.value; LM.page=1; loadLama(); });
+$("#lmOnlyDo").addEventListener("change",e=>{ LM.onlyDo=e.target.checked; LM.page=1; loadLama(); });
+let RESZ; window.addEventListener("resize",()=>{ clearTimeout(RESZ); RESZ=setTimeout(()=>{ if(TAB==="lama"&&LM.rows.length) renderLama(); },250); });
+
+/* ════════════════════════════════════════════════════════════════════════════
+   TAB 3 · Belum Cocok (ST-R5.3) — UX-SPEC §6.10
+   Copy discipline: `error`, `gagal`, `tidak valid`, `rusak`, `masalah` are
+   banned on this tab. No write action — the contract exposes no resolve
+   endpoint, so this is a report plus the copy-to-ticket workflow that is real.
+   ════════════════════════════════════════════════════════════════════════════ */
+const EX={page:1,limit:50,q:"",rows:[],total:null,qty:0,fail:false};
+function normException(r){
+  return {
+    so_line_id:String(pick(r,"so_line_id","id")||""),
+    sku_key:String(pick(r,"sku_key")||""), name:pick(r,"name"),
+    kode_barang:pick(r,"kode_barang"), warna:pick(r,"warna"),
+    th:nOrNull(r.th), p:nOrNull(r.p), l:nOrNull(r.l),
+    so_number:pick(r,"so_number"),
+    customer:pick(r,"customer_name_text","customer_name"),
+    qty_balance:n(pick(r,"qty_balance")),
+    estimate_delivery:pick(r,"estimate_delivery"),
+    reason:pick(r,"reason","exception_reason"),
+    unit:pick(r,"unit")||"lembar",
+  };
+}
+// §6.10 — descriptive, never accusatory. Derived client-side from the key when
+// the server does not say why.
+function sebab(r){
+  if(r.reason==="uom_unreconciled") return "Satuan berbeda";
+  if(r.reason==="no_fg_row"||r.reason==="unmatched_sku") return "Tidak ada di stok";
+  if(String(r.sku_key).split("|").some(s=>s==="-")) return "Data belum lengkap";
+  return "Tidak ada di stok";
+}
+function exDetail(r){
+  return [r.kode_barang,r.warna,r.th!=null?num(r.th):null,
+          (r.p!=null&&r.l!=null)?`${num(r.p)}×${num(r.l)}`:null]
+    .map(v=>v==null||v===""||v==="-"?null:v).filter(Boolean).join(" · ")||"—";
+}
+async function loadExceptions(){
+  const el=$("#exBody"); const stop=EX.rows.length?()=>{}:skelAfter(el,4);
+  const p=new URLSearchParams({page:String(EX.page),limit:String(EX.limit)});
+  if(EX.q) p.set("q",EX.q);
+  const res=await api("/api/stock/exceptions?"+p.toString());
+  stop();
+  if(!res.ok){
+    EX.fail=true; renderTabs();
+    if(EX.rows.length){ errToastThrottled("Gagal memuat data. Mencoba lagi otomatis."); return; }
+    $("#exPager").innerHTML=""; renderFail(el,res,loadExceptions); return;
+  }
+  EX.fail=false;
+  let rows=readRows(res.json).map(normException);
+  EX.total=readTotal(res.json);
+  EX.qty=nOrNull(pick(res.json,"total_qty"))!=null?n(res.json.total_qty):rows.reduce((s,r)=>s+r.qty_balance,0);
+  if(rows.length>EX.limit){ if(EX.total==null) EX.total=rows.length; rows=rows.slice((EX.page-1)*EX.limit,EX.page*EX.limit); }
+  EX.rows=rows; renderExceptions();
+}
+function renderExceptions(){
+  const el=$("#exBody");
+  $("#exCount").textContent=EX.total!=null?num(EX.total):"—";
+  if(EX.rows.length===0){
+    $("#exPager").innerHTML=""; $("#exFoot").textContent="";
+    if(EX.q){
+      el.innerHTML=`<div class="empty">Tidak ada baris yang cocok dengan filter ini.<br>
+        <a href="#" id="exClear">Bersihkan filter</a>${EX.total!=null?` untuk melihat semua ${esc(num(EX.total))} baris.`:"."}</div>`;
+      $("#exClear").addEventListener("click",e=>{ e.preventDefault(); EX.q=""; $("#exQ").value=""; EX.page=1; loadExceptions(); });
+    }else{
+      el.innerHTML=`<div class="empty">Semua baris Sales Order sudah cocok dengan SKU stok.</div>`;
+    }
+    return;
+  }
+  $("#exFoot").textContent=`Total permintaan belum cocok: ${num(EX.total!=null?EX.total:EX.rows.length)} baris · ${num(EX.qty)} lembar.`;
+  el.innerHTML=`<table class="stick1"><caption class="sr-only">Baris Sales Order yang belum cocok dengan SKU stok</caption><thead><tr>
+      <th>Kode SKU (SO)</th><th class="hidesm">Detail</th><th>Customer</th><th class="hidesm">No. SO / ETA</th>
+      <th style="text-align:right">Sisa Pesanan</th><th>Sebab</th>
+    </tr></thead><tbody>${EX.rows.map(r=>`<tr>
+      <td><span class="nums" style="font-weight:700;overflow-wrap:anywhere">${esc(r.sku_key)}</span>
+        <div style="margin-top:4px"><button class="btn ghost mini tap" data-copy="${esc(r.sku_key)}">Salin</button></div></td>
+      <td class="hidesm">${esc(exDetail(r))}</td>
+      <td><div class="cust">${esc(r.customer||"—")}</div></td>
+      <td class="hidesm">${esc(r.so_number||"—")}<div class="sub2">${esc(wibShort(r.estimate_delivery))}</div></td>
+      <td class="sisa nums">${esc(num(r.qty_balance))}<div class="sub2">${esc(r.unit)}</div></td>
+      <td><span class="chip umur">${esc(sebab(r))}</span>
+        <div class="atp-note">produksi diperlukan</div></td>
+    </tr>`).join("")}</tbody></table>`;
+  $$("[data-copy]",el).forEach(b=>b.addEventListener("click",()=>copyText(b.getAttribute("data-copy"),"Kode SKU disalin.")));
+  const pages=EX.total!=null?Math.max(1,Math.ceil(EX.total/EX.limit)):null;
+  const canNext=pages!=null?EX.page<pages:EX.rows.length===EX.limit;
+  $("#exPager").innerHTML=`<div class="pager">
+    <button class="btn ghost mini tap" data-ex="prev" ${EX.page>1?"":"disabled"} aria-label="Halaman sebelumnya">← Sebelumnya</button>
+    <span>${EX.total!=null?`${esc(num((EX.page-1)*EX.limit+1))}–${esc(num((EX.page-1)*EX.limit+EX.rows.length))} dari ${esc(num(EX.total))}`:""}</span>
+    <button class="btn ghost mini tap" data-ex="next" ${canNext?"":"disabled"} aria-label="Halaman berikutnya">Berikutnya →</button>
+  </div>`;
+  $$("[data-ex]").forEach(b=>b.addEventListener("click",()=>{
+    EX.page=Math.max(1,EX.page+(b.getAttribute("data-ex")==="prev"?-1:1)); loadExceptions();
+  }));
+}
+$("#exQ").addEventListener("input",debounce(e=>{ EX.q=e.target.value.trim(); EX.page=1; loadExceptions(); },350));
+$("#exCopyAll").addEventListener("click",()=>{
+  if(!EX.rows.length) return;
+  copyText(EX.rows.map(r=>r.sku_key).join("\n"),`${num(EX.rows.length)} Kode SKU disalin.`);
+});
+
+/* ════════════════════════════════════════════════════════════════════════════
+   TAB 4 · Penyesuaian (ST-R12 / ST-R20) — UX-SPEC §6.11
+   Sign is a deliberate two-step: the − / + buttons set the sign and the number
+   field holds an unsigned magnitude. A bare signed field is where "-12" gets
+   typed as "12". The submit button never fires a request it knows will fail.
+   ════════════════════════════════════════════════════════════════════════════ */
+const ADJ={page:1,limit:50,q:"",rows:[],total:null,sign:-1,fail:false};
+function normAdj(r){
+  return {
+    id:String(pick(r,"id")||""), sku_key:String(pick(r,"sku_key")||""), name:pick(r,"name"),
+    qty_delta:n(pick(r,"qty_delta")), reason:pick(r,"reason")||"—",
+    actor:pick(r,"actor")||"—", created_at:pick(r,"created_at"),
+  };
+}
+function adjSign(){ return ADJ.sign; }
+function adjDelta(){
+  const raw=$("#adjQty").value.trim().replace(",",".");
+  if(raw==="") return null;
+  const v=Number(raw);
+  if(!Number.isFinite(v)) return NaN;
+  return adjSign()*Math.abs(v);
+}
+function adjErrors(){
+  const e={};
+  const sku=$("#adjSku").value.trim();
+  if(!sku||!skuByKey(sku)) e.sku="Pilih SKU dari daftar.";
+  const d=adjDelta();
+  if(Number.isNaN(d)) e.qty="Masukkan angka.";
+  else if(d==null||d===0) e.qty="Jumlah tidak boleh 0.";
+  if($("#adjReason").value.trim().length<4) e.reason="Alasan wajib diisi.";
+  return e;
+}
+function renderAdjForm(){
+  const e=adjErrors();
+  $("#adjSkuErr").textContent=e.sku||"";
+  $("#adjQtyErr").textContent=e.qty||"";
+  $("#adjReasonErr").textContent=e.reason||"";
+  $("#adjMinus").setAttribute("aria-pressed",ADJ.sign<0?"true":"false");
+  $("#adjPlus").setAttribute("aria-pressed",ADJ.sign>0?"true":"false");
+  $("#adjMinus").style.borderColor=ADJ.sign<0?"var(--ink)":"var(--line)";
+  $("#adjPlus").style.borderColor=ADJ.sign>0?"var(--ink)":"var(--line)";
+  const it=skuByKey($("#adjSku").value.trim());
+  $("#adjSkuHint").innerHTML=it
+    ? `Stok Fisik ${esc(num(it.on_hand))} · Sudah Dipesan ${esc(num(it.committed))} · Bisa Dijual ${esc(num(it.atp))}`
+    : "";
+  const d=adjDelta();
+  $("#adjEffect").innerHTML=(it&&d!=null&&!Number.isNaN(d)&&d!==0)
+    ? `Bisa Dijual: ${esc(num(it.atp))} → <b>${esc(num(n(it.atp)+d))}</b> (${esc(signed(d))})` : "";
+  const btn=$("#adjSubmit");
+  btn.disabled=Object.keys(e).length>0||erpOff()||DB_DOWN||btn.hasAttribute("data-busy");
+}
+["#adjSku","#adjQty","#adjReason"].forEach(s=>$(s).addEventListener("input",renderAdjForm));
+$("#adjMinus").addEventListener("click",()=>{ ADJ.sign=-1; renderAdjForm(); });
+$("#adjPlus").addEventListener("click",()=>{ ADJ.sign=1; renderAdjForm(); });
+$("#adjSubmit").setAttribute("data-write","1");
+$("#adjSubmit").addEventListener("click",async ()=>{
+  if(!requireActor()) return;
+  if(Object.keys(adjErrors()).length) { renderAdjForm(); return; }
+  const body={sku_key:$("#adjSku").value.trim(),qty_delta:adjDelta(),
+              reason:$("#adjReason").value.trim(),actor:actor()};
+  const btn=$("#adjSubmit"); busy(btn,"Menyimpan…");
+  const res=await api("/api/stock/adjustments",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
+  unbusy(btn,"Simpan Penyesuaian");
+  if(!res.ok){
+    // §7.10 — render the server's message under the field, keep every value.
+    FAILS.adj=(FAILS.adj||0)+1;
+    const msg=(res.json&&res.json.error)||"Gagal menyimpan penyesuaian. Coba lagi.";
+    if(FAILS.adj>=2) $("#adjWarn").innerHTML=`<div class="warnbox">Perubahan belum tersimpan. Periksa koneksi, lalu coba lagi.</div>`;
+    else toast(msg,"err");
+    $("#adjReasonErr").textContent=msg; $("#adjReason").focus();
+    return;
+  }
+  FAILS.adj=0; $("#adjWarn").innerHTML="";
+  const before=skuByKey(body.sku_key);
+  const after=before?n(before.atp)+body.qty_delta:null;
+  toast("Penyesuaian tersimpan.","ok");
+  $("#adjQty").value=""; $("#adjReason").value="";
+  ADJ.page=1; await loadSummary(); renderAdjForm(); loadAdjustments();
+  if(after!=null){
+    $("#adjEffect").innerHTML=`Bisa Dijual sekarang ${esc(num(after))} lembar.`;
+    setTimeout(()=>{ if($("#adjEffect").textContent.startsWith("Bisa Dijual sekarang")) renderAdjForm(); },5000);
+  }
+});
+async function loadAdjustments(){
+  const el=$("#adjBody"); const stop=ADJ.rows.length?()=>{}:skelAfter(el,3);
+  const p=new URLSearchParams({page:String(ADJ.page),limit:String(ADJ.limit)});
+  if(ADJ.q) p.set("q",ADJ.q);
+  const res=await api("/api/stock/adjustments?"+p.toString());
+  stop();
+  if(!res.ok){
+    if(ADJ.rows.length){ errToastThrottled("Gagal memuat data. Mencoba lagi otomatis."); return; }
+    $("#adjPager").innerHTML=""; renderFail(el,res,loadAdjustments); return;
+  }
+  let rows=readRows(res.json).map(normAdj);
+  ADJ.total=readTotal(res.json);
+  if(rows.length>ADJ.limit){ if(ADJ.total==null) ADJ.total=rows.length; rows=rows.slice((ADJ.page-1)*ADJ.limit,ADJ.page*ADJ.limit); }
+  ADJ.rows=rows; renderAdjustments();
+}
+function renderAdjustments(){
+  const el=$("#adjBody");
+  $("#adjCount").textContent=ADJ.total!=null?num(ADJ.total):"—";
+  if(ADJ.rows.length===0){
+    $("#adjPager").innerHTML="";
+    el.innerHTML=`<div class="empty">${ADJ.q?"Tidak ada penyesuaian yang cocok dengan filter ini.":"Belum ada penyesuaian."}</div>`;
+    return;
+  }
+  el.innerHTML=`<table class="stick1"><caption class="sr-only">Riwayat penyesuaian stok</caption><thead><tr>
+      <th>Waktu</th><th>SKU</th><th style="text-align:right">Jumlah</th><th>Alasan</th><th class="hidesm">Petugas</th>
+    </tr></thead><tbody>${ADJ.rows.map(r=>{
+      const it=skuByKey(r.sku_key);
+      return `<tr>
+        <td>${esc(wib(r.created_at))}</td>
+        <td><b>${esc(r.name||(it&&(it.warna||it.name))||r.sku_key)}</b><div class="sub2">${esc(r.sku_key)}</div></td>
+        <td class="sisa nums"><span class="avail ${r.qty_delta<0?"neg":""}">${esc(signed(r.qty_delta))}</span></td>
+        <td style="overflow-wrap:anywhere">${esc(r.reason)}</td>
+        <td class="hidesm">${esc(r.actor)}</td></tr>`;
+    }).join("")}</tbody></table>`;
+  const pages=ADJ.total!=null?Math.max(1,Math.ceil(ADJ.total/ADJ.limit)):null;
+  const canNext=pages!=null?ADJ.page<pages:ADJ.rows.length===ADJ.limit;
+  $("#adjPager").innerHTML=`<div class="pager">
+    <button class="btn ghost mini tap" data-aj="prev" ${ADJ.page>1?"":"disabled"} aria-label="Halaman sebelumnya">← Sebelumnya</button>
+    <span>${ADJ.total!=null?`${esc(num((ADJ.page-1)*ADJ.limit+1))}–${esc(num((ADJ.page-1)*ADJ.limit+ADJ.rows.length))} dari ${esc(num(ADJ.total))}`:""}</span>
+    <button class="btn ghost mini tap" data-aj="next" ${canNext?"":"disabled"} aria-label="Halaman berikutnya">Berikutnya →</button>
+  </div>`;
+  $$("[data-aj]").forEach(b=>b.addEventListener("click",()=>{
+    ADJ.page=Math.max(1,ADJ.page+(b.getAttribute("data-aj")==="prev"?-1:1)); loadAdjustments();
+  }));
+}
+$("#adjQ").addEventListener("input",debounce(e=>{ ADJ.q=e.target.value.trim(); ADJ.page=1; loadAdjustments(); },350));
+
+/* ════════════════════════════════════════════════════════════════════════════
+   TAB 5 · Sinkronisasi (ST-R6 / ST-R7) — UX-SPEC §6.12
+   One card per mirrored table. last_error renders in a .warnbox, wrapped, never
+   truncated and never in a toast — the operator needs to copy it.
+   ════════════════════════════════════════════════════════════════════════════ */
+const TABLE_ORDER=["live_fg","so_line","so_header"];
+const TABLE_LABEL={live_fg:"Stok Fisik",so_line:"Baris Sales Order",so_header:"Sales Order"};
+let SY={interval:180000,tables:[],running:false};
+function normSyncTable(r){
+  return {
+    table_name:String(pick(r,"table_name","table","name")||"—"),
+    cursor_value:pick(r,"cursor_value"), last_ok_at:pick(r,"last_ok_at"),
+    last_error:pick(r,"last_error"), last_error_at:pick(r,"last_error_at"),
+    rows_synced:n(pick(r,"rows_synced")), running:Boolean(r.running),
+  };
+}
+function syncTables(j){
+  if(Array.isArray(j&&j.tables)) return j.tables.map(normSyncTable);
+  if(j&&j.tables&&typeof j.tables==="object")
+    return Object.keys(j.tables).map(k=>normSyncTable(Object.assign({table_name:k},j.tables[k])));
+  return readRows(j).map(normSyncTable);
+}
+// §6.12 health chip — the four states carry a word, never colour alone (§9.5).
+function health(t,interval){
+  if(!t.last_ok_at) return ["st-kosong","Belum pernah"];
+  const age=Date.now()-Date.parse(t.last_ok_at);
+  if(t.last_error&&(!t.last_ok_at||Date.parse(t.last_error_at||0)>Date.parse(t.last_ok_at))) return ["st-perlu-produksi","Bermasalah"];
+  if(age<=2*interval) return ["st-tersedia","Sehat"];
+  if(age<=4*interval) return ["st-habis","Terlambat"];
+  return ["st-perlu-produksi","Bermasalah"];
+}
+async function loadSync(){
+  const el=$("#syBody"); const stop=SY.tables.length?()=>{}:skelAfter(el,3);
+  const res=await api("/api/stock/sync-status");
+  stop();
+  if(!res.ok){ $("#syTop").innerHTML=""; renderFail(el,res,loadSync); return; }
+  const j=res.json||{};
+  const f=Object.assign({},SUMMARY.freshness,j.freshness||{});
+  SY.interval=nOrNull(j.interval_ms)||180000;
+  SY.tables=syncTables(j);
+  SY.running=Boolean(j.running)||SY.tables.some(t=>t.running);
+  $("#syTop").innerHTML=f.erp_connected===false
+    ? `<div class="offbox" role="status"><span aria-hidden="true">🔌</span><div><b>ERP tidak terhubung.</b><br>Sinkronisasi tidak berjalan. Hubungi tim IT untuk mengaktifkan.</div></div>`
+    : f.stale
+      ? `<div class="banner" role="status"><span aria-hidden="true">⚠️</span><span>Data ERP belum diperbarui sejak <b>${esc(wib(f.last_ok_at,false))}</b>.</span></div>`
+      : "";
+  const kick=$("#syncNow");
+  kick.setAttribute("data-write","1");
+  if(SY.running){ kick.setAttribute("data-busy","1"); kick.innerHTML=`<span class="spin"></span>Menyinkronkan…`; }
+  else if(!kick.hasAttribute("data-cool")){ kick.removeAttribute("data-busy"); kick.textContent="Sinkron Sekarang"; }
+  applyLocks();
+
+  const order=t=>{ const i=TABLE_ORDER.indexOf(t.table_name); return i<0?99:i; };
+  const tables=SY.tables.slice().sort((a,b)=>order(a)-order(b));
+  el.innerHTML=tables.length===0
+    ? `<div class="card"><div class="empty">Sinkronisasi belum pernah berjalan.</div></div>`
+    : tables.map(t=>{
+      const [cls,lbl]=health(t,SY.interval);
+      return `<div class="card">
+        <h2>${esc(TABLE_LABEL[t.table_name]||t.table_name)} <span class="chip ${cls}">${esc(lbl)}</span></h2>
+        <div class="body">
+          <p class="metaline">Sinkron terakhir<br><b>${esc(t.last_ok_at?wib(t.last_ok_at):"—")}</b>${t.last_ok_at&&rel(t.last_ok_at)?` · ${esc(rel(t.last_ok_at))}`:""}</p>
+          <p class="metaline">Posisi kursor<br><b>${esc(t.cursor_value?wib(t.cursor_value):"—")}</b></p>
+          <p class="metaline">Baris tersinkron<br><b class="nums">${esc(num(t.rows_synced))}</b></p>
+          ${t.last_error
+            ? `<div class="warnbox" style="overflow-wrap:anywhere">${esc(t.last_error)}
+                 <div style="font-weight:400;margin-top:4px">${esc(t.last_error_at?wib(t.last_error_at):"")}</div></div>
+               <button class="btn ghost mini tap" data-cperr="${esc(t.table_name)}">Salin pesan kesalahan</button>`
+            : `<p class="metaline">Kesalahan terakhir<br><b>—</b></p>`}
+        </div></div>`;
+    }).join("");
+  $$("[data-cperr]",el).forEach(b=>b.addEventListener("click",()=>{
+    const t=SY.tables.find(x=>x.table_name===b.getAttribute("data-cperr"));
+    if(t&&t.last_error) copyText(t.last_error,"Pesan kesalahan disalin.");
+  }));
+  clearTimeout(SY_POLL);
+  if(SY.running&&TAB==="sinkron") SY_POLL=setTimeout(loadSync,5000);
+}
+let SY_POLL=null;
+// §6.12 — the button is disabled for 10s regardless of outcome. The endpoint is
+// idempotent, but hammering it during an outage produces a log flood and a false
+// sense of action.
+async function kickSync(){
+  const btn=$("#syncNow");
+  btn.setAttribute("data-cool","1"); busy(btn,"Menyinkronkan…");
+  const res=await api("/api/stock/sync",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({actor:actor()||null})});
+  if(res.status===409) toast("Sinkronisasi sedang berjalan.","warn");   // the single signal
+  else if(!res.ok) toast(errText(res,"Gagal menjalankan sinkronisasi."),"err");
+  else toast("Sinkronisasi dijalankan.","ok");
+  setTimeout(()=>{ btn.removeAttribute("data-cool"); unbusy(btn,"Sinkron Sekarang"); if(TAB==="sinkron") loadSync(); },10000);
+  if(TAB!=="sinkron") setTimeout(loadSummary,3000);
+}
+$("#syncNow").addEventListener("click",kickSync);
+$("#syReload").addEventListener("click",loadSync);
+
+/* ════════════════════════════════════════════════════════════════════════════
+   Detail sheet (ST-R13) — GET /api/stock/sku/:sku_key, AMENDMENT 3 + 5.
+   PPIC variant: customer names ARE shown. The arithmetic block is the whole
+   answer to "kok stoknya banyak tapi nggak bisa dijual".
+   ════════════════════════════════════════════════════════════════════════════ */
+const STATE_CHIP={tersedia:["st-tersedia","Tersedia"],habis:["st-habis","Habis"],
+                  kosong:["st-kosong","Kosong"],perlu_produksi:["st-perlu-produksi","Perlu Produksi"]};
+async function openSku(sku){
+  openModal(`<h3>Detail SKU</h3><div class="empty">Memuat…</div>`);
+  const res=await api(`/api/stock/sku/${encodeURIComponent(sku)}`);   // AMENDMENT 5
+  if(!res.ok){
+    openModal(`<h3>Detail SKU</h3><div class="warnbox">${esc(errText(res,"Gagal memuat data."))}</div>
+      <div class="actions"><button class="btn tap" id="dClose">Tutup</button></div>`);
+    $("#dClose").addEventListener("click",closeModal); return;
+  }
+  const j=res.json||{};
+  const it=j.item||skuByKey(sku)||{sku_key:sku};
+  const live=Array.isArray(j.live_commitments)?j.live_commitments:[];
+  const stale=Array.isArray(j.stale_commitments)?j.stale_commitments:[];
+  const adjs=Array.isArray(j.adjustments)?j.adjustments:[];
+  const on_hand=n(it.on_hand), committed=n(it.committed), adjustment=n(it.adjustment);
+  const atp=it.atp!=null?n(it.atp):(on_hand+adjustment-committed);
+  const unit=pick(it,"unit")||"lembar";
+  const sc=STATE_CHIP[it.state]||null;
+  const spec=[it.kode_barang,it.th!=null?num(it.th):null,
+              (it.p!=null&&it.l!=null)?`${num(it.p)}×${num(it.l)}`:null].filter(Boolean).join(" · ");
+  const lineTbl=(rows,cap)=>rows.length?`<div class="scrollx"><table><caption class="sr-only">${esc(cap)}</caption><thead><tr>
+      <th>ETA</th><th style="text-align:right">Sisa Pesanan</th><th>Customer</th><th>Sales</th>
+    </tr></thead><tbody>${rows.map(r=>{const x=normStale(r);return `<tr>
+      <td>${x.undated?`<span class="chip st-habis">Tanpa ETA</span>`:esc(wibShort(x.estimate_delivery))}</td>
+      <td class="sisa nums">${esc(num(x.qty_balance))}</td>
+      <td><div class="cust">${esc(x.customer||"—")}</div></td>
+      <td>${esc(x.sales||"—")}</td></tr>`;}).join("")}</tbody></table></div>`:`<p class="metaline">—</p>`;
+  openModal(`<h3>${esc(it.warna||it.name||sku)}</h3>
+    <p class="mp">${esc(spec)}${spec?" · ":""}Kode SKU ${esc(it.sku_key||sku)}</p>
+    <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
+      <span class="atp ${atp<0?"neg":""}">${esc(num(atp))}<span class="un">${esc(unit)}</span></span>
+      ${it.atp_m2!=null?`<span class="atp-m2">≈ ${esc(num(it.atp_m2))} m²</span>`:""}
+      ${sc?`<span class="chip ${sc[0]}">${esc(sc[1])}</span>`:""}
+    </div>
+    <table class="arith" style="margin-top:12px">
+      <tr><td>Stok Fisik (ERP)</td><td class="op"></td><td class="v">${esc(num(on_hand))}</td></tr>
+      <tr><td>Sudah Dipesan (aktif)</td><td class="op" aria-hidden="true">−</td><td class="v">${esc(num(committed))}</td></tr>
+      ${adjustment?`<tr><td>Penyesuaian</td><td class="op" aria-hidden="true">${adjustment<0?"−":"+"}</td><td class="v">${esc(num(Math.abs(adjustment)))}</td></tr>`:""}
+      <tr class="tot"><td>Bisa Dijual</td><td class="op" aria-hidden="true">=</td><td class="v">${esc(num(atp))}</td></tr>
+    </table>
+    <h2 style="background:none;border:none;padding:14px 0 6px;font-size:13px">Pesanan Aktif (${esc(num(live.length))})</h2>
+    ${lineTbl(live,"Pesanan aktif untuk SKU ini")}
+    <h2 style="background:none;border:none;padding:14px 0 6px;font-size:13px">Pesanan Lama — tidak dihitung (${esc(num(stale.length))})</h2>
+    ${lineTbl(stale,"Pesanan lama untuk SKU ini")}
+    ${adjs.length?`<h2 style="background:none;border:none;padding:14px 0 6px;font-size:13px">Penyesuaian (${esc(num(adjs.length))})</h2>
+      <div class="scrollx"><table><caption class="sr-only">Penyesuaian untuk SKU ini</caption><tbody>${adjs.map(a=>{const x=normAdj(a);return `<tr>
+        <td>${esc(wib(x.created_at))}</td><td class="sisa nums">${esc(signed(x.qty_delta))}</td>
+        <td>${esc(x.reason)}</td><td>${esc(x.actor)}</td></tr>`;}).join("")}</tbody></table></div>`:""}
+    <div class="foot" style="padding-left:0">Data ERP per ${esc(wibAuto(SUMMARY.freshness.last_ok_at))}</div>
+    <div class="actions"><button class="btn tap" id="dClose">Tutup</button></div>`);
+  $("#dClose").addEventListener("click",closeModal);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   Boot + poll — UX-SPEC §6.9
+   /summary polls every 30s. It never re-renders while a modal is open or while
+   the user is typing, and it never re-sorts the Tinjau Pesanan rows: that tab
+   offers "Ada perubahan di antrean. [Perbarui]" and lets the user choose.
+   ════════════════════════════════════════════════════════════════════════════ */
+renderTabs(); renderAdjForm();
+(async function boot(){
+  await loadSummary();
+  loadTab(TAB);
+})();
+setInterval(loadSummary,30000);
+window.addEventListener("hashchange",()=>{
+  const h=hashTab(), s=hashSeg();
+  if(TABS.some(t=>t.id===h)&&h!==TAB){ TAB=h; renderTabs(); loadTab(h); }
+  if(h==="lama"&&s&&s!==LM.seg&&["stale","undated","closed"].includes(s)){ LM.seg=s; LM.page=1; loadLama(); }
+});
 </script>
 </body>
 </html>
