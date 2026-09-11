@@ -106,7 +106,17 @@ export const config = {
   maxUploadBytes: int("MAX_UPLOAD_BYTES", 15 * 1024 * 1024),
 
   // ── Stock 2.0 / Selaras ERP mirror (CONTRACTS §3) ──────────────────────────
-  /** ERP REST mirror base URL. **Empty => ERP disabled** (`hasErp === false`). */
+  /**
+   * ERP REST mirror base URL. **Empty => ERP disabled** (`hasErp === false`).
+   *
+   * Verified 2026-09-11: `https://selaras2.io/kencana/api`. The `/api` suffix
+   * belongs in this variable; rows come from `<base>/table/{table}`, the table
+   * list from `<base>/tables` and a schema from `<base>/table/{table}/columns`.
+   *
+   * NOT `https://selaras2.io/kencana/table_documentation` — that is the
+   * human-facing documentation SPA, not the API root, and it is the obvious
+   * wrong turn. A trailing slash either way is fine (buildPageUrl strips them).
+   */
   selarasBaseUrl: str("SELARAS_BASE_URL"),
   /**
    * Bearer token for the ERP mirror. SECRET: never log it, never echo it into a
@@ -120,18 +130,27 @@ export const config = {
    * Selaras issues two credentials — a `secret_key` and a `secret_token` — so a
    * single `Authorization: Bearer` cannot authenticate against it at all.
    *
-   * The credential NAMES are known (`secret_key` / `secret_token`); what is not
-   * yet confirmed from the live documentation is whether they travel as headers
-   * or as query parameters. Both are supported and the placement is one env var,
-   * so settling it is a config change and never a code change.
+   * Verified 2026-09-11: they travel as the headers `X-Secret-Key` and
+   * `X-Secret-Token` (preferred), or as the query params `?secret_key=` /
+   * `?secret_token=`. Both placements stay supported behind one env var.
    *
    * SECRET, both of them: never logged, never echoed into a response (§7.9).
    */
   selarasSecretKey: str("SELARAS_SECRET_KEY"),
   selarasSecretToken: str("SELARAS_SECRET_TOKEN"),
-  /** `header` (default) · `query` · `bearer` (the pre-Selaras single-token mode). */
+  /** `header` (default, and what the API documents) · `query` · `bearer` (legacy). */
   selarasAuthMode: oneOf("SELARAS_AUTH_MODE", ["header", "query", "bearer"] as const, "header"),
-  /** Parameter/header names for the pair. Defaults match the issued credentials. */
+  /**
+   * The credential names, which are NOT the same in the two placements —
+   * verified 2026-09-11. Headers are `X-Secret-Key` / `X-Secret-Token`; query
+   * params are `secret_key` / `secret_token`. Each mode therefore carries its
+   * own default instead of one name being lower-cased into the other's slot,
+   * which is how the header mode came to send `secret_key:` and fail 401.
+   *
+   * Both remain configurable, and all four names are in the redaction set.
+   */
+  selarasKeyHeader: str("SELARAS_KEY_HEADER", "x-secret-key"),
+  selarasTokenHeader: str("SELARAS_TOKEN_HEADER", "x-secret-token"),
   selarasKeyParam: str("SELARAS_KEY_PARAM", "secret_key"),
   selarasTokenParam: str("SELARAS_TOKEN_PARAM", "secret_token"),
   /** Per-request timeout against the ERP mirror. */
@@ -201,8 +220,26 @@ export const config = {
     syncStaleAlertIntervals: int("STOCK_SYNC_STALE_ALERT_INTERVALS", 4),
     /** ST-R16 shadow mode: compute ATP but keep 1.0 numbers authoritative. */
     atpShadow: bool("STOCK_ATP_SHADOW", false),
-    /** ST-R5.2 knob: the canonical SKU key composition. See erp/sku.ts. */
-    skuKeySegments: csv("STOCK_SKU_KEY_SEGMENTS", ["kode_barang", "warna", "th", "p", "l"]),
+    /**
+     * ST-R5.2 knob: the canonical SKU key composition. See erp/sku.ts.
+     *
+     * v2 (2026-09-11): the verified `tbl_1203` column list has no `kode_barang`
+     * and no `th`, so the v1 key could never have matched. `th` here is the
+     * ALUMINIUM SKIN (SO `th_alu_skin` / FG `th`) and `th_panel` the total panel
+     * (SO `total_thickness_acp` / FG `t`).
+     */
+    skuKeySegments: csv("STOCK_SKU_KEY_SEGMENTS", ["brand", "warna", "th", "th_panel", "p", "l"]),
+    /**
+     * ST-R5.2 safety net. The v2 key composition is verified against the ERP's
+     * documented COLUMNS but has never been run against real ROWS, so after each
+     * sync the worker measures what fraction of live commitments found no stock
+     * row with the same `sku_key`. Above this fraction it logs one loud error.
+     *
+     * It matters because the failure is silent and one-directional: unmatched
+     * demand means `open_commitment` is 0, ATP equals on-hand and the inventory
+     * reads as fully promiseable — a page that looks healthier than the truth.
+     */
+    unmatchedAlertRatio: ratio("STOCK_UNMATCHED_ALERT_RATIO", 0.5),
   },
 } as const;
 

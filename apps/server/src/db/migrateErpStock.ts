@@ -14,6 +14,13 @@
  *
  *   ATP(sku) = on_hand − open_commitment + manual_adjustment       (never stored)
  *
+ * 2026-09-11 — remapped onto the VERIFIED Selaras column lists. The mirror's
+ * identity columns are now `brand`, `warna`, `th` (aluminium skin), `th_panel`
+ * (total panel), `p`, `l` on BOTH sides; `kode_barang` survives on the FG side
+ * as display only and is gone from `erp_so_line`, which never had it upstream.
+ * `erp_warna` mirrors the colour master `tbl_1228_DBRMWarnaID` so a row can read
+ * "BLACK GALAXY" instead of "4". See `erp/sku.ts` for why the key changed.
+ *
  * No table here has an `atp` column and none ever will (§7.1). The liveness
  * predicate (ST-R17) is spelled exactly once, in v_live_commitments (§7.3), and
  * the canonical SKU key exactly twice — erp/sku.ts and erp_sku_key() below (§7.4).
@@ -28,14 +35,30 @@ import {
   type SkuSegmentName,
 } from "../erp/sku.js";
 
-/** Fixed parameter name per segment. The function always takes all five. */
+/** Fixed parameter name per segment. The function always takes all six. */
 const SKU_SEGMENT_ARGS: Record<SkuSegmentName, string> = {
-  kode_barang: "p_kode_barang",
+  brand: "p_brand",
   warna: "p_warna",
   th: "p_th",
+  th_panel: "p_th_panel",
   p: "p_p",
   l: "p_l",
 };
+
+/**
+ * The signature, in one place, so the drop of the retired overload and the
+ * create below cannot disagree. Order matches SKU_SEGMENT_ARGS.
+ */
+const SKU_KEY_SIGNATURE = "text,text,numeric,numeric,numeric,numeric";
+
+/**
+ * The v1 signature (`kode_barang, warna, th, p, l`). `create or replace function`
+ * cannot replace a function with a different parameter list — it creates a second
+ * OVERLOAD — so the retired one is dropped explicitly. Leaving it behind would
+ * leave a working-looking `erp_sku_key(text,text,numeric,numeric,numeric)` in the
+ * database that computes the key that could never match (see erp/sku.ts).
+ */
+const RETIRED_SKU_KEY_SIGNATURES = ["text,text,numeric,numeric,numeric"] as const;
 
 /**
  * Rule 2 (text segments) as SQL. Deliberately ASCII-only and collation
@@ -77,7 +100,7 @@ function sqlNumericSegment(arg: string): string {
  *
  * `immutable` so it can back an index or a generated column; not `strict`,
  * because a NULL argument must normalize to '-' rather than NULL the whole key.
- * The parameter list is fixed at all five columns even when the configured
+ * The parameter list is fixed at all six columns even when the configured
  * composition uses fewer, so callers never have to branch; only the body varies,
  * and the segment names spliced into it are whitelisted by resolveSkuSegments().
  */
@@ -89,11 +112,12 @@ function buildSkuKeyFunctionSql(): string {
 
   return `
     create or replace function erp_sku_key(
-      p_kode_barang text,
-      p_warna       text,
-      p_th          numeric,
-      p_p           numeric,
-      p_l           numeric
+      p_brand    text,
+      p_warna    text,
+      p_th       numeric,
+      p_th_panel numeric,
+      p_p        numeric,
+      p_l        numeric
     ) returns text
     language sql
     immutable
@@ -174,20 +198,45 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
   // First, because everything that mirrors a row computes a sku_key with it.
   try {
     await db.unsafe(buildSkuKeyFunctionSql());
+    for (const sig of RETIRED_SKU_KEY_SIGNATURES) {
+      // Not `cascade`: nothing may depend on the retired overload, and if
+      // something somehow does, failing loudly here beats dropping it silently.
+      await db.unsafe(`drop function if exists erp_sku_key(${sig})`);
+    }
+    // Cast-safe numeric reader, used to match a colour code ('004') against the
+    // colour master's id ('4'). A bare `::numeric` inside an OR would let the
+    // planner evaluate the cast on a non-numeric row and raise 22P02.
+    await db.unsafe(`
+      create or replace function erp_num_or_null(v text) returns numeric
+      language sql immutable parallel safe
+      as $erp_num_or_null$
+        select case when v ~ '^[ \t]*[+-]?[0-9]+(\.[0-9]+)?[ \t]*$' then btrim(v)::numeric end
+      $erp_num_or_null$
+    `);
   } catch (skuKeyErr) {
     console.error("[migrateErpStock] erp_sku_key step failed (non-fatal):", skuKeyErr);
   }
 
   // ── erp_live_fg — mirror of tbl_1210_STLiveFGMX; physical on-hand ──────────
-  // sn_fg is the ERP serial and the natural PK. sku_key is the product identity
-  // the SO side joins on (SO rows carry sn_fg = NULL) — see erp/sku.ts.
+  // sn_fg is the mirror's primary key and holds the ERP row identity
+  // (`tbl_1210_STLiveFGMX_id`, with the old serial spellings as fallbacks —
+  // see SELARAS_KEY_FIELDS). The identity columns below are the VERIFIED ones,
+  // and they are the SO side's columns too, under the mirror's spelling:
+  //   brand → brand · warna → warna · th (alu skin) → th_alu_skin ·
+  //   th_panel (total panel) → total_thickness_acp · p → p · l → l
+  // `kode_barang` is kept here for DISPLAY only — the SO table has no such
+  // column, so it can never be part of the join key (erp/sku.ts).
   try {
     await db`
       create table if not exists erp_live_fg (
         sn_fg          text primary key,
-        kode_barang    text,
-        warna          text,
-        th             numeric,
+        kode_barang    text,                          -- display only; NOT in the key
+        brand          text,
+        brand_text     text,                          -- resolved name when the ERP sends one
+        warna          text,                          -- id into tbl_1228_DBRMWarnaID
+        warna_text     text,
+        th             numeric,                       -- aluminium skin (tbl_1210.th)
+        th_panel       numeric,                       -- total panel (tbl_1210.t)
         p              numeric,
         l              numeric,
         qty            numeric not null default 0,   -- canonical unit: lembar (ST-R5.4)
@@ -200,6 +249,11 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
         synced_at      timestamptz not null default now()
       )
     `;
+    // The 2026-09-11 remap on a database created before it.
+    await db`alter table erp_live_fg add column if not exists brand      text`;
+    await db`alter table erp_live_fg add column if not exists brand_text text`;
+    await db`alter table erp_live_fg add column if not exists warna_text text`;
+    await db`alter table erp_live_fg add column if not exists th_panel   numeric`;
     await db`create index if not exists erp_live_fg_sku_idx on erp_live_fg (sku_key)`;
   } catch (liveFgErr) {
     console.error("[migrateErpStock] erp_live_fg step failed (non-fatal):", liveFgErr);
@@ -208,14 +262,22 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
   // ── erp_so_line — mirror of tbl_1203_SOSalesOrderDetailNID; demand ─────────
   // qty_balance is what is still owed; the liveness predicate (ST-R17) filters
   // these rows into v_live_commitments / v_stale_commitments below.
+  //
+  // 2026-09-11: the verified column list for this table has NO `kode_barang` and
+  // NO `th`. It carries `brand`, `warna`, `th_alu_skin` and `total_thickness_acp`,
+  // which the adapter writes into the mirror's `brand` / `warna` / `th` /
+  // `th_panel` — the same four names the FG side uses, which is the entire point.
   try {
     await db`
       create table if not exists erp_so_line (
-        id                text primary key,          -- ERP line PK
+        id                text primary key,          -- ERP line PK (tbl_1203_..._id)
         so_id             text,                      -- FK -> erp_so_header.id
-        kode_barang       text,
-        warna             text,
-        th                numeric,
+        brand             text,
+        brand_text        text,
+        warna             text,                      -- id into tbl_1228_DBRMWarnaID
+        warna_text        text,
+        th                numeric,                   -- aluminium skin (tbl_1203.th_alu_skin)
+        th_panel          numeric,                   -- total panel (tbl_1203.total_thickness_acp)
         p                 numeric,
         l                 numeric,
         qty_order         numeric,
@@ -231,6 +293,32 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
         synced_at         timestamptz not null default now()
       )
     `;
+    await db`alter table erp_so_line add column if not exists brand      text`;
+    await db`alter table erp_so_line add column if not exists brand_text text`;
+    await db`alter table erp_so_line add column if not exists warna_text text`;
+    await db`alter table erp_so_line add column if not exists th_panel   numeric`;
+    // `kode_barang` was v1's first key segment and does not exist upstream at
+    // all. Dropping it is what stops a future query quietly joining on a column
+    // that is NULL for every row. The commitment views select `l.*`, so they
+    // depend on it and must go first — they are recreated at the end of this
+    // same run. Guarded on the column actually being present so the drop/recreate
+    // window happens exactly once, on the migration that removes it, and never
+    // on an ordinary boot.
+    const [legacy] = await db<{ n: string }[]>`
+      select count(*)::text as n from information_schema.columns
+       where table_name = 'erp_so_line' and column_name = 'kode_barang'
+         and table_schema = current_schema()
+    `;
+    if (Number(legacy?.n ?? 0) > 0) {
+      console.warn(
+        "[migrateErpStock] dropping erp_so_line.kode_barang — tbl_1203 has no such column " +
+          "(verified 2026-09-11); the SKU key now uses brand/warna/th/th_panel/p/l. " +
+          "The commitment views are dropped with it and recreated later in this run.",
+      );
+      await db`drop view if exists v_live_commitments cascade`;
+      await db`drop view if exists v_stale_commitments cascade`;
+      await db`alter table erp_so_line drop column if exists kode_barang`;
+    }
     await db`create index if not exists erp_so_line_sku_idx  on erp_so_line (sku_key)`;
     await db`create index if not exists erp_so_line_live_idx on erp_so_line (approval, qty_balance, estimate_delivery)`;
     await db`create index if not exists erp_so_line_so_idx   on erp_so_line (so_id)`;
@@ -254,6 +342,28 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
     `;
   } catch (soHeaderErr) {
     console.error("[migrateErpStock] erp_so_header step failed (non-fatal):", soHeaderErr);
+  }
+
+  // ── erp_warna — mirror of tbl_1228_DBRMWarnaID; the colour master ──────────
+  // `warna` on both mirrored tables is an ID, not a name: warna = 4 is
+  // "BLACK GALAXY" (273 rows, verified 2026-09-11). Matching by id is correct
+  // and unchanged — this table exists only so a human reads a colour instead of
+  // a number. `code_num` is the id read as a number, so '004' on a mirrored row
+  // still finds id '4' here; it is written by the sync adapter, never derived in
+  // SQL, so there is one normalization rule and it lives in TypeScript.
+  try {
+    await db`
+      create table if not exists erp_warna (
+        id             text primary key,             -- tbl_1228_DBRMWarnaID_id
+        code_num       numeric,                      -- the id as a number, when it is one
+        rm_warna       text,                         -- the display name, e.g. 'BLACK GALAXY'
+        erp_updated_at timestamptz,
+        synced_at      timestamptz not null default now()
+      )
+    `;
+    await db`create index if not exists erp_warna_code_idx on erp_warna (code_num)`;
+  } catch (warnaErr) {
+    console.error("[migrateErpStock] erp_warna step failed (non-fatal):", warnaErr);
   }
 
   // ── stock_adjustments — ST-R12 / ST-R20 physical opname corrections ────────
@@ -304,7 +414,7 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
   try {
     await db`
       create table if not exists erp_sync_state (
-        table_name    text primary key,       -- 'live_fg' | 'so_line' | 'so_header'
+        table_name    text primary key,       -- 'live_fg' | 'so_line' | 'so_header' | 'warna'
         cursor_value  timestamptz,
         last_ok_at    timestamptz,
         last_error    text,
@@ -313,7 +423,7 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
         running       boolean not null default false
       )
     `;
-    for (const t of ["live_fg", "so_line", "so_header"]) {
+    for (const t of ["live_fg", "so_line", "so_header", "warna"]) {
       await db`
         insert into erp_sync_state (table_name) values (${t})
         on conflict (table_name) do nothing
@@ -515,6 +625,140 @@ export async function checkCommitmentGate(
     // A missing view or an unreachable DB is not this function's problem to
     // solve, and it must never be the reason the app fails to boot (§7.7).
     console.error("[migrateErpStock] commitment-gate sanity check skipped (non-fatal):", err);
+    return empty;
+  }
+}
+
+// ── ST-R5.2 safety net: does the SKU key actually match anything? ────────────
+//
+// The 2026-09-11 key composition is verified against the ERP's documented
+// COLUMNS. It has never been run against real ROWS — ST-R5.2 (fill/overlap
+// validation) needs live data and could not be performed here. So the mirror
+// measures the thing the validation would have measured, on every sync.
+//
+// The failure mode is the same one `checkCommitmentGate()` exists for, arriving
+// through a different door: if demand and supply key differently, every
+// commitment lands in the exceptions tray, `open_commitment` is 0 for every SKU,
+// ATP equals on-hand, and the entire inventory reads as promiseable on a page
+// that looks perfectly healthy. Nobody reports good news, so it has to shout.
+//
+// A few unmatched keys are NORMAL — genuine demand for something we hold no
+// stock of is exactly what ST-R5.3's exceptions tray is for. A MAJORITY
+// unmatched is not normal; it is what a broken key composition looks like.
+
+/** Enough example keys to compare the two sides by eye, few enough to read. */
+const MAX_KEY_SAMPLES = 3;
+
+export interface SkuKeyMatchReport {
+  /** False when the query could not run at all (no mirror tables yet, DB down). */
+  checked: boolean;
+  liveLines: number;
+  unmatchedLines: number;
+  liveKeys: number;
+  unmatchedKeys: number;
+  /** unmatchedLines / liveLines, or 0 when there is no live demand at all. */
+  ratio: number;
+  /** True ⇒ the alert fired: live demand exists and most of it matches no stock. */
+  tripped: boolean;
+  /** Example sku_keys from the demand side and from the stock side. */
+  soSamples: string[];
+  fgSamples: string[];
+  threshold: number;
+}
+
+/**
+ * WARN-ONLY. Never throws, never blocks a sync or a boot (invariant §7.7).
+ *
+ * `log.error` rather than `warn`: a 100% unmatched rate means ATP silently
+ * equals on-hand across the catalogue, which is the single most expensive thing
+ * this module can get wrong.
+ */
+export async function checkSkuKeyMatch(
+  db: Sql = getSql()!,
+  log: { error(msg: string): void } = { error: (m) => console.error(m) },
+  threshold: number = config.stock.unmatchedAlertRatio,
+): Promise<SkuKeyMatchReport> {
+  const empty: SkuKeyMatchReport = {
+    checked: false,
+    liveLines: 0,
+    unmatchedLines: 0,
+    liveKeys: 0,
+    unmatchedKeys: 0,
+    ratio: 0,
+    tripped: false,
+    soSamples: [],
+    fgSamples: [],
+    threshold,
+  };
+
+  try {
+    const [counts] = await db<
+      { live_lines: string; unmatched_lines: string; live_keys: string; unmatched_keys: string }[]
+    >`
+      with live as (
+        select v.sku_key,
+               not exists (select 1 from erp_live_fg f where f.sku_key = v.sku_key) as unmatched
+        from v_live_commitments v
+      )
+      select count(*)::text                                              as live_lines,
+             count(*) filter (where unmatched)::text                     as unmatched_lines,
+             count(distinct sku_key)::text                               as live_keys,
+             count(distinct sku_key) filter (where unmatched)::text      as unmatched_keys
+      from live
+    `;
+    const liveLines = Number(counts?.live_lines ?? 0);
+    const unmatchedLines = Number(counts?.unmatched_lines ?? 0);
+    const liveKeys = Number(counts?.live_keys ?? 0);
+    const unmatchedKeys = Number(counts?.unmatched_keys ?? 0);
+    const ratio = liveLines > 0 ? unmatchedLines / liveLines : 0;
+
+    // No live demand at all ⇒ nothing to match and nothing to say. Warning here
+    // would fire on every empty deployment forever, which is how a real alert
+    // gets trained into background noise.
+    if (liveLines === 0 || ratio <= threshold) {
+      return { ...empty, checked: true, liveLines, unmatchedLines, liveKeys, unmatchedKeys, ratio };
+    }
+
+    const soRows = await db<{ sku_key: string }[]>`
+      select distinct v.sku_key
+        from v_live_commitments v
+       where not exists (select 1 from erp_live_fg f where f.sku_key = v.sku_key)
+       order by 1
+       limit ${MAX_KEY_SAMPLES}
+    `;
+    const fgRows = await db<{ sku_key: string }[]>`
+      select distinct sku_key from erp_live_fg order by 1 limit ${MAX_KEY_SAMPLES}
+    `;
+    const soSamples = soRows.map((r) => r.sku_key);
+    const fgSamples = fgRows.map((r) => r.sku_key);
+    const pct = Math.round(ratio * 1000) / 10;
+
+    log.error(
+      `[stock] SKU KEY MATCHES ALMOST NOTHING — ${unmatchedLines} of ${liveLines} live commitment ` +
+        `line(s) (${pct}%, ${unmatchedKeys} of ${liveKeys} distinct sku_key(s)) match NO row in ` +
+        `erp_live_fg. Those commitments reserve nothing, so ATP equals on-hand for their SKUs and ` +
+        `that stock reads as fully promiseable. Demand-side keys e.g. ` +
+        `[${soSamples.join(" , ") || "none"}]; stock-side keys e.g. [${fgSamples.join(" , ") || "none"}]. ` +
+        `Compare them segment by segment: the knob is STOCK_SKU_KEY_SEGMENTS ` +
+        `(current composition ${SKU_SEGMENTS.join("|")}), and the per-side column mapping is ` +
+        `SKU_SEGMENT_SOURCES in erp/sku.ts. Alert threshold ${threshold} ` +
+        `(STOCK_UNMATCHED_ALERT_RATIO). ST-R5.2 / ST-R5.3.`,
+    );
+
+    return {
+      checked: true,
+      liveLines,
+      unmatchedLines,
+      liveKeys,
+      unmatchedKeys,
+      ratio,
+      tripped: true,
+      soSamples,
+      fgSamples,
+      threshold,
+    };
+  } catch (err) {
+    console.error("[migrateErpStock] sku-key match check skipped (non-fatal):", err);
     return empty;
   }
 }

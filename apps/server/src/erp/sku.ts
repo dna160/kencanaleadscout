@@ -1,11 +1,45 @@
 /**
  * Canonical SKU key (ST-R5.1) — the one join between ERP supply and ERP demand.
  *
- * WHY THIS EXISTS: mirrored Sales Order detail rows carry `sn_fg = NULL`, so an
- * SO line can never be matched back to a finished-goods roll by serial. Matching
- * is therefore by *product identity* — kode_barang + warna + the three
- * dimensions — and that identity has to be spelled the same way on both sides of
- * the join or `open_commitment` silently under-counts (CONTRACTS §1, ST-R5.1).
+ * WHY THIS EXISTS: mirrored Sales Order detail rows cannot be matched back to a
+ * finished-goods roll by serial, so matching is by *product identity*, and that
+ * identity has to be spelled the same way on both sides of the join or
+ * `open_commitment` silently under-counts (CONTRACTS §1, ST-R5.1).
+ *
+ * ⚠️ THE COMPOSITION CHANGED ON 2026-09-11, against the verified Selaras API
+ * documentation. The v1 key was `kode_barang|warna|th|p|l`, computed identically
+ * on both sides. The verified column list for the SO detail table
+ * (`tbl_1203_SOSalesOrderDetailNID`) has **no `kode_barang` and no `th`**: every
+ * SO line keyed as `-|4|-|4880|1220` while its stock row keyed as
+ * `ACP-4MM|4|0.3|4880|1220`, so NOTHING would ever have matched. That failure is
+ * silent and it fails toward over-promising — open_commitment 0 for every SKU,
+ * ATP equal to on-hand, the whole inventory reading as promiseable.
+ *
+ * The key is now built from columns that exist on BOTH sides:
+ *
+ *   meaning                      SO line tbl_1203        Live FG tbl_1210
+ *   ─────────────────────────────────────────────────────────────────────
+ *   product line                 brand                   brand
+ *   colour id                    warna                   warna
+ *   aluminium skin thickness     th_alu_skin             th
+ *   total panel thickness        total_thickness_acp     t
+ *   length                       p                       p
+ *   width                        l                       l
+ *
+ * The two thickness rows are the judgement call in the whole remap, so they are
+ * recorded as fact, not inference: **confirmed by the product owner on
+ * 2026-09-11** — `th_alu_skin` (SO) and `th` (FG) are the aluminium skin, and
+ * `total_thickness_acp` (SO) and `t` (FG) are the total panel. It is the same
+ * split the 1.0 module already made (`num()` in `routes/stock.ts`: `th` =
+ * aluminium 0.1–0.5, `mm` = panel 3/4). Do not re-litigate the semantics; only
+ * real data disagreeing is grounds to revisit it.
+ *
+ * `kode_barang` still exists on the FG side and is still mirrored — for DISPLAY.
+ * It is simply not part of the key, because the demand side has no such column.
+ *
+ * The canonical segment names below are the MIRROR's spelling, which each
+ * adapter maps its own side onto (`SKU_SEGMENT_SOURCES`). `th` keeps its v1
+ * name and its v1 meaning (aluminium skin); `th_panel` is new.
  *
  * The key is produced in exactly TWO places and nowhere else (invariant §7.4):
  *   - this file, `canonicalSkuKey()`                       (TypeScript)
@@ -14,9 +48,13 @@
  * rule here, change it there in the same commit — same discipline as the
  * company-name normalizer (`util/company.ts` + its SQL twin).
  *
- * The segment list is provisional until the ST-R5.2 fill/overlap validation runs
- * against live data, which is why it sits behind ONE function and ONE config
- * knob (`STOCK_SKU_KEY_SEGMENTS`) instead of being inlined into queries.
+ * The segment list is STILL provisional: ST-R5.2 (fill/overlap validation
+ * against live data) could not be run, so the new composition is verified
+ * against the documented COLUMNS but not yet against real ROWS. That is why it
+ * sits behind ONE function and ONE config knob (`STOCK_SKU_KEY_SEGMENTS`), and
+ * why the sync worker now measures how much of the live demand actually matched
+ * stock and shouts when most of it did not (`checkSkuKeyMatch()` in
+ * `db/migrateErpStock.ts`).
  *
  * Pure module: no db, no http, no fastify. Safe to import from a test.
  */
@@ -30,23 +68,68 @@ export type SkuSegmentKind = "text" | "numeric";
  * the function body is generated from the same list, in the same order.
  */
 export const SKU_SEGMENT_KINDS = {
-  kode_barang: "text",
+  /** Product line. SO `brand`, FG `brand` — an id, with a `brand_text` twin for display. */
+  brand: "text",
+  /** Colour id into `tbl_1228_DBRMWarnaID` (e.g. 4 → "BLACK GALAXY"). Matching is by id. */
   warna: "text",
+  /** Aluminium skin thickness (0.1–0.5). SO `th_alu_skin`, FG `th`. */
   th: "numeric",
+  /** Total panel thickness (3/4). SO `total_thickness_acp`, FG `t`. */
+  th_panel: "numeric",
+  /** Length (mm). */
   p: "numeric",
+  /** Width (mm). */
   l: "numeric",
 } as const;
 
 export type SkuSegmentName = keyof typeof SKU_SEGMENT_KINDS;
 
-/** CONTRACTS §1 v1 composition: `kode_barang|warna|th|p|l`. */
+/**
+ * v2 composition (2026-09-11, verified column lists):
+ * `brand|warna|th|th_panel|p|l`.
+ */
 export const DEFAULT_SKU_SEGMENTS: readonly SkuSegmentName[] = [
-  "kode_barang",
+  "brand",
   "warna",
   "th",
+  "th_panel",
   "p",
   "l",
 ];
+
+/**
+ * Where each canonical segment comes from on each side of the join. The adapters
+ * in `erp/selarasClient.ts` read their probe names from here rather than
+ * spelling them again, so the two sides of the key cannot drift apart in a way
+ * that silently stops demand matching supply.
+ *
+ * First name wins; the rest are tolerated spellings of the same column.
+ */
+export const SKU_SEGMENT_SOURCES: Record<
+  SkuSegmentName,
+  { readonly so_line: readonly string[]; readonly live_fg: readonly string[] }
+> = {
+  brand: { so_line: ["brand"], live_fg: ["brand"] },
+  warna: { so_line: ["warna"], live_fg: ["warna"] },
+  th: { so_line: ["th_alu_skin"], live_fg: ["th"] },
+  th_panel: { so_line: ["total_thickness_acp"], live_fg: ["t"] },
+  p: { so_line: ["p"], live_fg: ["p"] },
+  l: { so_line: ["l"], live_fg: ["l"] },
+};
+
+/**
+ * Spellings an operator might plausibly put in `STOCK_SKU_KEY_SEGMENTS`, mapped
+ * onto the canonical name. The ERP's own column names are accepted (they are
+ * what a reader of the API docs has in front of them), and so is the retired v1
+ * `total_thickness_acp` spelling. An unknown name is still dropped.
+ */
+const SKU_SEGMENT_ALIASES: Record<string, SkuSegmentName> = {
+  th_alu_skin: "th",
+  th_alu: "th",
+  total_thickness_acp: "th_panel",
+  t: "th_panel",
+  panel_thickness: "th_panel",
+};
 
 /** The separator. Never appears in a normalized segment (stripped by rule 2). */
 export const SKU_SEGMENT_SEPARATOR = "|";
@@ -64,8 +147,9 @@ function isSkuSegmentName(v: string): v is SkuSegmentName {
 export function resolveSkuSegments(names: readonly string[]): readonly SkuSegmentName[] {
   const out: SkuSegmentName[] = [];
   for (const raw of names) {
-    const name = raw.trim().toLowerCase();
-    if (isSkuSegmentName(name) && !out.includes(name)) out.push(name);
+    const lowered = raw.trim().toLowerCase();
+    const name = isSkuSegmentName(lowered) ? lowered : SKU_SEGMENT_ALIASES[lowered];
+    if (name !== undefined && !out.includes(name)) out.push(name);
   }
   return out.length > 0 ? out : DEFAULT_SKU_SEGMENTS;
 }
