@@ -221,6 +221,13 @@ can audit it in one place.
 | A6 | Aggregate ATP across warehouses; `lokasi` not a dimension in v1 (OQ-2) | PRD §10 | medium — schema keeps `lokasi` |
 | A7 | `buffer_qty` does **not** reduce ATP in v1 (OQ-5 open) | scaffold | low — one term in the formula |
 | A8 | Only SO reduces ATP; transfers/samples do not (OQ-3 open) | PRD §10 | medium |
+| A9 | A segment normalizing to empty (e.g. `'###'`) becomes `'-'`, not `''` — positional integrity | WP-1 | low |
+| A10 | ASCII-only case folding + whitespace on both sides; never `upper()`/`\s` (collation-dependent) | WP-1 | low, but must change both sides together |
+| A11 | `STOCK_SKU_KEY_SEGMENTS` whitelisted against a 5-name registry; SQL signature fixed, only the body varies | WP-1 | low |
+| A12 | Views use `create or replace` with `drop … cascade` fallback (`l.*` pins the column list) | WP-1 | low |
+| A13 | `erp_sync_state` pre-seeded with the 3 table names so WP-2 can `update` a present row | WP-1 | low |
+| A14 | `sku_key` is plain `text not null`, NOT `GENERATED ALWAYS` — a function-body change would silently desync stored keys | WP-1 | low — ruled, see CONTRACTS AMENDMENT block |
+| A15 | Approved lines with `estimate_delivery IS NULL` are **live** and reserve stock, flagged `undated` | Architect ruling, AMENDMENT 1 | low — one view clause |
 
 ---
 

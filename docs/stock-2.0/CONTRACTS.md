@@ -29,7 +29,8 @@ A mirrored SO line counts toward `open_commitment` **iff all four hold**:
 approval = 'Approved'
 AND qty_balance > 0
 AND status_order NOT IN (<cancelled/void set, config>)
-AND estimate_delivery >= (current_date - <window_days>)   -- default 60
+AND (estimate_delivery >= (current_date - <window_days>)  -- default 60
+     OR estimate_delivery IS NULL)                        -- AMENDMENT 1
 ```
 
 Anything that fails **only** the `estimate_delivery` clause is **stale** →
@@ -183,18 +184,20 @@ create table if not exists erp_sync_state (
 
 ```sql
 create or replace view v_live_commitments as
-  select l.*, h.customer_name_text, h.sales_name_text, h.so_number
+  select l.*, h.customer_name_text, h.sales_name_text, h.so_number,
+         (l.estimate_delivery is null) as undated     -- AMENDMENT 1
   from erp_so_line l
   left join erp_so_header h on h.id = l.so_id
   left join stock_commitment_overrides o on o.so_line_id = l.id
   where l.approval = 'Approved'
     and l.qty_balance > 0
     and coalesce(l.status_order,'') <> all (<cancelled set>)
-    and l.estimate_delivery >= current_date - <window_days>
+    and (l.estimate_delivery >= current_date - <window_days>
+         or l.estimate_delivery is null)              -- AMENDMENT 1
     and coalesce(o.state,'') <> 'closed';
 
 create or replace view v_stale_commitments as  -- same, but ETA older than window
-  ... and l.estimate_delivery < current_date - <window_days>
+  ... and l.estimate_delivery < current_date - <window_days>   -- NULL excluded: NULLs are live
       and coalesce(o.state,'') <> 'closed';
 ```
 
@@ -361,8 +364,74 @@ modal system). Do not introduce a new design language.
    test asserts they agree.
 5. Negative ATP is surfaced, never clamped.
 6. An SO line is never silently dropped: it is live, stale-queued, or an
-   exception. Those three sets partition every `qty_balance > 0` line.
+   exception. Those three sets partition every **approved, non-cancelled** line
+   with `qty_balance > 0`. (Cancelled and unapproved lines are dead demand and
+   correctly belong to none of the three — see AMENDMENT 2.)
 7. The app boots and serves with no ERP and no database configured.
 8. Every write endpoint records an actor; overrides and adjustments are audited
    and reversible.
 9. No secret (`SELARAS_TOKEN`, `DATABASE_URL`) is logged or returned.
+
+
+---
+
+# AMENDMENTS
+
+Ruled by the Lead Architect after a work package raised a `[CHALLENGE]`. These
+are part of the frozen contract — implement them, do not re-litigate them.
+
+## AMENDMENT 1 — an approved line with `estimate_delivery IS NULL` is LIVE
+
+**Raised by WP-1.** Implemented verbatim, the original §2.3 view bodies matched a
+NULL ETA against neither `>= current_date - N` nor `< current_date - N`. Such a
+line appeared in **neither** view: it reserved nothing, surfaced in no queue, and
+silently inflated ATP by its whole balance — the exact failure ST-R18 exists to
+prevent, and a breach of invariant §7.6. Reproduced on seeded data.
+
+**Ruling: undated approved lines count as LIVE and reserve stock.**
+
+The reasoning matters, because the challenge proposed the opposite and called it
+conservative. It is not. `open_commitment` is *subtracted*, so **excluding a
+commitment raises ATP** — it promises more stock, not less. Routing undated lines
+to the stale queue would have been the over-promising choice.
+
+Excluding stale lines is nonetheless right, because an ETA from 2020 is positive
+evidence of abandonment (PRD §5A). A NULL ETA is not that. It is an approved
+order, with an undelivered balance, that nobody has scheduled yet — real demand,
+merely undated. Absence of a date is not evidence of death.
+
+And the two errors are not symmetric. Under-promising costs a conversation with a
+customer; over-promising double-sells physical stock that is already owed to
+someone else. For a stock system, reserving is the safe default.
+
+Consequences, all required:
+
+1. `v_live_commitments` carries a boolean `undated` column (above).
+2. WP-3 exposes `undated` on every commitment it returns, and `/stale-commitments`
+   accepts a filter that surfaces undated live lines for PPIC triage — they are
+   reviewable exactly like stale lines.
+3. ST-R21 confirm-close already covers the case where an undated line turns out to
+   be a phantom. No new mechanism is needed.
+4. WP-7 tests the NULL-ETA line explicitly: it reserves, it is flagged `undated`,
+   it appears in the PPIC review surface, and confirm-closing it stops the
+   reservation.
+
+## AMENDMENT 2 — invariant §7.6 reworded to be checkable
+
+Also from WP-1: cancelled and unapproved lines with `qty_balance > 0` land in no
+set either. That is **correct** — they are dead demand and must not reserve — but
+it made the invariant as written unsatisfiable. §7.6 now scopes the partition to
+approved, non-cancelled lines. `/exceptions` keeps its §4.2 meaning (approved
+demand with no matching FG SKU) and does not widen.
+
+## Accepted from WP-1, no change required
+
+- **A9–A14** in HANDOVER §7 are accepted as ruled.
+- **A14 in particular** — `sku_key` as a plain `text not null` column rather than
+  `GENERATED ALWAYS`, because `create or replace function` does not recheck
+  generated-column dependents and a body change would silently desynchronise
+  stored keys. The contract's §2.1 wording is superseded by this reasoning.
+- The added index `erp_so_line_so_idx on (so_id)` is accepted.
+- ASCII-only case folding and whitespace classes on **both** sides (never
+  `upper()` / `\s`, which are collation-dependent). Do not "simplify" either side
+  without changing the other; WP-7 keeps fixtures on this.

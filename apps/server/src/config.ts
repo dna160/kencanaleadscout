@@ -36,6 +36,31 @@ function int(name: string, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
+/** Trimmed string env var; blank/absent => fallback (usually ""). */
+function str(name: string, fallback = ""): string {
+  const v = process.env[name];
+  const trimmed = typeof v === "string" ? v.trim() : "";
+  return trimmed !== "" ? trimmed : fallback;
+}
+
+/** Boolean env var. Accepts 1/true/yes/on (and their negatives), else fallback. */
+function bool(name: string, fallback: boolean): boolean {
+  const v = process.env[name];
+  if (v === undefined) return fallback;
+  const s = v.trim().toLowerCase();
+  if (s === "1" || s === "true" || s === "yes" || s === "on") return true;
+  if (s === "0" || s === "false" || s === "no" || s === "off") return false;
+  return fallback;
+}
+
+/** Comma-separated list env var; blank entries dropped, empty list => fallback. */
+function csv(name: string, fallback: readonly string[]): readonly string[] {
+  const v = process.env[name];
+  if (v === undefined) return fallback;
+  const parts = v.split(",").map((s) => s.trim()).filter((s) => s !== "");
+  return parts.length > 0 ? parts : fallback;
+}
+
 export const config = {
   port: int("PORT", 8080),
   host: "0.0.0.0",
@@ -49,6 +74,40 @@ export const config = {
   databaseUrl: process.env.DATABASE_URL ?? "",
   /** Upload size cap for the scraper (bytes). */
   maxUploadBytes: int("MAX_UPLOAD_BYTES", 15 * 1024 * 1024),
+
+  // ── Stock 2.0 / Selaras ERP mirror (CONTRACTS §3) ──────────────────────────
+  /** ERP REST mirror base URL. **Empty => ERP disabled** (`hasErp === false`). */
+  selarasBaseUrl: str("SELARAS_BASE_URL"),
+  /**
+   * Bearer token for the ERP mirror. SECRET: never log it, never echo it into a
+   * response or an error message (CONTRACTS §7.9).
+   */
+  selarasToken: str("SELARAS_TOKEN"),
+  /** Per-request timeout against the ERP mirror. */
+  selarasTimeoutMs: int("SELARAS_TIMEOUT_MS", 20_000),
+  /**
+   * Stock 2.0 tunables. Nested because the views in migrateErpStock.ts read
+   * `config.stock.*` by name (CONTRACTS §2.3).
+   */
+  stock: {
+    /** Sync cadence — 3 min, inside PRD §4's 2–5 min band (ST-R6). */
+    syncIntervalMs: int("STOCK_SYNC_INTERVAL_MS", 180_000),
+    /** `limit` query param per page of the mirror pull. */
+    syncPageSize: int("STOCK_SYNC_PAGE_SIZE", 1_000),
+    /** ST-R17 liveness window: an SO line older than this is stale, not live. */
+    staleWindowDays: int("STOCK_STALE_WINDOW_DAYS", 60),
+    /** status_order values that mean "this line is dead" (OQ-1, tune at validation). */
+    cancelledStatuses: csv("STOCK_CANCELLED_STATUSES", ["Cancelled", "Void", "Batal"]),
+    /** ST-R7: no successful sync in N intervals => the stale banner lights up. */
+    syncStaleAlertIntervals: int("STOCK_SYNC_STALE_ALERT_INTERVALS", 4),
+    /** ST-R16 shadow mode: compute ATP but keep 1.0 numbers authoritative. */
+    atpShadow: bool("STOCK_ATP_SHADOW", false),
+    /** ST-R5.2 knob: the canonical SKU key composition. See erp/sku.ts. */
+    skuKeySegments: csv("STOCK_SKU_KEY_SEGMENTS", ["kode_barang", "warna", "th", "p", "l"]),
+  },
 } as const;
 
 export const hasDatabase = Boolean(config.databaseUrl);
+/** ERP disabled when no base URL: every surface degrades, nothing throws (§7.7). */
+export const hasErp = Boolean(config.selarasBaseUrl);
+

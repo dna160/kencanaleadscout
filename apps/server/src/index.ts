@@ -45,6 +45,7 @@ import { colorGatewayRoutes } from "./routes/color-gateway.js";
 import { syHunterRoutes } from "./routes/sy-hunter.js";
 import { stockRoutes } from "./routes/stock.js";
 import { runStockMigrations } from "./db/migrateStock.js";
+import { runErpStockMigrations } from "./db/migrateErpStock.js";
 
 const PUBLIC_DIR = fileURLToPath(new URL("../public", import.meta.url));
 
@@ -58,6 +59,7 @@ async function bootDatabase(app: ReturnType<typeof Fastify>): Promise<void> {
   try {
     await runMigrations(db);
     await runStockMigrations(db);
+    await runErpStockMigrations(db);
     const n = await seedLeads(db);
     app.log.info({ seeded: n }, "database ready (migrated + seeded)");
   } catch (err) {
