@@ -435,3 +435,63 @@ demand with no matching FG SKU) and does not widen.
 - ASCII-only case folding and whitespace classes on **both** sides (never
   `upper()` / `\s`, which are collation-dependent). Do not "simplify" either side
   without changing the other; WP-7 keeps fixtures on this.
+
+
+## AMENDMENT 3 — `GET /api/stock/sku/:sku_key` response body, frozen
+
+**Raised by WP-5.** §4.2 described this endpoint's purpose in one line and never
+gave it a body, while four sibling endpoints got JSON examples. The front-end
+developer had to invent field names and then write alias-tolerant readers to
+hedge against the back-end guessing differently — avoidable client work caused by
+a gap in this document, not by the developer.
+
+Frozen shape (shipped in `9b0d42f`, relayed to WP-3 in flight):
+
+```jsonc
+{
+  "item": { /* the same item object as /summary's items[] */ },
+  "live_commitments": [{
+    "so_line_id": "…", "so_number": "…",
+    "customer_name_text": "…", "sales_name_text": "…",
+    "estimate_delivery": "2026-09-20",   // "YYYY-MM-DD" | null
+    "qty_balance": 319, "status_order": "…",
+    "undated": false                      // AMENDMENT 1
+  }],
+  "stale_commitments": [ /* same shape */ ],
+  "adjustments": [{ "id": "…", "qty_delta": -12, "reason": "…", "actor": "…", "created_at": "…" }],
+  "on_hand_rows": [{ "sn_fg": "…", "lokasi": "…", "qty": 120, "qty_m2": null }]
+}
+```
+
+- Field names are the `erp_so_line` / `erp_so_header` column names from §2. No
+  short aliases.
+- Every array is **always present**, `[]` when empty — never null, never omitted.
+- `item` is always present.
+- Both commitment arrays come from the views. The liveness predicate is not
+  re-spelled here (§7.3).
+
+## AMENDMENT 4 — pagination on all four list endpoints
+
+`/shortfall`, `/exceptions`, `/adjustments` and `/stale-commitments` all accept
+`page`, `limit` and an optional free-text `q`, and all return a total (or
+`has_more`) so a pager can render. §4.2 had spelled pagination out only for
+`/stale-commitments`; both front-end pages assumed it uniformly, and they were
+right to — the shortfall and exceptions lists are unbounded in exactly the same
+way. `limit` is capped server-side; a client may not request 4,000 rows.
+
+## AMENDMENT 5 — `sku_key` as a path segment
+
+`sku_key` contains `|` and `.` (`ACP-4MM|004|0.3|4880|1220`). Clients send
+`encodeURIComponent(sku_key)`. Fastify decodes path params, so the handler reads
+the decoded value and must **not** decode a second time — that would corrupt any
+SKU whose text legitimately contains `%`. WP-7 tests the round trip.
+
+## Open — not resolved, carried to review
+
+- **`coating` is absent from the §4.1 item.** The 1.0 page had a working coating
+  filter and sort; both are dropped because the contract has no field for it. If
+  coating matters to reps, it needs a field on `erp_live_fg` and in the item
+  shape. Raised by WP-5; needs a product answer, not an engineering one.
+- **`.fltchips` / `.fchip`** are defined independently in `stock.html` and
+  `stock-ppic.html` (each agent was scoped to one file and could not see the
+  other). They are not byte-identical. Reconcile.
