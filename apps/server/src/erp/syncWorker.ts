@@ -92,6 +92,12 @@ export interface SyncTableResult {
    * it without a schema change.
    */
   ambiguousNumbers: number;
+  /**
+   * Numerics refused for being NaN / ±Infinity (X11). Postgres accepts both in a
+   * `numeric` column, and one stored in `th`/`p`/`l` would desynchronise the TS
+   * and SQL sku_key implementations silently. None is ever written.
+   */
+  nonFiniteNumbers: number;
   error?: string;
   cursorBefore: Date | null;
   cursorAfter: Date | null;
@@ -387,6 +393,7 @@ async function syncTable(
     rows: 0,
     dropped: 0,
     ambiguousNumbers: 0,
+    nonFiniteNumbers: 0,
     cursorBefore,
     cursorAfter: cursorBefore,
   };
@@ -394,6 +401,7 @@ async function syncTable(
   // the pass (A22). One grep-able line per run is the entire point: it turns
   // "ATP is mysteriously 1000× off" into a thirty-second diagnosis.
   const ambiguousSamples: string[] = [];
+  const nonFiniteSamples: string[] = [];
 
   let previousSignature = "";
   for (let page = 1; page <= MAX_PAGES_PER_TABLE; page += 1) {
@@ -404,16 +412,16 @@ async function syncTable(
       result.error = res.error;
       await markTableError(db, table, res.error);
       log.error(`${table}: page ${page} failed — ${res.error}; cursor left at ${cursorBefore?.toISOString() ?? "null"}`);
-      reportAmbiguity(table, result, ambiguousSamples, log);
+      reportRefusals(table, result, ambiguousSamples, nonFiniteSamples, log);
       return result;
     }
 
-    const { rows, rawCount, dropped, ambiguousNumbers, totalPages } = res.page;
+    const { rows, rawCount, dropped, ambiguousNumbers, nonFiniteNumbers, totalPages } = res.page;
     result.dropped += dropped;
     result.ambiguousNumbers += ambiguousNumbers.count;
-    for (const sample of ambiguousNumbers.samples) {
-      if (ambiguousSamples.length < 3 && !ambiguousSamples.includes(sample)) ambiguousSamples.push(sample);
-    }
+    result.nonFiniteNumbers += nonFiniteNumbers.count;
+    collectSamples(ambiguousSamples, ambiguousNumbers.samples);
+    collectSamples(nonFiniteSamples, nonFiniteNumbers.samples);
     if (dropped > 0) {
       log.warn(`${table}: dropped ${dropped} of ${rawCount} rows on page ${page} (no usable primary key)`);
     }
@@ -449,28 +457,50 @@ async function syncTable(
   }
 
   if (result.pages === 0) await markTableOk(db, table);
-  reportAmbiguity(table, result, ambiguousSamples, log);
+  reportRefusals(table, result, ambiguousSamples, nonFiniteSamples, log);
   return result;
 }
 
+const MAX_SAMPLES = 3;
+
+function collectSamples(into: string[], from: readonly string[]): void {
+  for (const s of from) {
+    if (into.length < MAX_SAMPLES && !into.includes(s)) into.push(s);
+  }
+}
+
+function examples(samples: readonly string[]): string {
+  return samples.length > 0 ? ` e.g. ${samples.map((s) => `"${s}"`).join(", ")}` : "";
+}
+
 /**
- * The A22 line. Emitted once per table per run, only when something was actually
- * refused, and carrying the raw TOKENS only — never a whole row, which could
- * hold customer data. Names the config key so the fix is obvious from the log.
+ * Both refusal lines. Emitted once per table per run, only when something was
+ * actually refused, and carrying the raw TOKENS only — never a whole row, which
+ * could hold customer data. Each names what to do about it, because a log line
+ * nobody can act on is noise.
  */
-function reportAmbiguity(
+function reportRefusals(
   table: SelarasTable,
   result: SyncTableResult,
-  samples: readonly string[],
+  ambiguous: readonly string[],
+  nonFinite: readonly string[],
   log: SyncLogger,
 ): void {
-  if (result.ambiguousNumbers === 0) return;
-  const examples = samples.length > 0 ? ` e.g. ${samples.map((s) => `"${s}"`).join(", ")}` : "";
-  log.warn(
-    `${table}: refused ${result.ambiguousNumbers} ambiguous numeric string(s)${examples} — ` +
-      `"1.234" is 1234 in id notation and 1.234 in en notation, so it was read as NULL/0 rather ` +
-      `than guessed (A22). Set SELARAS_NUMBER_FORMAT=id or =en once a real response body is known.`,
-  );
+  if (result.ambiguousNumbers > 0) {
+    log.warn(
+      `${table}: refused ${result.ambiguousNumbers} ambiguous numeric string(s)${examples(ambiguous)} — ` +
+        `"1.234" is 1234 in id notation and 1.234 in en notation, so it was read as NULL/0 rather ` +
+        `than guessed (A22). Set SELARAS_NUMBER_FORMAT=id or =en once a real response body is known.`,
+    );
+  }
+  if (result.nonFiniteNumbers > 0) {
+    log.warn(
+      `${table}: refused ${result.nonFiniteNumbers} non-finite numeric(s)${examples(nonFinite)} — ` +
+        `NaN/Infinity are legal in a Postgres numeric column but would desynchronise the TS and SQL ` +
+        `sku_key implementations for that SKU (X11), so none was written. Investigate upstream: an ` +
+        `ERP that emits NaN in th/p/l has a computation fault.`,
+    );
+  }
 }
 
 // ── Public surface ───────────────────────────────────────────────────────────
@@ -565,6 +595,7 @@ async function executeRun(deps: ErpSyncDeps): Promise<SyncRunResult> {
           rows: 0,
           dropped: 0,
           ambiguousNumbers: 0,
+          nonFiniteNumbers: 0,
           error: message,
           cursorBefore: null,
           cursorAfter: null,

@@ -5,7 +5,9 @@
     "sum to 4,168 lembar, matching PRD §5A. Row 4 has an unreadable qty and row 5 has",
     "no serial: both must degrade, never abort the page. Row 6 carries SEPARATOR-",
     "AMBIGUOUS quantities (A22): '1.234' is 1234 in id notation and 1.234 in en, so",
-    "under SELARAS_NUMBER_FORMAT=auto it must be refused and counted, never guessed."
+    "under SELARAS_NUMBER_FORMAT=auto it must be refused and counted, never guessed.",
+    "Row 7 carries NON-FINITE numerics (X11): NaN / Infinity are legal Postgres",
+    "numeric values, so they must be rejected at the adapter, never written through."
   ],
   "rows": [
     {
@@ -81,6 +83,19 @@
       "Lokasi": "GD-03",
       "UpdatedAt": "2026-09-01T09:00:00Z",
       "_why": "A22: both quantities are separator-ambiguous. Under auto they are refused (qty -> 0, qty_m2 -> null), counted, and logged once per run."
+    },
+    {
+      "SnFg": "FG-0006",
+      "KodeBarang": "ACP-3MM",
+      "Warna": "118",
+      "Th": "NaN",
+      "P": "Infinity",
+      "L": "-Infinity",
+      "Qty": "NaN",
+      "QtyM2": "1e999",
+      "Lokasi": "GD-04",
+      "UpdatedAt": "2026-09-01T10:00:00Z",
+      "_why": "X11: 'NaN'::numeric and 'Infinity'::numeric are LEGAL in Postgres and the schema does not forbid them in th/p/l. One stored there would make erp_sku_key() render 'NaN' while canonicalSkuKey() renders '-', silently desynchronising that SKU. None may be written."
     },
     null
   ]
