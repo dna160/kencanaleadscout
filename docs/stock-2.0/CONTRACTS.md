@@ -583,3 +583,46 @@ All 30 contrast pairs are computed in UX-SPEC §9.2, not asserted.
 - **`nearest_eta` population is undefined** — if it ever comes to mean incoming
   supply rather than nearest commitment, the label must change, because the two
   mean opposite things to a rep.
+
+
+## AMENDMENT 8 — list-endpoint parameters, ratified
+
+Both front-end packages independently invented filter parameters because §4.2 said
+only "Filter/paginate". Convergent invention is a warning, not a comfort: two
+developers guessing the same thing still leaves the back end guessing a third.
+Ratified names, final:
+
+| param | endpoints | meaning |
+|---|---|---|
+| `page`, `limit` | all four lists | paging; `limit` capped server-side |
+| `q` | all four lists | free-text, debounced client-side |
+| `segment` | `/stale-commitments` | `stale` (default) · `undated` · `closed` |
+| `min_age_days` | `/stale-commitments` | age tier filter |
+| `status` | `/stale-commitments` | `status_order` filter |
+| `only_do` | `/stale-commitments` | ST-R22: `status_order='DO'` with a balance |
+
+`segment` **replaces** the `state=closed` and `undated=true` spellings one page
+shipped with. A single enum beats two booleans that can contradict each other.
+
+Response envelope for every list:
+
+```jsonc
+{ "rows": [...],
+  "total": 1204,          // rows matching the current filter — drives the pager
+  "grand_total": 4158,    // unfiltered, so the UI can say "filtered from 4,158"
+  "status_facets": ["Waiting","DO"] }   // /stale-commitments only
+```
+
+`grand_total` and `status_facets` are **ratified** — without them the count line
+degrades to a fallback and the status filter has to be honestly relabelled
+"this page only", which is a worse product for no saving.
+
+`POST /sync` returns **409** when a run is in flight. One signal, not three.
+`reason` on close is **mandatory server-side**, not merely conventional.
+
+## AMENDMENT 9 — where a list is ranked, the server ranks it
+
+`/shortfall` arrives ranked (deficit desc, then nearest `estimate_delivery` asc)
+and the client must not re-sort it or offer sortable headers. The ranking *is* the
+production priority (ST-R11); a user-chosen sort silently replaces a deficit-and-
+deadline ordering with something that looks equally authoritative and is not.
