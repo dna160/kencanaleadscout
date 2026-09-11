@@ -1852,13 +1852,22 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
       });
 
       it("a plain kick still needs no actor — the incremental path is unchanged", async () => {
-        await inRollback(async () => {
+        // Contrast, not a kick: the guard is held so neither call can start a run
+        // (this suite must not leave a background sync in flight). What it proves
+        // is WHICH refusal each body earns — a bare kick reaches the run guard and
+        // answers 409, while the full re-sync is stopped earlier, at the actor
+        // check, with 400. The actor requirement is therefore new to `full` only.
+        await inRollback(async (tx) => {
           erp.connected = true;
           try {
-            const { status, body } = await POST<{ started: boolean; mode: string }>("/api/stock/sync", {});
-            expect(status).toBe(200);
-            expect(body.started).toBe(true);
-            expect(body.mode).toBe("incremental");
+            await tx`update erp_sync_state set running = true where table_name = 'so_line'`;
+            const plain = await POST<{ started: boolean; mode: string }>("/api/stock/sync", {});
+            expect(plain.status).toBe(409);
+            expect(plain.body.mode).toBe("incremental");
+
+            const full = await POST<{ error: string }>("/api/stock/sync", { full: true });
+            expect(full.status).toBe(400);
+            expect(full.body).toEqual({ error: "Nama petugas wajib diisi." });
           } finally {
             erp.connected = false;
           }

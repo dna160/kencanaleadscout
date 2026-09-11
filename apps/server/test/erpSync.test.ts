@@ -2358,6 +2358,17 @@ describe.skipIf(db === null)("syncWorker — against a real mirror schema", () =
       const fullPullLines = lines.filter((l) => /^[a-z_]+: pulling with updated_at__gte=\(none — full pull\)/.test(l));
       expect(fullPullLines.length).toBe(SYNC_TABLE_COUNT);
       expect(all).toContain("FULL re-sync ok");
+
+      // The heartbeat. A full re-pull is minutes of otherwise unbroken silence
+      // between "pulling" and "ok"; without a line whose numbers visibly move,
+      // a healthy long run and a wedged one read identically in the log.
+      const beats = lines.filter((l) => l.includes("full re-pull progress"));
+      expect(beats.length).toBeGreaterThanOrEqual(1);
+      expect(beats.some((l) => /\d+ page\(s\), \d+ row\(s\) committed in \d+s/.test(l))).toBe(true);
+      // An INCREMENTAL run never emits one — this is not new noise on every tick.
+      const quiet: string[] = [];
+      await run(sql, { info: (m) => quiet.push(m), warn: (m) => quiet.push(m), error: (m) => quiet.push(m) });
+      expect(quiet.some((l) => l.includes("full re-pull progress"))).toBe(false);
     });
   });
 });

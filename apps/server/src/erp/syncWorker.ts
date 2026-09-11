@@ -63,6 +63,20 @@ const MAX_PAGES_PER_TABLE = 1_000;
 /** A `running` row idle for this many intervals is a crashed run, not a live one. */
 const STALE_LOCK_INTERVALS = 3;
 
+/**
+ * HEARTBEAT CADENCE for a full re-pull, in pages.
+ *
+ * An ordinary pass logs one line per table and finishes in seconds, so silence
+ * between them means nothing. A full re-pull of ~137k SO lines is 100+ pages and
+ * minutes long, and with no line in between the only honest reading of the log is
+ * "it has not finished" — which looks identical whether it is working or wedged.
+ * So a full pass says where it is every N pages. Frequent enough to time a page,
+ * sparse enough not to be a flood (~14 lines for 137 pages at the default size).
+ *
+ * Incremental passes are unaffected: nothing below fires unless `full` is set.
+ */
+const FULL_PULL_PROGRESS_PAGES = 10;
+
 // ── Logging ──────────────────────────────────────────────────────────────────
 
 export interface SyncLogger {
@@ -746,7 +760,9 @@ async function syncTable(
   table: SelarasTable,
   pageSize: number,
   log: SyncLogger,
+  full = false,
 ): Promise<SyncTableResult> {
+  const startedAt = Date.now();
   const cursorBefore = await readCursor(db, table);
   const result: SyncTableResult = {
     table,
@@ -850,6 +866,20 @@ async function syncTable(
     }
     if (pageMax && (result.cursorAfter === null || pageMax.getTime() > result.cursorAfter.getTime())) {
       result.cursorAfter = pageMax;
+    }
+
+    // The heartbeat. Every number on it moves on a healthy run, so an operator
+    // watching a long re-pull can tell progress from a stall without guessing —
+    // and if it stops advancing, the last line names the page that stopped it.
+    // Page 1 of every table gets one too: "the first page landed" is the signal
+    // that separates a slow pull from one that never got a byte out of the ERP,
+    // and it is the only heartbeat a small table will ever emit.
+    if (full && (result.pages === 1 || result.pages % FULL_PULL_PROGRESS_PAGES === 0)) {
+      const elapsed = Math.round((Date.now() - startedAt) / 1000);
+      log.info(
+        `${table}: full re-pull progress — ${result.pages} page(s), ${result.rows} row(s) committed in ` +
+          `${elapsed}s, cursor now ${result.cursorAfter?.toISOString() ?? "null"}`,
+      );
     }
 
     if (totalPages !== null && page >= totalPages) break;
@@ -1669,7 +1699,7 @@ async function executeRun(deps: ErpSyncDeps): Promise<SyncRunResult> {
     // freshest half of the ATP subtraction (§5).
     for (const table of SYNC_TABLES) {
       try {
-        tables.push(await syncTable(db, client, table, pageSize, log));
+        tables.push(await syncTable(db, client, table, pageSize, log, full));
       } catch (err) {
         // Anything the table pass itself threw (a DB blip mid-transaction).
         // The transaction rolled back, so the cursor did not move.
@@ -1710,8 +1740,9 @@ async function executeRun(deps: ErpSyncDeps): Promise<SyncRunResult> {
   const rows = tables.reduce((n, t) => n + t.rows, 0);
   const failed = tables.filter((t) => !t.ok).map((t) => t.table);
   const label = full ? "FULL re-sync" : "run";
+  const perTable = full ? ` — per table ${tables.map((t) => `${t.table} ${t.rows}r/${t.pages}p`).join(", ")}` : "";
   if (failed.length === 0) {
-    log.info(`${label} ok — ${rows} rows across ${tables.length} tables in ${durationMs}ms`);
+    log.info(`${label} ok — ${rows} rows across ${tables.length} tables in ${durationMs}ms${perTable}`);
   } else {
     // A full re-sync that fails partway is a PARTIALLY re-pulled mirror, which is
     // a perfectly readable one: every page that committed committed whole, and
