@@ -495,3 +495,91 @@ SKU whose text legitimately contains `%`. WP-7 tests the round trip.
 - **`.fltchips` / `.fchip`** are defined independently in `stock.html` and
   `stock-ppic.html` (each agent was scoped to one file and could not see the
   other). They are not byte-identical. Reconcile.
+
+
+## AMENDMENT 6 — the close button has two populations with opposite consequences
+
+**Raised by UI/UX.** This is a safety problem AMENDMENT 1 created, and it cannot
+be fixed in the UI alone.
+
+Undated approved lines are now **live** — they reserve stock — yet they surface in
+the same PPIC review queue as stale lines. So one `Tutup` button spans two
+populations whose consequences are opposite:
+
+| closing a… | effect on ATP |
+|---|---|
+| **stale** line | **zero** — it was already excluded from the sum |
+| **undated** line | **+ its entire balance** — it was reserving |
+
+An operator who learns "closing does nothing to the numbers" from the first
+population would silently release reserved stock in the second. That is a route
+to over-promising physical stock, which is the failure this whole module exists
+to prevent.
+
+Three required consequences:
+
+**6a. `atp_delta` on close and reinstate responses.**
+```jsonc
+{ "ok": true, "so_line_id": "…", "sku_key": "…",
+  "atp_delta": 1200, "atp_before": 3849, "atp_after": 5049 }
+```
+Computed server-side, never inferred by the client. The UI states the consequence
+in the confirm and the toast, and it must be true. For a stale line it is
+legitimately `0` — that is the point.
+
+**6b. `POST /api/stock/stale-commitments/close-batch`.**
+Request takes an **explicit** `so_line_ids` list (capped at 200), a **required**
+`reason`, an `actor`, and an `expected_count` guard — mismatch ⇒ 409, nothing
+written. One transaction, all-or-nothing. Returns `closed`, `skipped`, and
+`atp_delta_by_sku`.
+
+A filter-shaped "close everything matching X" is **forbidden**: the explicit id
+list plus `expected_count` is what stops a mistyped filter closing thousands of
+live commitments. Without a batch endpoint, the UI fires 50 sequential
+un-transacted POSTs, and ST-R22's genuinely safe bulk case — `status_order='DO'`
+with a balance, the known-dead phantoms — becomes ~84 pages of clicking that
+nobody finishes.
+
+**6c. `?segment=` on `/stale-commitments`**: `stale` (default), `undated`,
+`closed`. `segment=closed` is **not optional** — a closed row leaves
+`v_stale_commitments`, so without it the undo path dies on page reload and a
+confirm-close becomes unrecoverable from the UI. `undated` rows carry
+`qty_balance` and `sku_key` so the UI can preview the consequence.
+
+The UI splits the queue into two labelled segments with different copy, a
+different primary-button colour, a mandatory reason on the undated side, a
+per-row "effect if closed" preview, and **no bulk close on the undated side at
+all**.
+
+## AMENDMENT 7 — accessibility corrections to the inherited palette
+
+The inherited design system has two contrast failures and no focus style. Fixed
+additively; no inherited rule is changed:
+
+- `--muted` on `--bg` computes **4.39:1 — fails AA**. Binding rule: no `--muted`
+  text on the page ground, only inside a white `.card`. `--ink-2` (7.58:1)
+  carries secondary numerals.
+- The inherited `.chip.age` is grey-on-grey at 4.39:1. A new `.chip.umur` uses a
+  darkened `--neutral-ink` (6.87:1); `.chip.age` is left untouched.
+- `--focus` added — the inherited CSS has no focus style at all.
+- `--tap: 44px` added; `.btn` is 40px and `.mini` is 34px.
+
+All 30 contrast pairs are computed in UX-SPEC §9.2, not asserted.
+
+## Accepted limits — not defects, but know them
+
+- **`/summary` returns every SKU unfiltered.** Fine at ~812 SKUs; it degrades
+  silently the moment OQ-2 (per-warehouse split) or the RM phase multiplies the
+  row count. Revisit with pagination at that point, not before — premature
+  pagination here would complicate every caller for no present gain.
+- **No brand field.** ST-R8 asks for filtering by brand, but the item shape has
+  none and `kode_barang` conflates brand, line and panel thickness. The filter is
+  labelled "Kode barang" rather than guessing a prefix rule. Same family as the
+  missing `coating`: both need a column on the aggregate, and both are product
+  questions. **Carried to review.**
+- **Customer names are PPIC-only.** Nothing in the PRD says whether sales may see
+  which customer holds a commitment. Withholding is the reversible default; that
+  is a commercial call, not a UI one. **Carried to review.**
+- **`nearest_eta` population is undefined** — if it ever comes to mean incoming
+  supply rather than nearest commitment, the label must change, because the two
+  mean opposite things to a rep.

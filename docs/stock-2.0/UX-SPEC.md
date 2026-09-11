@@ -59,6 +59,28 @@ pages look like one product.
 | `--danger` | `#c03c2b` | Destructive action ink, **negative ATP**, error toast ground. |
 | `--sans` | system stack | Only typeface. No webfont, ever (no build step, field 3G). |
 
+#### 1.1b Inherited literals that have no token
+
+The 1.0 CSS hard-codes a handful of colours inside rules rather than in `:root`.
+They carry forward inside those rules verbatim. **Do not write any of these
+values in new CSS** — if you need one, you need a token, which means §1.2, which
+means raising it. They are listed only so every hex in this document traces to a
+table.
+
+| Literal | Inherited rule | Role |
+|---|---|---|
+| `#fafbfc` | `th`, `.card h2` | table-header / card-header ground |
+| `#c7cfde` | `header .sub` | header subtitle ink on `--ink` |
+| `#ffd27a` | `header a.pplink` | cross-link ink on `--ink` |
+| `#166534` | `.toast.ok` | success toast ground |
+| `#b45309` | `.toast.warn` | warning toast ground (same hue as `--warn-ink`) |
+| `#f7fafc` | `tr.itemrow:hover` | row hover |
+| `#f3c9c2` | `.btn.danger` | danger button border |
+| `rgba(15,23,42,.5)` | `.modal-bg` | scrim |
+| `#fef2f2` / `#fbcaca` / `#991b1b` | `.warnbox` | inline error box (PPIC) |
+| `#fffbeb` / `#fde68a` / `#92400e` | `.warnbox.amber` | inline caution box (PPIC) |
+| `#374151` | `.countchip` | totals-chip ink |
+
 Inherited classes that carry forward **with their existing declarations**:
 
 | Class / id | Keep for |
@@ -73,7 +95,7 @@ Inherited classes that carry forward **with their existing declarations**:
 | `.empty`, `.empty a` | Every empty state. |
 | `.banner`, `.banner button` | The stale banner (§4.2) — the only banner in 2.0. |
 | `.warnbox`, `.warnbox.amber` (PPIC) | Inline error / caution boxes. |
-| `.fltchips`, `.fchip`, `.fchip.on` (PPIC) | Filter chip rows on both pages. |
+| `.fltchips`, `.fchip` (PPIC) | Filter chip rows on both pages — **but the two pages had diverged** (`/stock` uses tokens + `aria-pressed`, `/stock-ppic` still has raw hex + `.fchip.on`). §1.3 gives the canonical block; both pages adopt it verbatim and `.fchip.on` is retired. |
 | `.countchip`, `.counts` (PPIC) | Totals strip. |
 | `.spin`, `@keyframes sp` | In-flight buttons. |
 | `.avail`, `.avail.neg`, `.m2`, `.sisa`, `.foot`, `.metaline`, `.rev` | Numbers, footnotes, struck-through rows. |
@@ -143,6 +165,18 @@ inventing a state that this spec did not design — raise it.
         color:var(--offline-ink);border-radius:12px;padding:12px 14px;
         font-size:13px;line-height:1.45;display:flex;gap:10px;
         align-items:flex-start;margin-bottom:12px}
+
+/* ── filter chip row + totals strip — CANONICAL, byte-identical on both pages
+      (CONTRACTS "Open": the two pages had diverged; this is the reconciliation) ─ */
+.fltchips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.fchip{border:1px solid var(--line);background:var(--card);color:var(--ink-2);
+       border-radius:999px;padding:0 12px;min-height:var(--tap);font:inherit;
+       font-size:12px;font-weight:700;cursor:pointer;display:inline-flex;
+       align-items:center;gap:6px}
+.fchip[aria-pressed="true"],
+.fchip[aria-selected="true"]{background:var(--ink);color:var(--card);border-color:var(--ink)}
+.fchip:disabled{opacity:.55;cursor:default}
+.fchip .n{font-variant-numeric:tabular-nums;font-weight:800}
 
 /* ── tabs (PPIC) ──────────────────────────────────────────────────────────── */
 .tabs{display:flex;gap:6px;overflow-x:auto;scroll-snap-type:x proximity;
@@ -364,8 +398,8 @@ cases, with different text.
 
 ### 4.1 The freshness line — always visible
 
-Lives in the inherited `header .sub` (`#dataPer`), 12px on `--ink`
-(`#c7cfde` on `#17233b` = 10.01:1). It is the only thing in the header that
+Lives in the inherited `header .sub` (`#dataPer`), 12px — the inherited
+header-sub ink on `--ink`, 10.01:1 (§1.1b). It is the only thing in the header that
 changes, so it is also the element that tells a rep the page is alive.
 
 | Condition | Copy |
@@ -569,6 +603,14 @@ Penyesuaian (0)                                 ← hidden when empty
 [ Tutup ]
 ```
 
+Field mapping, **frozen by CONTRACTS AMENDMENT 3** — use these names, do not
+alias: the numbers block reads `item`; `Pesanan Aktif` reads `live_commitments`;
+`Pesanan Lama` reads `stale_commitments`; `Penyesuaian` reads `adjustments`; the
+optional per-serial breakdown reads `on_hand_rows`. Every array is always
+present and `[]` when empty, so render an empty section as its §7.2 empty line,
+never as a missing section. Fetch with `encodeURIComponent(sku_key)`
+(AMENDMENT 5).
+
 **Undated live lines (AMENDMENT 1).** A commitment with `undated: true` sits
 inside **Pesanan Aktif** — it reserves stock, so it belongs with the lines that
 reserve stock — with `<span class="chip st-habis">Tanpa ETA</span>` in its ETA
@@ -715,7 +757,7 @@ Desktop row (one `<tr>`, 44px minimum height):
 
 | Column | Field | Notes |
 |---|---|---|
-| ☐ | — | bulk checkbox, ≥560px only (§6.6/§8) |
+| ☐ | — | bulk checkbox, ≥560px only, ETA Lewat segment only (§6.8, §8.2) |
 | SKU | `warna` bold + `.sub2` `{kode_barang} · {th} · {p}×{l}` | links to the detail sheet |
 | Customer | `customer_name_text` | truncate to 2 lines with `overflow-wrap:anywhere`; never `text-overflow:ellipsis` on a single line — Indonesian company names are long and the tail (PT / CV / cabang) is the identifying part |
 | No. SO | `so_number` | monospace-ish via `tabular-nums`; `—` when null |
@@ -1342,7 +1384,7 @@ sRGB relative luminance, WCAG 2.1 formula. AA normal text = 4.5:1; AA large
 | `--ink` | `--bg` | **14.22** | AAA |
 | `--muted` | `--card` | **4.83** | AA — passes, with no margin |
 | `--muted` | `--bg` | **4.39** | ✗ **FAILS AA** |
-| `--muted` | `#fafbfc` (inherited `th`/`.card h2` ground) | **4.67** | AA |
+| `--muted` | inherited header ground (§1.1b) | **4.67** | AA |
 | `--ink-2` (added) | `--card` | **7.58** | AAA |
 | `--ink-2` | `--bg` | **6.88** | AAA |
 | `--accent` | `--card` | **5.38** | AA |
@@ -1354,15 +1396,15 @@ sRGB relative luminance, WCAG 2.1 formula. AA normal text = 4.5:1; AA large
 | `--warn-ink` | `--warn-bg` (`habis` chip) | **4.51** | AA — the tightest pass in the system |
 | `--neg-ink` | `--neg-bg` (`perlu_produksi` chip) | **5.30** | AA |
 | `--neutral-ink` | `--neutral-bg` (`kosong` chip) | **6.87** | AAA |
-| `#6b7280` on `#f3f4f6` — inherited `.chip.age` | | **4.39** | ✗ **FAILS AA** — reason `--neutral-ink` exists |
+| inherited `.chip.age` ink on its ground (§1.1b family) | | **4.39** | ✗ **FAILS AA** — the reason `--neutral-ink` exists |
 | `--warn-ink-strong` | `--warn-bg` (stale banner) | **6.39** | AAA |
 | `--offline-ink` | `--offline-bg` | **9.15** | AAA |
 | `--age-old-ink` | `--age-old-bg` | **6.38** | AAA |
 | `--age-ancient-ink` | `--age-ancient-bg` | **5.30** | AA |
-| `#c7cfde` (header sub) | `--ink` | **10.01** | AAA |
-| `#ffd27a` (`.pplink`) | `--ink` | **11.01** | AAA |
-| `--card` on `#166534` (`.toast.ok`) | | **7.13** | AAA |
-| `--card` on `#b45309` (`.toast.warn`) | | **5.02** | AA |
+| inherited header-sub ink (§1.1b) | `--ink` | **10.01** | AAA |
+| inherited `.pplink` ink (§1.1b) | `--ink` | **11.01** | AAA |
+| `--card` on the inherited `.toast.ok` ground (§1.1b) | | **7.13** | AAA |
+| `--card` on the inherited `.toast.warn` ground (§1.1b) | | **5.02** | AA |
 | `--card` on `--danger` (`.toast.err`) | | **5.35** | AA |
 | `--card` on `--ink` (`.toast`) | | **15.67** | AAA |
 | `--focus` | `--card` | **6.70** | far above the 3:1 non-text minimum |
@@ -1514,3 +1556,219 @@ screen reader, to a keyboard user, and to anyone who opens devtools.
   calls them. If someone later wants the frozen booking history on screen, that
   is a new, separately specified surface — not a revived card.
 
+---
+
+## 11. Register of Blueprint gaps — what this spec assumed, and why
+
+`CONTRACTS §4.1` freezes **only** the `/summary` response. Every other endpoint
+in §4.2 is named by purpose, not by shape. Two developers building blind against
+"ST-R18 review queue. Filter/paginate." will invent two different field sets.
+Since this spec was drafted the Architect has frozen three of those gaps —
+**AMENDMENT 3** (the `/sku/:sku_key` body), **AMENDMENT 4** (`page`, `limit`, `q`
+and a total on *all four* list endpoints, `limit` capped server-side) and
+**AMENDMENT 5** (`sku_key` travels as `encodeURIComponent(sku_key)` in a path
+segment). Those three are contract; everything else below is still proposal.
+
+**AMENDMENT 5 is a client obligation and easy to miss:** a `sku_key` contains
+`|` and `.`, so *every* place either page puts one in a URL must encode it —
+the detail-sheet fetch, the `#lama:stale?sku=…` deep link from §2.2, and the
+`?sku_key=` filter on the adjustment audit list.
+
+The shapes below are what this spec's screens are drawn against. **They are
+proposals, not contract.** The Architect ratifies or corrects them; wherever they
+are corrected, only the render function changes — no layout in this document
+depends on a field name.
+
+### 11.1 Assumed response shapes — PROPOSED, awaiting ratification
+
+```jsonc
+// GET /api/stock/shortfall            → ranked server-side, no paging (small)
+{ "items": [{ "sku_key":"…", "name":"…", "kode_barang":"…", "warna":"…",
+              "th":0.3, "p":4880, "l":1220, "unit":"lembar",
+              "on_hand":100, "committed":1330, "adjustment":0,
+              "atp":-1230, "deficit":1230,
+              "nearest_eta":"2026-09-20", "so_line_count":7 }],
+  "total": 12 }
+
+// GET /api/stock/stale-commitments
+//   ?segment=stale|undated|closed &q= &status= &only_do= &min_age_days=
+//   &sku_key= &page=1 &limit=50
+{ "rows": [{ "so_line_id":"…", "sku_key":"…", "name":"…",
+             "kode_barang":"…","warna":"…","th":0.3,"p":4880,"l":1220,
+             "unit":"lembar", "qty_balance":1200,
+             "so_number":"SO-2020-0912", "customer_name_text":"PT …",
+             "sales_name_text":"…", "estimate_delivery":"2020-08-27",
+             "po_date":"2020-07-01", "status_order":"DO",
+             "undated": false,                    // AMENDMENT 1
+             "override_state": null,              // null | "closed" | "reinstated"
+             "closed_at": null, "closed_by": null, "closed_reason": null }],
+  "page":1, "limit":50, "total":4158, "total_unfiltered":4158,
+  "facets": { "status_order": ["DO","Waiting","Proses"] },   // optional
+  "counts": { "stale":4158, "undated":27 } }
+
+// GET /api/stock/exceptions
+{ "rows": [{ "so_line_id":"…", "sku_key":"…", "kode_barang":"…","warna":"…",
+             "th":null,"p":4880,"l":1220, "qty_balance":120, "unit":"lembar",
+             "so_number":"…", "customer_name_text":"…",
+             "estimate_delivery":"2026-10-01",
+             "reason":"no_fg_row" }],            // no_fg_row | uom_mismatch | incomplete_key
+  "total":31, "total_qty":4120 }
+
+// GET /api/stock/sku/:sku_key   ← FROZEN by CONTRACTS AMENDMENT 3. Use these
+//    names exactly: `item`, `live_commitments`, `stale_commitments`,
+//    `adjustments`, `on_hand_rows`. Every array always present, [] when empty.
+//    Undated live lines arrive inside `live_commitments` with undated:true —
+//    which is what §5.3 renders. Do NOT write alias-tolerant readers.
+
+// GET /api/stock/adjustments?page=&limit=&q=      ← paging FROZEN by AMENDMENT 4
+{ "rows":[{ "id":"…","sku_key":"…","name":"…","qty_delta":-12,
+            "reason":"…","actor":"…","created_at":"…" }],
+  "page":1,"limit":50,"total":… }
+
+// GET /api/stock/sync-status
+{ "erp_connected":true, "stale":false, "last_ok_at":"…", "interval_ms":180000,
+  "tables":[{ "table_name":"live_fg","cursor_value":"…","last_ok_at":"…",
+              "last_error":null,"last_error_at":null,"rows_synced":1464,
+              "running":false }] }
+
+// POST /api/stock/sync
+{ "started": true,  "running": false }     // or { "started": false, "running": true }
+
+// POST …/close  ·  POST …/reinstate
+{ "ok": true, "so_line_id":"…", "state":"closed",
+  "atp_delta": 1200,        // 0 for a stale line; qty_balance for an undated one
+  "sku_key":"…", "atp": 5049 }
+```
+
+`atp_delta` on the close/reinstate response is what lets §6.6.2's success toast
+and the undo tray state the consequence truthfully. If the Architect will not
+return it, the client must compute it as `undated ? qty_balance : 0`, which is
+correct today but becomes a lie the moment the liveness rule changes — so it is
+worth the field.
+
+### 11.2 Named gaps
+
+| # | Gap | This spec's assumption | Cost if the Architect rules otherwise |
+|---|---|---|---|
+| **A1** | **The §4.1 `item` has no brand / `product_line` field, but ST-R8 requires "search/filter by brand".** `kode_barang` (`ACP-4MM`) conflates brand, product line and panel thickness. | The filter is labelled **Kode barang**, not Brand, and lists distinct `kode_barang` values. No client-side splitting of the code — a guessed prefix rule that is wrong for one product line is worse than no brand filter. | Adding `product_line` to the item is one column in the ATP aggregate; the filter then relabels to `Brand` and gains a second select. One render function. |
+| **A2** | No `coating` field; 1.0 had a coating filter. **Now carried in CONTRACTS as an open product question.** | The coating select is **deleted**. | If PPIC wants it back it needs a field on `erp_live_fg` and on the item — a product answer, not a workaround. |
+| **A3** | `/stale-commitments` has no documented way to list rows already confirm-closed. Without it, the only undo path is the in-session tray, which dies on reload. | `?segment=closed` (§11.1). | Without it, delete the `Yang sudah ditutup` chip (§6.7) and say plainly in the tray footer that a reload makes a close unrecoverable from the UI. That is a materially worse product; I would not ship it. |
+| **A4** | `reason` on `close` is in the body but not marked required (it *is* marked required for adjustments). | Optional on the ETA Lewat segment (auto-composed), **mandatory** on Tanpa ETA and on bulk (§6.6, §6.8). | If made mandatory everywhere, the ETA Lewat one-tap becomes the §6.6.2 inline expander. ~15 lines, no layout change — but triage throughput drops by roughly an order of magnitude on a 4,158-row queue. |
+| **A5** | No bulk close endpoint. | 50 sequential `POST`s, concurrency 4, cancellable, partial-failure report (§6.8). | See CHALLENGE-1. |
+| **A6** | Nothing says whether a sales rep may see *which customer* holds a commitment. | `/stock` shows ETA + qty + `sales_name_text`; `customer_name_text` is PPIC-only. | If sales may see it, add one column — but this is a commercial-confidentiality call, not a UI call, and it should be made deliberately rather than by whichever developer writes the row first. |
+| **A7** | `/exceptions` is read-only; there is no endpoint to resolve, map or dismiss an exception. | The tab is a report with `Salin Kode SKU` (§6.10). | A resolve flow is a new screen, not a button. |
+| **A8** | `summary.totals` has no `shortfall` count and no `undated` count, so two tab badges cannot be filled from the poll. | Kekurangan badge renders `—` until its own fetch lands; Tinjau Pesanan badge adds `counts.undated` from §11.1. | Two integers in `totals` would remove a visible inconsistency (four badges populated instantly, one lagging). |
+| **A9** | `nearest_eta` is undefined as to *which* population it comes from — nearest live commitment, or nearest incoming supply (PRD §9 explicitly defers incoming). | Nearest **live commitment** ETA. Labelled `ETA Terdekat` and, on a `habis` row, phrased `ETA terdekat 20 Sep` with no promise attached. | If it ever becomes an incoming-supply date, the copy must change to `Perkiraan masuk` — the two mean opposite things to a rep and must never share a label. |
+| **A10** | ~~Paging/filter param names unspecified.~~ **RESOLVED by AMENDMENT 4** — `page`, `limit`, `q` on all four lists, server-capped `limit`. | Use them. The §6.4 pager is unchanged; it already assumed exactly this. | — |
+| **A11** | Sorting on `/shortfall` is fixed server-side; no contract for client sorting on any list. | No sortable column headers anywhere on PPIC. | If sorting is wanted, it must be server-side and paged; client sorting of one page of 50 out of 4,158 is a trap that looks like it works. |
+
+### 11.3 `[CHALLENGE: Architect]` — CHALLENGE-1: no bulk close endpoint
+
+**The decision:** `CONTRACTS §4.2` exposes confirm-close only as
+`POST /api/stock/stale-commitments/:so_line_id/close` — one line per request.
+
+**The user experience it forces.** PPIC's opening position is ~4,158 stale lines,
+of which the PRD says ~95% are phantoms back to 2020 (PRD §5A). Clearing them one
+HTTP request at a time means: at 50 per page and ~250ms per request, a page takes
+~3s of sequential traffic and a full pass takes 84 pages. The failure mode is not
+slowness, it is **partial state** — a bulk of 50 that fails at row 31 leaves 30
+closed, 1 in-flight and 19 untouched, and every one of those outcomes has to be
+reported, recovered and undone individually. §6.8 designs that honestly (progress
+counter, cancel, `20 berhasil, 3 gagal`, retry-failed), but a partial-failure
+report is a symptom of a missing transaction, not a feature.
+
+It also makes the safest bulk action unavailable. The highest-confidence set —
+`status_order = 'DO'` with `qty_balance > 0`, i.e. the ERP's own
+"delivered but never closed" rows (ST-R22) — is a single well-defined predicate.
+It is exactly the thing PPIC should be able to clear in one audited action with
+one reason, and exactly the thing 84 pages of clicking will guarantee never gets
+finished.
+
+**What I am asking for** (either is enough):
+
+- `POST /api/stock/stale-commitments/close-batch` `{ so_line_ids[], actor, reason }`
+  → `{ closed: [], failed: [{ so_line_id, error }] }`, applied in one
+  transaction, capped at 200 ids. §6.8's UI is unchanged; it simply stops being a
+  partial-failure narrator. **Or**
+- `POST /api/stock/stale-commitments/close-filtered` `{ filter, actor, reason, expected_count }`
+  → closes everything matching the current server-side filter, refusing if the
+  live count no longer equals `expected_count`. This is the one that actually
+  solves the 4,158-row problem, and `expected_count` is what makes it safe.
+
+**Until then**, §6.8 stands as specified and I have deliberately capped selection
+at one page (50). I would rather the queue take a week than ship a control that
+can half-close 1,200 commitments with no transaction behind it.
+
+### 11.4 `[CHALLENGE: Architect]` — CHALLENGE-2: `/summary` returns every SKU, unfiltered
+
+`GET /api/stock/summary` takes no query parameters and returns every SKU with its
+`items[]` array (§4.1). At the stated 812 SKUs, polled every 30s per rep, that is
+fine. It stops being fine quietly: FG-only today (PRD §10 defers RM), aggregated
+across warehouses today (OQ-2), and a `lokasi` dimension or an RM phase multiplies
+the row count. A rep on a plant-floor 3G connection re-downloading a growing
+payload every 30 seconds degrades without any visible symptom except the page
+feeling slow.
+
+Not a blocker, and I am not asking for it in v1 — but the moment either OQ-2 or
+the RM phase lands, `/summary` needs `?q=&state=&limit=` and `/stock` needs its
+toolbar moved server-side. Worth writing into the assumption log now, while the
+decision is cheap, rather than discovering it as "the stock page got slow".
+
+---
+
+## 12. Build checklist
+
+Tick these before calling either page done. They are the things this spec exists
+to prevent, in the order they are usually got wrong.
+
+**Both pages**
+- [ ] Inherited `:root` copied byte-identical; the added block is a *second*
+      `:root`; no inherited declaration edited or deleted.
+- [ ] `grep -oE '#[0-9a-fA-F]{3,6}' page.html` returns hits **only** inside the
+      two `:root` blocks and the inherited rules copied verbatim from 1.0.
+- [ ] No external `<script src>` and no webfont.
+- [ ] Every user-visible string appears in this document.
+- [ ] `item.state` is rendered, never recomputed from the numbers.
+- [ ] No `Math.max(0, …)`, no `Math.abs()` on an ATP headline, no `|| 0` that
+      could swallow a negative.
+- [ ] Negative numbers use `−` (U+2212).
+- [ ] The four banner/box conditions render with the §4 precedence and never two
+      at once.
+- [ ] A poll never re-renders through an open modal, a focused input, or a list
+      the user is touching.
+- [ ] `#srlive` exists, is polite, and is silent on a no-change poll.
+- [ ] Every `sku_key` in a URL is `encodeURIComponent`'d (AMENDMENT 5) — detail
+      fetch, deep links, audit filter.
+- [ ] `.fltchips` / `.fchip` are byte-identical on both pages and match §1.3;
+      `.fchip.on` no longer exists anywhere.
+- [ ] `/sku/:sku_key` is read with the AMENDMENT 3 names; no alias-tolerant
+      reader remains.
+- [ ] `:focus-visible` is visible on every interactive element, including on the
+      dark header.
+- [ ] Every row action is ≥44px tall.
+- [ ] No `--muted` text sits on `--bg`.
+- [ ] 380px: no horizontal body scroll; 200% zoom clips nothing.
+- [ ] Renders correctly against: empty ERP, stale ERP, disconnected ERP,
+      populated ERP, DB-503, network failure mid-session.
+
+**`/stock`**
+- [ ] Every grep token in §10.1 returns zero hits.
+- [ ] `localStorage.removeItem("stk_rep")` runs on boot.
+- [ ] The page issues **no** `POST` of any kind.
+- [ ] "Sembunyikan yang kosong" cannot hide a `perlu_produksi` row.
+- [ ] At 380px the list is stacked cards, not a scrolled table.
+
+**`/stock-ppic`**
+- [ ] Every grep token in §10.2 returns zero hits — especially `XLSX`,
+      `type="file"` and `Penuhi`.
+- [ ] The Tinjau Pesanan tab has two segments and the Tanpa ETA segment's close
+      is an inline confirm with a mandatory reason (§6.6.2).
+- [ ] No affordance anywhere selects more than one page of rows.
+- [ ] Bulk close reports partial failure per row and never silently drops one.
+- [ ] The undo tray survives tab switches and tells the truth about reload.
+- [ ] Belum Cocok contains none of: `error`, `gagal`, `tidak valid`, `rusak`,
+      `masalah`.
+- [ ] Every write is blocked without `#actor`, and disabled when
+      `erp_connected === false`.
+- [ ] Adjustments: `reason` < 4 chars and `qty_delta === 0` are both blocked
+      client-side *and* handled when the server rejects them.
