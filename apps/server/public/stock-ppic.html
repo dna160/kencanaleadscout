@@ -69,6 +69,9 @@
   .modal h3{margin:0 0 4px;font-size:17px}.modal .mp{color:var(--muted);font-size:12px;margin:0 0 14px}
   .modal .actions{display:flex;gap:10px;margin-top:16px}.modal .actions .btn{flex:1;min-height:46px}
   .rev{text-decoration:line-through;opacity:.6}
+  /* FIX 5c — a row the server refused to close because it had left the declared
+     segment. It is still open and still reserving; it must not read as done. */
+  tr.skipped>td{background:var(--warn-bg)}
   .sisa{text-align:right;font-weight:700;white-space:nowrap}
   .foot{font-size:12px;color:var(--muted);padding:10px 14px;line-height:1.5}
   .scrollx{overflow-x:auto}
@@ -230,6 +233,11 @@
 
   <!-- ══ Tab 2 · Tinjau Pesanan (ST-R18 + AMENDMENT 1/6) — the centrepiece ═══ -->
   <section class="panel" id="panel-lama" role="tabpanel" aria-labelledby="tab-lama" hidden>
+    <!-- FIX 5b — the bulk-close outcome report. Persistent (never a toast):
+         a non-zero atp_delta_by_sku after a bulk close means promiseable stock
+         just moved, and that must not scroll away in 3.5 s. Nothing else
+         writes to this node. -->
+    <div id="lmAlarm"></div>
     <div id="trayBox"></div>
     <div class="card">
       <h2>Tinjau Pesanan <span class="chip umur" id="lmCount">—</span></h2>
@@ -1028,7 +1036,13 @@ function rowLama(r,bulk,und){
     : und
       ? `<button class="btn danger mini tap" data-write data-expand="${esc(r.so_line_id)}">Tutup</button>`
       : `<button class="btn ghost mini tap" data-write data-close="${esc(r.so_line_id)}">Tutup</button>`;
-  return `<tr class="${r._closed?"rev":""}" data-row="${esc(r.so_line_id)}">
+  // FIX 5c — a row the server refused to close (it had left the segment the
+  // selection was assembled from) stays open and keeps reserving. It gets its
+  // own row tint and an explicit "Tidak ditutup" chip, because the one thing it
+  // must never look like is a row that went through.
+  const skipChip=(!r._closed&&r._skipped)
+    ? `<span class="chip st-perlu-produksi">Tidak ditutup</span> ` : "";
+  return `<tr class="${r._closed?"rev":""}${!r._closed&&r._skipped?" skipped":""}" data-row="${esc(r.so_line_id)}">
     ${bulk?`<td class="cbcell">${r._closed?"":`<input type="checkbox" data-sel="${esc(r.so_line_id)}" ${LM.sel.has(r.so_line_id)?"checked":""} aria-label="Pilih baris SO ${esc(r.so_number||r.so_line_id)}" />`}</td>`:""}
     <td><a href="#" data-detail="${esc(r.sku_key)}" style="color:inherit;text-decoration:none">${skuCell(r)}</a></td>
     <td><div class="cust">${esc(r.customer||"—")}</div></td>
@@ -1038,7 +1052,7 @@ function rowLama(r,bulk,und){
     <td class="sisa nums">${esc(num(r.qty_balance))}</td>
     <td>${statusChip}</td>
     ${und?`<td class="gain">${r._closed?"—":`Bisa Dijual ${esc(signed(r.qty_balance))}`}</td>`:""}
-    <td style="white-space:nowrap">${aksi}</td>
+    <td style="white-space:nowrap">${skipChip}${aksi}</td>
   </tr>`;
 }
 function bindLamaRows(){
@@ -1260,9 +1274,30 @@ function askUndoAll(){
 function askBulk(rows){
   if(!requireActor()) return;
   const qty=rows.reduce((s,r)=>s+r.qty_balance,0);
+  // The segment the selection was assembled from, captured at confirm time and
+  // sent with the write (FIX 5c). bulkAllowed() only permits `stale`, but it is
+  // read rather than hard-coded so a future segment cannot silently inherit
+  // copy and guarantees written for this one.
+  const seg=LM.seg;
+  // FIX 5a — this modal used to assert, unconditionally, "Angka Bisa Dijual
+  // TIDAK berubah". That is only true if every selected line is STILL stale at
+  // the instant the write lands. It is not knowable here: a sync between the
+  // selection and the click can push a line's ETA into the future, at which
+  // point the line is LIVE and reserving, and closing it releases its whole
+  // balance to be re-sold (AMENDMENT 6 — the two populations have opposite
+  // consequences). So state what is actually guaranteed — the provenance of the
+  // selection — and promise a report, not a number.
   openModal(`<h3>Tutup ${esc(num(rows.length))} baris pesanan lama?</h3>
     <p class="mp">Total ${esc(num(qty))} lembar. Baris ini akan hilang dari antrean dan tercatat atas nama
-      <b>${esc(actor())}</b>. Angka Bisa Dijual TIDAK berubah — baris lama memang sudah tidak dihitung.</p>
+      <b>${esc(actor())}</b>.</p>
+    <p class="mp">Semua baris ini dipilih dari antrean <b>ETA Lewat</b>, dan menutup baris ETA Lewat
+      biasanya <b>tidak</b> mengubah angka Bisa Dijual — baris itu memang sudah tidak dihitung.
+      <b>Tapi antrean bisa berubah:</b> kalau ETA salah satu baris sudah diperbarui di ERP sejak Anda memilih,
+      baris itu sekarang <b>ikut memotong</b> Bisa Dijual, dan menutupnya akan <b>menaikkan</b> angka —
+      artinya stok yang sudah dijanjikan ke pelanggan jadi bisa dijual lagi.</p>
+    <p class="mp">Baris seperti itu akan <b>ditolak dan tidak ditutup</b>, lalu ditandai di daftar.
+      Setiap perubahan angka Bisa Dijual dilaporkan per SKU begitu selesai — jadi jangan menganggap angkanya
+      pasti tetap sebelum laporan itu muncul.</p>
     <label class="fld" for="bulkReason">Alasan (wajib)
       <textarea id="bulkReason" minlength="4" placeholder='Contoh: "Hasil verifikasi PPIC Sep 2026 — SO sudah dikirim/batal."'></textarea>
     </label>
@@ -1275,15 +1310,44 @@ function askBulk(rows){
   const ta=$("#bulkReason"), yes=$("#bulkYes");
   ta.addEventListener("input",()=>{ yes.disabled=ta.value.trim().length<4; });
   $("#bulkNo").addEventListener("click",closeModal);
-  yes.addEventListener("click",()=>runBulk(rows,ta.value.trim()));
+  yes.addEventListener("click",()=>runBulk(rows,ta.value.trim(),seg));
 }
-async function runBulk(rows,reason){
+
+// A `skipped` entry is `{ so_line_id, reason }` (AMENDMENT 12), but be tolerant
+// of a bare id so an older server shape still reports rather than silently
+// counting the row as closed.
+function normSkip(s){
+  if(s==null) return {so_line_id:"",reason:""};
+  if(typeof s==="string"||typeof s==="number") return {so_line_id:String(s),reason:""};
+  return {so_line_id:String(pick(s,"so_line_id","id")||""),reason:String(pick(s,"reason","code")||"")};
+}
+// The refusal that matters: the line left the declared segment between the
+// selection and the write, so the server would not close it. Matched loosely on
+// purpose — the exact enum is the server's to name, and a reason this page does
+// not recognise must still read as "not closed", never as "done".
+function skipMovedOut(reason){
+  return /segment|not_stale|no_longer|moved|live|undated|now_live/i.test(String(reason||""));
+}
+function skipLabel(reason){
+  const r=String(reason||"");
+  if(skipMovedOut(r)) return "ETA-nya sudah diperbarui di ERP — baris ini sekarang memotong Bisa Dijual, jadi TIDAK ditutup.";
+  if(/already_closed|closed/i.test(r)) return "Sudah ditutup sebelumnya.";
+  if(/not_found|missing/i.test(r))     return "Baris tidak ditemukan lagi di antrean.";
+  return r ? `Tidak ditutup (${r}).` : "Tidak ditutup.";
+}
+
+async function runBulk(rows,reason,seg){
   const yes=$("#bulkYes");
   busy(yes,"Menutup…");
   const ids=rows.map(r=>r.so_line_id);
   const res=await api("/api/stock/stale-commitments/close-batch",{
     method:"POST",headers:{"content-type":"application/json"},
-    body:JSON.stringify({so_line_ids:ids,reason,actor:actor(),expected_count:ids.length}),
+    // FIX 5c — `expected_count` is derived from the very array being posted, so
+    // it only ever compares a list's length to itself: it can never detect that
+    // the queue moved underneath the operator. `segment` is what can. The server
+    // restricts the write to ids still in the caller's declared segment at write
+    // time, and refuses the rest into `skipped` without closing them.
+    body:JSON.stringify({so_line_ids:ids,reason,actor:actor(),expected_count:ids.length,segment:seg}),
   });
   if(!res.ok){
     unbusy(yes,`Tutup ${num(rows.length)} Baris`);
@@ -1297,16 +1361,91 @@ async function runBulk(rows,reason){
     return;
   }
   const j=res.json||{};
-  const skipped=Array.isArray(j.skipped)?j.skipped:[];
-  const closedIds=new Set(ids.filter(id=>!skipped.some(s=>eq(s&&s.so_line_id||s,id))));
-  const deltas=j.atp_delta_by_sku||{};
-  rows.filter(r=>closedIds.has(r.so_line_id)).forEach(r=>markClosed(r,nOrNull(deltas[r.sku_key])));
+  const skipped=(Array.isArray(j.skipped)?j.skipped:[]).map(normSkip);
+  const skippedIds=new Set(skipped.map(s=>s.so_line_id));
+  const closedRows=rows.filter(r=>!skippedIds.has(r.so_line_id));
+  const deltas=(j.atp_delta_by_sku&&typeof j.atp_delta_by_sku==="object")?j.atp_delta_by_sku:{};
+  closedRows.forEach(r=>markClosed(r,nOrNull(deltas[r.sku_key])));
+  // Mark the refused rows in place: still open, still reserving, visibly not done.
+  skipped.forEach(s=>{
+    const r=rows.find(x=>eq(x.so_line_id,s.so_line_id))||LM.rows.find(x=>eq(x.so_line_id,s.so_line_id));
+    if(!r) return;
+    r._skipped=s.reason||"skipped";
+    LM.sel.delete(r.so_line_id);
+    const tr=$(`[data-row="${CSS.escape(r.so_line_id)}"]`,$("#lmBody"));
+    if(tr){ tr.outerHTML=rowLama(r,bulkAllowed(),LM.seg==="undated"); }
+  });
+  if(skipped.length){ bindLamaRows(); renderBulkBar(); applyLocks(); }
   closeModal();
-  const nClosed=nOrNull(j.closed)!=null?n(j.closed):closedIds.size;
-  toast(skipped.length
-    ? `${num(nClosed)} baris ditutup, ${num(skipped.length)} dilewati.`
-    : `${num(nClosed)} baris ditutup.`, skipped.length?"warn":"ok");
+  const nClosed=nOrNull(j.closed)!=null?n(j.closed):closedRows.length;
+  renderBulkOutcome({nClosed,skipped,deltas,rows});
   loadSummary();
+}
+
+/* FIX 5b — the outcome report. `atp_delta_by_sku` is the server telling the
+   truth about what it did; the old code fetched it, used it only to tint the
+   undo tray, and then covered the whole thing with a success toast. A non-zero
+   delta after a bulk close means promiseable stock MOVED — stock that was owed
+   to a paying customer is now sellable again — and a 3.5-second toast is not
+   where that belongs. This box is persistent, sits at the top of the tab, names
+   the SKU and the quantity, and puts the undo path one tap away.             */
+function renderBulkOutcome({nClosed,skipped,deltas,rows}){
+  const box=$("#lmAlarm"); if(!box) return;
+  const moved=Object.keys(deltas)
+    .map(k=>({sku_key:k,delta:n(deltas[k])}))
+    .filter(x=>x.delta!==0)
+    .sort((a,b)=>Math.abs(b.delta)-Math.abs(a.delta));
+  const label=k=>{ const r=(rows||[]).find(x=>eq(x.sku_key,k))||LM.rows.find(x=>eq(x.sku_key,k)); return r?skuLabel(r):k; };
+
+  if(moved.length===0&&skipped.length===0){
+    box.innerHTML="";
+    toast(`${num(nClosed)} baris ditutup. Angka Bisa Dijual tidak berubah.`,"ok");
+    return;
+  }
+  const movedBlock=moved.length?`
+    <div class="warnbox" role="alert">
+      Angka Bisa Dijual BERUBAH setelah penutupan ini — stok yang tadinya sudah dipesan kini bisa dijual lagi.
+      <div style="font-weight:400;margin-top:8px">Periksa setiap SKU di bawah. Kalau ini tidak disengaja,
+        batalkan lewat <b>Baru Ditutup</b> di bawah (Aktifkan Lagi).</div>
+      <div class="scrollx" style="margin-top:8px"><table><caption class="sr-only">SKU yang angkanya berubah</caption>
+        <thead><tr><th>SKU</th><th style="text-align:right">Perubahan Bisa Dijual</th></tr></thead>
+        <tbody>${moved.map(m=>`<tr>
+          <td><b>${esc(label(m.sku_key))}</b><div class="sub2">${esc(m.sku_key)}</div></td>
+          <td class="sisa nums gain">${esc(signed(m.delta))} lembar</td>
+        </tr>`).join("")}</tbody></table></div>
+    </div>`:"";
+  // Only claim "the queue moved" when the server actually said so. An
+  // unrecognised reason still reads as NOT closed — never as done — but it must
+  // not borrow a specific explanation it has not earned.
+  const anyMoved=skipped.some(s=>skipMovedOut(s.reason));
+  const skipBlock=skipped.length?`
+    <div class="warnbox amber">
+      ${esc(num(skipped.length))} baris <b>tidak ditutup</b>. Alasannya ada di tiap baris.
+      <div style="font-weight:400;margin-top:6px">${anyMoved
+        ? "Baris yang ETA-nya sudah diperbarui ditolak dengan sengaja — itu justru menyelamatkan angka Bisa Dijual, karena baris tersebut masih menahan stok."
+        : "Baris ini masih terbuka dan masih menahan stok."}
+        Barisnya ditandai di daftar di bawah.</div>
+      <div class="scrollx" style="margin-top:8px"><table><caption class="sr-only">Baris yang tidak ditutup</caption>
+        <tbody>${skipped.map(s=>{
+          const r=(rows||[]).find(x=>eq(x.so_line_id,s.so_line_id));
+          return `<tr>
+            <td><b>${esc(r?skuLabel(r):s.so_line_id)}</b><div class="sub2">${esc(r&&r.so_number||s.so_line_id)}</div></td>
+            <td class="sisa nums">${r?esc(num(r.qty_balance))+" lembar":"—"}</td>
+            <td style="font-weight:400">${esc(skipLabel(s.reason))}</td>
+          </tr>`;
+        }).join("")}</tbody></table></div>
+    </div>`:"";
+  box.innerHTML=`<div class="card" style="padding:12px 14px">
+    <div style="font-size:13px;font-weight:700;margin-bottom:4px">Hasil penutupan massal — ${esc(num(nClosed))} baris ditutup</div>
+    ${movedBlock}${skipBlock}
+    <div class="actions" style="margin-top:4px">
+      <button class="btn ghost mini tap" id="alarmReload">Muat ulang antrean</button>
+      <button class="btn ghost mini tap" id="alarmDismiss">Tutup pesan ini</button>
+    </div>
+  </div>`;
+  $("#alarmReload").addEventListener("click",()=>{ box.innerHTML=""; loadLama(); loadSummary(); });
+  $("#alarmDismiss").addEventListener("click",()=>{ box.innerHTML=""; });
+  try{ box.scrollIntoView({block:"nearest"}); }catch{}
 }
 $("#lmQ").addEventListener("input",debounce(e=>{
   const v=e.target.value.trim();

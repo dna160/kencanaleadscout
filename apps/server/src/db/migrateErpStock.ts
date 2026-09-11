@@ -338,8 +338,12 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
     // `undated` (AMENDMENT 1) lets the PPIC queue separate two populations whose
     // close consequences are opposite: closing a stale line moves ATP by zero,
     // closing an undated one raises it by the whole balance (AMENDMENT 6).
+    // AMENDMENT 12 — `po_date` rides along on every commitment shape. An undated
+    // line has no ETA to age from, so the order date is the only way to show how
+    // old it is, on exactly the population that reserves stock. It lives on the
+    // header, so the views are the only place it can be picked up once.
     const spine = (etaPredicate: string) => `
-      select l.*, h.customer_name_text, h.sales_name_text, h.so_number,
+      select l.*, h.customer_name_text, h.sales_name_text, h.so_number, h.po_date,
              (l.estimate_delivery is null) as undated
       from erp_so_line l
       left join erp_so_header h on h.id = l.so_id
@@ -371,10 +375,24 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
     for (const [name, body] of views) {
       try {
         await db.unsafe(`create or replace view ${name} as ${body}`);
-      } catch {
-        // `create or replace view` refuses a changed column list, and the body
-        // selects l.* — so an added mirror column makes the replace fail. Views
-        // hold no data; dropping and recreating is the safe resolution.
+      } catch (replaceErr) {
+        // ONLY 42P16 ("cannot change name/type/number of columns of a view") is
+        // contemplated here: the body selects l.*, so an added mirror column — or
+        // AMENDMENT 12's po_date — makes the replace fail. Views hold no data, so
+        // dropping and recreating is the right resolution for that one error.
+        //
+        // A bare catch was wrong, and dangerously so: a lock timeout or a
+        // permissions fault took the same branch, dropped a working view, and if
+        // the recreate then failed too the app booted with NO v_live_commitments
+        // while the log said the migration was fine — zero commitments, ATP equal
+        // to on-hand, the whole inventory promiseable. Anything that is not 42P16
+        // is re-thrown to the block's own handler, which logs it and leaves the
+        // existing view in place.
+        const code = (replaceErr as { code?: string } | null)?.code;
+        if (code !== "42P16") throw replaceErr;
+        console.warn(
+          `[migrateErpStock] ${name}: column list changed (42P16) — dropping and recreating the view`,
+        );
         await db.unsafe(`drop view if exists ${name} cascade`);
         await db.unsafe(`create view ${name} as ${body}`);
       }

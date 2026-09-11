@@ -99,13 +99,35 @@ function pageParams(q: { page?: string; limit?: string; offset?: string }): {
   limit: number;
   offset: number;
 } {
-  const limit = Math.min(Math.max(Number(q.limit) || DEFAULT_LIMIT, 1), MAX_LIMIT);
-  const page = Math.max(Number(q.page) || 1, 1);
+  // FLOOR BOTH. `limit`/`offset` are interpolated into `limit $n offset $n`,
+  // where Postgres wants a bigint: `?limit=10.5` is `22P02 invalid input syntax
+  // for type bigint`, i.e. a 500 from a query string. `?page=1.2` was the same
+  // fault one step removed — the fraction survived into `(page - 1) * limit` and
+  // produced "9.999999999999998". A fractional page is nonsense, not an error
+  // worth a 500, so it is floored at the edge like every other numeric param.
+  const limit = Math.floor(Math.min(Math.max(Number(q.limit) || DEFAULT_LIMIT, 1), MAX_LIMIT));
+  const page = Math.floor(Math.max(Number(q.page) || 1, 1));
   const explicitOffset = Number(q.offset);
   const offset = Number.isFinite(explicitOffset) && explicitOffset >= 0
     ? Math.floor(explicitOffset)
     : (page - 1) * limit;
   return { page, limit, offset };
+}
+
+/**
+ * `?min_age_days=` → a whole number of days, or nothing.
+ *
+ * The value is interpolated as `current_date - $1::int`, so Postgres needs a
+ * literal integer: `1.5` is `22P02 invalid input syntax for type integer`, i.e.
+ * a 500 from a query string. Flooring is also what the slider means — "older
+ * than 1.5 days" is "older than 1 day" — so a fraction is rounded down rather
+ * than rejected. Zero and negatives disable the filter (every row is at least
+ * 0 days old, so they only ever meant "no filter").
+ */
+function safeMinAgeDays(raw: number | null | undefined): number | null {
+  if (raw == null || !Number.isFinite(raw)) return null;
+  const days = Math.floor(raw);
+  return days > 0 ? days : null;
 }
 
 /** Query-string booleans arrive as text — `only_do=true` from the PPIC page. */
@@ -164,6 +186,12 @@ export interface CommitLine {
   status_order: string | null;
   approval: string | null;
   estimate_delivery: string | null;
+  /**
+   * AMENDMENT 12 — the SO's order date, from the header. An undated line has no
+   * ETA to age from, so this is the only way to show how old it is, on exactly
+   * the population that reserves stock. 'YYYY-MM-DD'.
+   */
+  po_date: string | null;
   /** AMENDMENT 1 — approved, undelivered, nobody scheduled it. Still reserves. */
   undated: boolean;
   /** Days past ETA; null when undated. Negative when the ETA is in the future. */
@@ -197,6 +225,14 @@ export interface SummaryTotals {
   kosong: number;
   perlu_produksi: number;
   stale_commitments: number;
+  /**
+   * AMENDMENT 12. Count of LIVE commitment lines with no `estimate_delivery`
+   * (AMENDMENT 1) — the review tab's second segment. It is here because without
+   * it the page cannot label that segment and fired a throwaway
+   * `segment=undated&limit=1` probe purely to count it. Lines, not quantity, so
+   * it reads the same way as `stale_commitments` beside it.
+   */
+  undated_commitments: number;
   exceptions: number;
 }
 
@@ -608,6 +644,7 @@ interface CommitRow {
   status_order: string | null;
   approval: string | null;
   estimate_delivery: string | null;
+  po_date: string | null;
   so_number: string | null;
   customer_name_text: string | null;
   sales_name_text: string | null;
@@ -642,7 +679,7 @@ function commitSource(db: Sql, segment: CommitSegment) {
   const cols = db`
     select v.id, v.so_id, v.sku_key, v.kode_barang, v.warna, v.th, v.p, v.l,
            v.qty_order, v.qty_delivered, v.qty_balance, v.status_order, v.approval,
-           v.estimate_delivery, v.so_number, v.customer_name_text, v.sales_name_text
+           v.estimate_delivery, v.po_date, v.so_number, v.customer_name_text, v.sales_name_text
   `;
 
   const fromLive = db`${cols}, 'live'::text as line_state from v_live_commitments v`;
@@ -657,7 +694,7 @@ function commitSource(db: Sql, segment: CommitSegment) {
     from (
       select l.id, l.so_id, l.sku_key, l.kode_barang, l.warna, l.th, l.p, l.l,
              l.qty_order, l.qty_delivered, l.qty_balance, l.status_order, l.approval,
-             l.estimate_delivery, h.so_number, h.customer_name_text, h.sales_name_text
+             l.estimate_delivery, h.po_date, h.so_number, h.customer_name_text, h.sales_name_text
       from erp_so_line l
       left join erp_so_header h on h.id = l.so_id
     ) v
@@ -737,17 +774,22 @@ async function loadCommitments(
   // "delivered but never closed" phantoms, which is what a bulk close is for.
   if (o.statusOrder) filters.push(db`c.status_order = ${o.statusOrder}`);
   if (o.onlyDo) filters.push(db`(c.status_order = 'DO' and c.qty_balance > 0)`);
-  if (o.minAgeDays != null && o.minAgeDays > 0) {
-    // NOT the liveness window (§7.3) — that already ran, inside the view, to
-    // decide which rows exist here at all. This is the operator's "only show me
-    // lines older than N days" slider on top of the result.
-    //
+  // NOT the liveness window (§7.3) — that already ran, inside the view, to
+  // decide which rows exist here at all. This is the operator's "only show me
+  // lines older than N days" slider on top of the result.
+  const minAgeDays = safeMinAgeDays(o.minAgeDays);
+  if (minAgeDays != null) {
     // The `::int` cast is load-bearing. Without it postgres.js sends the value
     // untyped, Postgres resolves `current_date - $1` as `date - date -> integer`
     // rather than `date - integer -> date`, and the comparison blows up with
     // `operator does not exist: date <= integer` (42883) — a 500, not a
     // degraded filter. Do not remove it.
-    filters.push(db`c.estimate_delivery <= current_date - ${o.minAgeDays}::int`);
+    //
+    // The cast fixed type RESOLUTION but not the VALUE: `?min_age_days=1.5`
+    // reached Postgres as "1.5" and `invalid input syntax for type integer`
+    // (22P02) is the same 500 from the other side. safeMinAgeDays() floors it,
+    // which is what the slider means anyway.
+    filters.push(db`c.estimate_delivery <= current_date - ${minAgeDays}::int`);
   }
   if (o.q) {
     const needle = likeNeedle(o.q);
@@ -765,11 +807,20 @@ async function loadCommitments(
   const scopeSql = andWhere(db, scope);
 
   // Whitelisted sorts only — the value arrives from a query string.
-  const sort = str(o.sort) || "eta_asc";
+  //
+  // AMENDMENT 12: "per-segment sort is server-side and implied by the segment —
+  // `stale` by oldest ETA, `undated` by largest balance", and the client sends no
+  // `sort` for the review queue at all (AMENDMENT 9). A single `eta_asc` default
+  // for every segment silently broke the undated half: every ETA there is NULL,
+  // so the sort collapsed to `id asc` and balances came back in mirror order.
+  // The default is therefore chosen by segment; an explicit `?sort=` still wins.
+  const defaultSort = o.segment === "undated" ? "qty_desc" : "eta_asc";
+  const sort = str(o.sort) || defaultSort;
   const orderSql =
     sort === "eta_desc" ? db`order by c.estimate_delivery desc nulls last, c.id asc`
     : sort === "qty_desc" ? db`order by c.qty_balance desc, c.id asc`
     : sort === "sku_asc" ? db`order by c.sku_key asc, c.id asc`
+    : sort === "po_date_asc" ? db`order by c.po_date asc nulls last, c.id asc`
     : db`order by c.estimate_delivery asc nulls first, c.id asc`;
 
   const limit = Math.min(Math.max(o.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT);
@@ -782,6 +833,7 @@ async function loadCommitments(
            c.qty_balance::text as qty_balance,
            c.status_order, c.approval,
            to_char(c.estimate_delivery, 'YYYY-MM-DD') as estimate_delivery,
+           to_char(c.po_date, 'YYYY-MM-DD') as po_date,
            c.so_number, c.customer_name_text, c.sales_name_text,
            c.line_state,
            (c.estimate_delivery is null) as undated,
@@ -852,6 +904,7 @@ function shapeCommit(r: CommitRow): CommitLine {
     status_order: r.status_order,
     approval: r.approval,
     estimate_delivery: r.estimate_delivery,
+    po_date: r.po_date,
     undated: Boolean(r.undated),
     age_days: numOrNull(r.age_days),
     state: lineState,
@@ -913,11 +966,15 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
       kosong: 0,
       perlu_produksi: 0,
       stale_commitments: 0,
+      undated_commitments: 0,
       exceptions: 0,
     };
     for (const it of items) {
       totals[it.state] += 1;
       totals.stale_commitments += it.stale_lines;
+      // AMENDMENT 12: the engine already counts these per item; summing them is
+      // the whole implementation, and it retires the page's counting probe.
+      totals.undated_commitments += it.undated_lines;
       // ST-R5.3: demand against a SKU with no Live FG row at all.
       if (it.stock_rows === 0) totals.exceptions += it.live_lines + it.stale_lines;
     }
@@ -1354,6 +1411,18 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
       const cleaned = rawIds.map((v) => str(v)).filter((v) => v !== "");
       const ids = [...new Set(cleaned)];
       if (ids.length === 0) return reply.code(400).send({ error: "Daftar baris SO wajib diisi." });
+      // Blank or non-string entries are refused rather than quietly dropped, for
+      // the same reason duplicates are: `expected_count` is only a guard while
+      // the number the operator was shown equals the number this call can close.
+      // ["id", "", null] with expected_count 3 used to pass and close one row.
+      if (cleaned.length !== rawIds.length) {
+        return reply.code(400).send({
+          error: "Daftar baris SO memuat entri kosong. Muat ulang antrean.",
+          expected_count: expected,
+          received_count: rawIds.length,
+          unique_count: ids.length,
+        });
+      }
       // A duplicate id is refused outright rather than quietly collapsed. The
       // whole job of `expected_count` is to keep the number the operator was
       // shown and the number of commitments actually released in agreement;
@@ -1384,37 +1453,105 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
         });
       }
 
-      // Which ids exist in the mirror (read-only on erp_*, §7.2). Anything else
-      // is reported as skipped rather than failing the whole batch.
-      const found = await db<{ id: string; sku_key: string }[]>`
-        select id, sku_key from erp_so_line where id = any(${ids})
+      // ── The membership guard (the reason this endpoint is dangerous) ────────
+      //
+      // The operator selected these ids from ONE segment of the review queue.
+      // Between that click and this request an ERP sync can land and move a
+      // line: a stale line whose `estimate_delivery` is pushed into the future
+      // becomes LIVE and starts reserving stock. Closing it then releases a
+      // commitment that is genuinely owed to a customer — the exact
+      // over-promising failure this module exists to prevent.
+      //
+      // `expected_count` cannot catch that. The client derives it from the same
+      // array it posts, so it only ever compares a list's length to itself; it
+      // detects a mis-typed payload, never a moved queue.
+      //
+      // So the segment is part of the write. `ids` are resolved against the
+      // caller's declared segment view, and the INSERT selects from that same
+      // view in ONE statement — one snapshot, so nothing can slip between the
+      // check and the write. A line that has left the segment is reported in
+      // `skipped` and is never closed.
+      // Default `all` = stale ∪ undated, i.e. the review queue as a whole: that
+      // is the population this endpoint has always been allowed to close, and
+      // narrowing it further is the caller's choice, not ours. What `all`
+      // excludes — and what the bug let through — is a line that is neither
+      // stale nor undated: an ordinary live commitment with a future delivery
+      // date, owed to a customer, which must never be closable from here.
+      const SEGMENTS = ["stale", "undated", "all"] as const;
+      if (b.segment !== undefined && !SEGMENTS.includes(b.segment as (typeof SEGMENTS)[number])) {
+        return reply.code(400).send({ error: "Segmen antrean tidak dikenal." });
+      }
+      const segment: CommitSegment = (b.segment as CommitSegment | undefined) ?? "all";
+      /**
+       * Eligible = in the declared segment, OR already confirm-closed. The
+       * second arm is what keeps the endpoint idempotent: a closed line has
+       * left `v_stale_commitments` by definition, so without it re-sending the
+       * same batch would report every row as "no longer in the queue" — which
+       * is true of the view and false of the operator's intent.
+       */
+      const eligibleSource = (sql: Sql) => sql`
+        select v.id, v.sku_key from (${commitSource(sql, segment)}) v
+        union
+        select c.id, c.sku_key from (${commitSource(sql, "closed")}) c
       `;
-      const foundIds = found.map((r) => String(r.id));
-      const foundSet = new Set(foundIds);
-      const skipped = ids
-        .filter((id) => !foundSet.has(id))
-        .map((id) => ({ so_line_id: id, reason: "tidak_ditemukan" }));
+
+      // Two different skip reasons, because they mean different things to the
+      // operator: an id that is not in the mirror at all is a stale browser tab,
+      // while an id that exists but has left the queue is a line a sync moved —
+      // the case that used to release a live commitment.
+      const inMirror = await db<{ id: string }[]>`
+        select id from erp_so_line where id = any(${ids})
+      `;
+      const mirrorSet = new Set(inMirror.map((r) => String(r.id)));
+      if (mirrorSet.size === 0) {
+        return reply.code(404).send({ error: "Tidak ada baris Sales Order yang cocok." });
+      }
+
+      // Pre-read for the ATP snapshot and the skipped list. The authoritative
+      // membership test is the INSERT below, not this.
+      const found = await db<{ id: string; sku_key: string }[]>`
+        select e.id, e.sku_key from (${eligibleSource(db)}) e where e.id = any(${ids})
+      `;
       const skus = [...new Set(found.map((r) => r.sku_key))];
 
-      if (foundIds.length === 0) {
-        return reply.code(404).send({ error: "Tidak ada baris Sales Order yang cocok." });
+      if (found.length === 0) {
+        return reply.code(409).send({
+          error: "Baris yang dipilih sudah tidak ada di antrean ini. Muat ulang antrean.",
+          expected_count: expected,
+          received_count: rawIds.length,
+        });
       }
 
       // ATP is derived, so the delta is measured, not predicted: snapshot the
       // affected SKUs, write, snapshot again.
       const before = atpBySku(await loadItems(db, skus));
 
+      // `returning` tells us what the write actually matched, so `closed` counts
+      // rows this call closed rather than rows that happened to exist.
+      let closedIds: string[] = [];
       await db.begin(async (sql) => {
-        await sql`
+        const written = await sql<{ so_line_id: string }[]>`
           insert into stock_commitment_overrides (so_line_id, state, reason, actor)
-          select id, 'closed', ${reason}, ${actor} from erp_so_line where id = any(${foundIds})
+          select v.id, 'closed', ${reason}, ${actor}
+          from (${eligibleSource(sql as unknown as Sql)}) v
+          where v.id = any(${ids})
           on conflict (so_line_id) do update
             set state = 'closed',
                 reason = excluded.reason,
                 actor = excluded.actor,
                 updated_at = now()
+          returning so_line_id
         `;
+        closedIds = written.map((r) => String(r.so_line_id));
       });
+
+      const closedSet = new Set(closedIds);
+      const skipped = ids
+        .filter((id) => !closedSet.has(id))
+        .map((id) => ({
+          so_line_id: id,
+          reason: mirrorSet.has(id) ? "tidak_lagi_di_antrean" : "tidak_ditemukan",
+        }));
 
       const after = atpBySku(await loadItems(db, skus));
       const atp_delta_by_sku: Record<string, number> = {};
@@ -1424,7 +1561,8 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
 
       return {
         ok: true,
-        closed: foundIds.length,
+        segment,
+        closed: closedIds.length,
         skipped,
         atp_delta_by_sku,
       };

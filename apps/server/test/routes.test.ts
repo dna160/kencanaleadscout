@@ -332,6 +332,78 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
       ]);
     }
 
+    it("REGRESSION (HIGH): a line that went LIVE after selection is never closed", async () => {
+      // The attack this guard exists for, reproduced exactly as the correctness
+      // review found it:
+      //   1. operator loads ?segment=stale and selects a stale line
+      //   2. an ERP sync lands and pushes its estimate_delivery into the future,
+      //      so the line is now LIVE and reserving stock for a real customer
+      //   3. operator clicks Tutup with the id list from step 1
+      // Before the fix the line closed and its whole balance became promiseable
+      // again — the over-promising failure this module exists to prevent.
+      //
+      // `expected_count` cannot catch it: the client derives it from the same
+      // array it posts, so it only ever compares a list's length to itself. The
+      // membership test has to be part of the write, against the segment the
+      // operator actually selected from.
+      await inRollback(async (tx) => {
+        await seedFg(tx, [{ sn_fg: `${P}-race-fg`, qty: 1000, parts: A }]);
+        await seedLines(tx, [{ id: `${P}-race-1`, qty_balance: 500, eta: 400, parts: A }]);
+
+        // Step 1 — stale, so it is excluded from ATP and the queue offers it.
+        expect(await atpOf(KA)).toBe(1000);
+
+        // Step 2 — the sync moves it. It is now live, dated, and reserving.
+        await tx`update erp_so_line set estimate_delivery = current_date + 7 where id = ${`${P}-race-1`}`;
+        expect(await atpOf(KA)).toBe(500);
+
+        // Step 3 — the stale click lands.
+        const { status, body } = await POST<BatchCloseResponse>("/api/stock/stale-commitments/close-batch", {
+          so_line_ids: [`${P}-race-1`],
+          reason: "phantom lama",
+          actor: ACTOR,
+          expected_count: 1,
+          segment: "stale",
+        });
+
+        // Refused: nothing in the stale segment matched.
+        expect(status).toBe(409);
+        expect(await overrideRows(tx)).toEqual([]);
+
+        // THE ASSERTION THAT MATTERS: the commitment still reserves. 500 lembar
+        // owed to a customer did not become promiseable.
+        expect(await atpOf(KA)).toBe(500);
+
+        // And it is still refused when the batch spans the whole review queue —
+        // a live dated line is in neither population.
+        const wide = await POST<BatchCloseResponse>("/api/stock/stale-commitments/close-batch", {
+          so_line_ids: [`${P}-race-1`],
+          reason: "phantom lama",
+          actor: ACTOR,
+          expected_count: 1,
+        });
+        expect(wide.status).toBe(409);
+        expect(await atpOf(KA)).toBe(500);
+      });
+    });
+
+    it("REGRESSION (D9 fixed): blank entries are refused, not silently dropped", async () => {
+      // `["id", "", null]` with expected_count 3 used to pass the guard and close
+      // one row — the declared count and the number released disagreeing, which
+      // is the one property expected_count exists to preserve.
+      await inRollback(async (tx) => {
+        await seedBatch(tx);
+        const { status } = await POST<{ error: string }>("/api/stock/stale-commitments/close-batch", {
+          so_line_ids: [`${P}-bat-u1`, "", null],
+          reason: "phantom lama",
+          actor: ACTOR,
+          expected_count: 3,
+        });
+        expect(status).toBe(400);
+        expect(await overrideRows(tx)).toEqual([]);
+      });
+    });
+
     it("a mismatched expected_count returns 409 AND writes nothing", async () => {
       await inRollback(async (tx) => {
         await seedBatch(tx);
@@ -999,24 +1071,30 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
       });
     });
 
-    it("FINDING (documented, not fixed): the §4.1 ladder is not total", async () => {
-      // on_hand 0, adjustment +5, committed 5 ⇒ atp 0.
+    it("REGRESSION (AMENDMENT 13 ratified): the §4.1 ladder is total — ATP 0 with a positive opname is habis", async () => {
+      // on_hand 0, adjustment +5, committed 5 ⇒ atp 0. Under the AMENDMENT 10
+      // ladder this matched no row at all:
       //   1 perlu_produksi  atp < 0                     → no
       //   2 kosong          on_hand + adjustment <= 0   → no (it is +5)
       //   3 habis           atp <= 0 AND on_hand > 0    → no (on_hand is 0)
       //   4 tersedia        atp > 0                     → no
-      // No contract row matches. `deriveState` falls through to a `habis`
-      // default, which is a defensible reading but is nowhere in CONTRACTS §4.1
-      // or AMENDMENT 10, so a future re-implementation could legitimately choose
-      // `kosong` and break the page with no test to stop it.
-      // Owning file: docs/stock-2.0/CONTRACTS.md §4.1 (ladder) — the contract, not
-      // apps/server/src/routes/stock-atp.ts, is the thing that is incomplete.
+      // This test was first filed as an open finding against the contract: the
+      // implementation fell through to a `habis` default that appeared nowhere
+      // in CONTRACTS, so a re-implementation could legitimately have chosen
+      // `kosong` instead and broken the page with nothing to stop it.
+      //
+      // AMENDMENT 13 ratified `habis` and made the ladder total: row 3 now tests
+      // EFFECTIVE on-hand (an opname adjustment is physical truth), and row 4 is
+      // a bare `otherwise`. So the assertion below is no longer a documented
+      // defect — it is the contract, and this test is the guard that keeps it.
+      // Reachable the moment PPIC books a positive opname against a fully
+      // committed SKU with no mirror row.
       await inRollback(async (tx) => {
         const it = await stateOf(tx, "LADC", { onHand: 0, committed: 5, adjustment: 5 });
         expect(it.on_hand).toBe(0);
         expect(it.adjustment).toBe(5);
         expect(it.atp).toBe(0);
-        expect(it.state).toBe("habis"); // implementation's undocumented default
+        expect(it.state).toBe("habis"); // AMENDMENT 13 row 3, on effective on-hand
       });
     });
 

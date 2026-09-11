@@ -492,9 +492,17 @@ SKU whose text legitimately contains `%`. WP-7 tests the round trip.
   filter and sort; both are dropped because the contract has no field for it. If
   coating matters to reps, it needs a field on `erp_live_fg` and in the item
   shape. Raised by WP-5; needs a product answer, not an engineering one.
-- **`.fltchips` / `.fchip`** are defined independently in `stock.html` and
-  `stock-ppic.html` (each agent was scoped to one file and could not see the
-  other). They are not byte-identical. Reconcile.
+- ~~**`.fltchips` / `.fchip`** are defined independently in `stock.html` and
+  `stock-ppic.html`… They are not byte-identical. Reconcile.~~ **CLOSED
+  2026-09-11.** Re-checked at audit. `stock-ppic.html` had already adopted
+  UX-SPEC §1.3 verbatim; `stock.html` was still one rule short — it carried
+  `.fchip[aria-pressed="true"]` alone, without the `.fchip[aria-selected="true"]`
+  arm §1.3 pairs with it. (Both pages were otherwise identical: token-based, no
+  raw hex, `.fchip.on` gone from both.) `stock.html` now carries the canonical
+  block verbatim. The added arm is inert on that page — its chips are
+  `aria-pressed` toggles, not tabs — and is kept precisely so the two blocks
+  cannot drift again. The UX-SPEC §1.3 checklist item ("byte-identical on both
+  pages") now passes.
 
 
 ## AMENDMENT 6 — the close button has two populations with opposite consequences

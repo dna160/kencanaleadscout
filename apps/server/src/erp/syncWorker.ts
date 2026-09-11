@@ -338,7 +338,7 @@ async function acquireLock(db: Sql, intervalMs: number): Promise<boolean> {
          -- re-tests the predicate in its OWN quals, because the EvalPlanQual
          -- recheck under read-committed only re-applies the UPDATE's quals, not
          -- the CTE's, so the CTE alone can never be the guard.
-         -- `order by` pins a single lock order across sessions, so two claimants
+         -- The order by pins one lock order across sessions, so two claimants
          -- queue rather than deadlock on each other's first row.
        order by table_name
          for update
