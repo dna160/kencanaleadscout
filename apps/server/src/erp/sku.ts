@@ -104,6 +104,11 @@ export const DEFAULT_SKU_SEGMENTS: readonly SkuSegmentName[] = [
  * that silently stops demand matching supply.
  *
  * First name wins; the rest are tolerated spellings of the same column.
+ *
+ * This list is ALSO the source the column diagnostic reads its probe names from
+ * (`buildColumnDiagnostic()` in erp/selarasClient.ts, ST-R5.3), so what the logs
+ * report as "tried" is by construction what the adapters really try. If a probe
+ * name here is wrong, the diagnostic says so in the same breath as the key does.
  */
 export const SKU_SEGMENT_SOURCES: Record<
   SkuSegmentName,

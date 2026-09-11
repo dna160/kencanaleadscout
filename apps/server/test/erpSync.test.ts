@@ -835,6 +835,31 @@ describe("column diagnostic — names the REAL wire keys, not the documented one
     expect((probeOf(d!, "th").raw ?? "").length).toBeLessThanOrEqual(40);
   });
 
+  it("an ABSENT numeric segment is '-', never 0 — they are different facts", () => {
+    // The production symptom is `|0|0|` in the two FG thickness positions. That
+    // is NOT what a column we failed to read produces: EVERY way of failing to
+    // read a numeric segment already yields '-', matching the SQL twin
+    // (`sqlNumericSegment`: `when <arg> is null then '-'`). So a `0` in a stored
+    // key is evidence of a value that WAS present and WAS zero — a different
+    // problem from a missing column, and exactly the distinction the
+    // diagnostic's matched/null/absent split exists to report.
+    const base = { tbl_1210_STLiveFGMX_id: "FG-Z", brand: "10", warna: "141", p: 1000, l: 500 };
+    const absentish: readonly [string, unknown][] = [
+      ["absent", undefined],
+      ["null", null],
+      ["empty string", ""],
+      ["boolean false", false],
+      ["separator-ambiguous '0.000'", "0.000"],
+      ["unreadable text", "tidak ada"],
+    ];
+    for (const [name, value] of absentish) {
+      const row = value === undefined ? base : { ...base, th: value, t: value };
+      expect(adaptLiveFgRow(row)?.sku_key, name).toBe("10|141|-|-|1000|500");
+    }
+    // …and only a value that really IS zero renders as 0.
+    expect(adaptLiveFgRow({ ...base, th: 0, t: "0.00" })?.sku_key).toBe("10|141|0|0|1000|500");
+  });
+
   it("says plainly that warna and so_header carry no sku_key segment", () => {
     for (const table of ["warna", "so_header"] as const) {
       const d = buildColumnDiagnostic(table, FIXTURES[table][0]);
