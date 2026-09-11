@@ -961,10 +961,19 @@ therefore two segments with different copy, different confirm behaviour, and
 different colour of primary button.** They are never mixed in one list, and there
 is no "Semua" segment.
 
+> **Amended by CONTRACTS AMENDMENT 20 (ST-R22).** There are now **three**
+> listable populations, not two: `stale` · `undated` · `autoclosed`, plus the
+> `closed` recovery filter. The passage above is still true about the two
+> populations a **`Tutup` button** spans — an auto-closed line is never offered
+> `Tutup` — so it is amended, not superseded. **§6.2.3 specifies the third.**
+> There is still no "Semua" segment, and the populations are still never mixed
+> in one list.
+
 ```html
 <div class="fltchips" role="tablist" aria-label="Jenis tinjauan">
   <button class="fchip on" role="tab" aria-selected="true"  data-seg="stale">ETA Lewat <b>4.158</b></button>
   <button class="fchip"    role="tab" aria-selected="false" data-seg="undated">Tanpa ETA <b>27</b></button>
+  <button class="fchip"    role="tab" aria-selected="false" data-seg="autoclosed">Ditutup Otomatis <b>1.987</b></button>
 </div>
 ```
 
@@ -974,6 +983,12 @@ share the row anatomy (§6.2.2), filters (§6.3), pager (§6.4) and undo tray
 
 The tab badge in the strip (§6.0) shows `stale + undated` combined, with a
 `title` breaking it down: `4.158 ETA lewat · 27 tanpa ETA`.
+
+**The auto-closed count stays OUT of that badge** and rides in the `title`
+instead: `4.158 ETA lewat · 27 tanpa ETA · 1.987 ditutup otomatis (tidak perlu
+keputusan)`. The badge counts decisions a human still owes. An auto-closed line
+owes none — it is review work already **removed** — so adding it would inflate
+the queue badge at the exact moment the queue got smaller.
 
 **Subtitle copy, per segment** (rendered above the table, not dismissible):
 
@@ -1002,7 +1017,8 @@ Desktop row (one `<tr>`, 44px minimum height):
 | Umur | derived, whole days | `.chip.umur` tier per §6.5. Tanpa ETA segment: age from `po_date` instead, pill reads `dipesan 412 hari lalu`; if `po_date` is also null, `—` |
 | Sisa Pesanan | `qty_balance` | right-aligned, `tabular-nums`, `.avail` weight |
 | Status SO | `status_order` | plain `.chip.umur` neutral pill; `DO` gets `.chip.umur.old` — a line marked delivered that still carries a balance is exactly ST-R22's "delivered but not closed" and is the safest thing to close |
-| Aksi | — | `Tutup` button (§6.6) |
+| Dasar penutupan | `status_order`, `age_days`, `autoclose_basis` | **`autoclosed` segment only** (§6.2.3), sits between Status SO and Aksi. Read off the row; the rule is never re-spelled client-side |
+| Aksi | — | `Tutup` button (§6.6). On the `autoclosed` segment: `Aktifkan Lagi` only — the line is already closed |
 
 Sales rep (`sales_name_text`) is shown in the detail sheet, not the row — nine
 columns is already at the limit.
@@ -1018,6 +1034,81 @@ Footer: `Diurutkan dari sisa pesanan terbesar.`
 On the Tanpa ETA segment the row gains one extra cell at the end, before Aksi:
 `Efek jika ditutup` → `Bisa Dijual +1.200` in `--ok-ink`. The operator sees the
 consequence in the row, before the button, every time.
+
+#### 6.2.3 `Ditutup Otomatis` — the third population (ST-R22 / AMENDMENT 20)
+
+`GET /api/stock/stale-commitments?segment=autoclosed`, paged exactly like the
+others. A line lands here when the server's rule — `status_order` in
+`STOCK_AUTOCLOSE_STATUSES`, `estimate_delivery` older than
+`STOCK_AUTOCLOSE_AFTER_DAYS` — has treated it as delivered. Rows carry
+`autoclosed`, `autoclose_basis`, `status_order`, `age_days` and
+`state: "autoclosed"`.
+
+**Two properties this screen must never obscure.**
+
+1. **It released no promiseable stock.** Every line here failed the 60-day
+   liveness window long before the auto-close threshold reached it, so it was
+   already outside the ATP sum. `totals.autoclosed_commitments` measures
+   **review work removed, never stock released.** No copy on this segment may
+   imply otherwise: the words `menambah`, `naik`, `bertambah`, `dilepas` are
+   **banned** here, in exactly the way they are *mandatory* on Tanpa ETA.
+2. **An undated line is never auto-closed, at any age.** It stays live, stays
+   reserving, stays in `Tanpa ETA`. The footer says so out loud, because that
+   distinction is the only reason the rule is safe.
+
+**The rule is not re-spelled client-side.** The threshold and the status list
+are config. The page reads the grounds off the row — `status_order` (which
+status), `age_days` (how old), `autoclose_basis` (which date that age was
+measured from) — and narrates them. It never prints "180 hari", never names the
+qualifying statuses, and never recomputes eligibility. `autoclose_basis` arrives
+as a **column name**, so it takes the §1.6 discipline a raw code always takes:
+a known basis is translated (`estimate_delivery` → `ETA`, `po_date` →
+`tanggal pesan`), an unknown one renders as `kolom {name}` — labelled, never
+passed off as prose.
+
+**Copy table — ratified.**
+
+| Surface | Copy |
+|---|---|
+| Segment label | `Ditutup Otomatis` + live count from `totals.autoclosed_commitments` |
+| Tab title fragment | `· 1.987 ditutup otomatis (tidak perlu keputusan)` |
+| Subtitle | `Baris di bawah **ditutup otomatis oleh sistem**, bukan oleh petugas: status SO-nya menandakan barang sudah terkirim dan ETA-nya sudah jauh lewat. Angka Bisa Dijual **TIDAK berubah** — baris ini memang sudah tidak ikut dihitung sebelum ditutup, jadi yang berkurang hanya antrean tinjauan. Aktifkan lagi kalau pesanannya ternyata masih berjalan.` |
+| Footer | `Diurutkan dari ETA paling lama. Pesanan tanpa ETA tidak pernah ditutup otomatis pada umur berapa pun — baris itu tetap di segmen Tanpa ETA dan tetap memotong angka Bisa Dijual.` |
+| Column header (new, before Aksi) | `Dasar penutupan` |
+| Grounds chip | `Ditutup otomatis oleh sistem` — `.chip.st-kosong`, the same neutral chip as the human `Ditutup` result chip (§1.5): both are closed, and that is the shared fact. Who closed it is carried by the words, never by colour alone (§9.5). An age-tier pill would be wrong — it would claim a tier about the line's age rather than name its state. |
+| Grounds line | `.sub2`, ` · `-joined, in this order and each omitted when its field is null: `Status SO {status_order}` · `{age_days} hari sejak {basis}` |
+| Empty (no filter) | `Belum ada baris yang ditutup otomatis oleh sistem.` / `Angka Bisa Dijual tidak terpengaruh oleh segmen ini.` |
+| Table caption (`sr-only`) | `Baris yang ditutup otomatis oleh sistem` |
+| Aksi | `Aktifkan Lagi` only. **`Tutup` is never offered** — the line is already closed. |
+| Reinstated in session, grounds cell | `Aktif lagi` (`.chip.st-tersedia`) + where it landed: `masuk antrean ETA Lewat` · `kembali jadi pesanan aktif` |
+| Reinstated in session, Aksi | `Ditinjau di segmen {…}` — it has left this population; the segment it landed in is where it is acted on |
+| Toast, `atp_delta === 0` | `Baris aktif lagi — masuk antrean ETA Lewat. Angka Bisa Dijual tidak berubah.` |
+| Toast, `atp_delta < 0` | `Baris aktif lagi. Bisa Dijual {SKU} turun {n} lembar.` |
+
+**Reinstate is the existing ST-R21 endpoint**, `POST
+/stale-commitments/:so_line_id/reinstate` — no second mechanism, because a
+machine decision deserves more auditability than a human one, not less. It is
+the one action here that **does** move ATP: it hands the line back to the
+liveness rule. Normally that lands it in `ETA Lewat` and `atp_delta` is `0`, but
+**the page states the number the server returned and lets its sign choose the
+verb** (`turun` / `naik`), so a config change that makes it non-zero is visible
+rather than papered over. The response's `commitment.state` names where the line
+landed and the UI says so; it never guesses.
+
+**No bulk close, no bulk anything**, and **no `Umur` filter**. On a population
+auto-closed *by age*, an age filter whose first tier is `> 6 bulan` would
+silently re-spell the 180-day threshold in the UI — the one thing §6.2.3
+forbids. `q`, `Status SO` and `Hanya status DO` stay: `STOCK_AUTOCLOSE_STATUSES`
+is config and may extend beyond `DO`, so filtering by status remains meaningful.
+
+**`segment=all` is never requested by this page.** It is `close-batch`'s write
+scope, not a view, and it deliberately excludes the auto-closed set.
+
+**Detail sheet (§5.3 / ST-R13).** The sheet gains a third, clearly-labelled
+block — `Ditutup Otomatis — tidak dihitung (N)` from `autoclosed_commitments` —
+so a SKU's total ERP "open" balance still reconciles on screen after the queue
+stops listing those lines. **The arithmetic block is untouched**: auto-closed
+balance is not subtracted from `Bisa Dijual` and never was.
 
 ### 6.3 Tab 2 — filters
 
@@ -1049,7 +1140,7 @@ in the browser).
 | Control | Param | Options |
 |---|---|---|
 | Search | `q` | `placeholder="Cari merek / SKU / customer / No. SO…"`. Debounce 350ms, min 2 chars. The server's `q` matches `coalesce(brand_text, brand, '')` on both `/stale-commitments` and `/exceptions`, so naming the merek here is true, not aspirational — and it is the only merek-shaped control this tab honestly has (see the note above). |
-| Umur | `min_age_days` | `.fchip` row: `Semua` (default) · `> 6 bulan` (180) · `> 1 tahun` (365) · `> 3 tahun` (1095). **ETA Lewat segment only** — hidden on Tanpa ETA, where there is no ETA to age. |
+| Umur | `min_age_days` | `.fchip` row: `Semua` (default) · `> 6 bulan` (180) · `> 1 tahun` (365) · `> 3 tahun` (1095). **ETA Lewat segment only** — hidden on Tanpa ETA, where there is no ETA to age, and on Ditutup Otomatis, where a first tier of `> 6 bulan` over a population auto-closed at 180 days would silently re-spell the threshold (§6.2.3). |
 | Status SO | `status` | select, `Semua status` + distinct values returned by the endpoint's facet list; if no facet list is available, a free-text select built from the current page's values, labelled `Status (halaman ini)` |
 | Hanya status DO | `only_do` | checkbox — the highest-confidence closable set (ST-R22) |
 
@@ -2055,6 +2146,12 @@ who remembers them needs to know they changed:
 - **§6.7** described listing already-closed rows via `state=closed`. The ratified
   parameter is `segment=closed` (AMENDMENT 8). One enum, three values —
   `stale` · `undated` · `closed` — replaces the earlier booleans.
+- **§6.2.1** said the review queue holds **two** populations. AMENDMENT 20
+  (ST-R22) adds a third, `autoclosed`, and **§6.2.3** specifies it. The old
+  paragraph is still true about the two populations one `Tutup` button spans —
+  an auto-closed line is never offered `Tutup` — so it is annotated in place
+  rather than struck. The count of *listable* segments is three, plus the
+  `closed` recovery filter; there is still no "Semua".
 - **§6.8** said "there is no bulk endpoint" and specified sequential POSTs at
   concurrency 4 with a progress bar, a cancel button and a partial-failure retry
   list. `POST /stale-commitments/close-batch` now exists (AMENDMENT 6b) and is

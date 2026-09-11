@@ -223,6 +223,29 @@ export const config = {
      */
     approvedStatuses: csv("STOCK_APPROVED_STATUSES", ["Approved"]),
     /**
+     * ST-R22 auto-close: `status_order` values that mean "the goods went out and
+     * the ERP simply never zeroed the balance". Config, so adding `Done` later is
+     * an env change rather than a code change.
+     *
+     * SAFE WHEN EMPTY, exactly like the cancelled set and unlike the approved
+     * one: a set that validates down to nothing auto-closes nothing, and every
+     * line stays in the review queue where a human decides. Nothing is released.
+     */
+    autocloseStatuses: csv("STOCK_AUTOCLOSE_STATUSES", ["DO"]),
+    /**
+     * ST-R22 auto-close age, measured on `estimate_delivery` and on NOTHING ELSE
+     * (product-owner ruling, 2026-09-11). A delivery order whose delivery date is
+     * more than half a year old has, in practice, shipped.
+     *
+     * Keep this ABOVE `staleWindowDays`. That ordering is what makes auto-close a
+     * zero-ATP operation: a line this old already failed the liveness window, so
+     * it was already excluded from `open_commitment` and closing it moves no
+     * stock. Set below the window and auto-close starts releasing LIVE
+     * reservations — stock already owed to a customer. migrateErpStock warns
+     * loudly at boot if the two are configured that way round.
+     */
+    autocloseAfterDays: int("STOCK_AUTOCLOSE_AFTER_DAYS", 180),
+    /**
      * Full-key reconciliation cadence. An incremental `updated_at__gte` pull can
      * structurally never observe a DELETE (PRD §10), so a separate, slower sweep
      * compares the ERP's full key set against the mirror and purges what is gone.

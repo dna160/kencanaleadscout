@@ -30,6 +30,10 @@ import { config } from "../src/config.js";
 const hasDb = Boolean(process.env.DATABASE_URL);
 const WINDOW_DAYS = config.stock.staleWindowDays;
 const CANCELLED = config.stock.cancelledStatuses;
+/** ST-R22 auto-close knobs. Read from config, never restated as literals. */
+const AUTOCLOSE_DAYS = config.stock.autocloseAfterDays;
+const AUTOCLOSE_STATUSES = config.stock.autocloseStatuses;
+const AUTOCLOSE_STATUS = AUTOCLOSE_STATUSES[0] ?? "DO";
 
 /** Everything this file writes is prefixed, so a leaked row is identifiable. */
 const P = "wp7atp";
@@ -90,6 +94,13 @@ type LineRow = {
   status_order?: string;
   parts?: SkuParts;
   so_id?: string;
+  /**
+   * Days before today for the SO HEADER's `po_date` (AMENDMENT 12). Only ST-R22
+   * cares: the withdrawn `coalesce(estimate_delivery, po_date)` age basis would
+   * have aged undated lines off this column, so the fixtures that prove it is NOT
+   * used need to be able to set it — and set it very old.
+   */
+  po_date_days_ago?: number;
 };
 
 async function seedFg(tx: Tx, rows: readonly FgRow[]): Promise<void> {
@@ -105,10 +116,12 @@ async function seedFg(tx: Tx, rows: readonly FgRow[]): Promise<void> {
   }
 }
 
-async function seedHeader(tx: Tx, id: string): Promise<void> {
+async function seedHeader(tx: Tx, id: string, poDateDaysAgo?: number): Promise<void> {
+  const poDate =
+    poDateDaysAgo === undefined ? null : tx`(current_date - ${poDateDaysAgo}::int)`;
   await tx`
-    insert into erp_so_header (id, so_number, customer_name_text, sales_name_text, status_order)
-    values (${id}, ${`SO-${id}`}, ${"PT Pelanggan"}, ${"Rep A"}, ${"Open"})
+    insert into erp_so_header (id, so_number, customer_name_text, sales_name_text, status_order, po_date)
+    values (${id}, ${`SO-${id}`}, ${"PT Pelanggan"}, ${"Rep A"}, ${"Open"}, ${poDate})
     on conflict (id) do nothing
   `;
 }
@@ -117,7 +130,7 @@ async function seedLines(tx: Tx, rows: readonly LineRow[]): Promise<void> {
   for (const r of rows) {
     const parts = r.parts ?? BLACK_GALAXY;
     const soId = r.so_id ?? `${P}-so`;
-    await seedHeader(tx, soId);
+    await seedHeader(tx, soId, r.po_date_days_ago);
     // ETA is expressed as an offset so the fixtures move with `current_date`
     // exactly as the view's window does.
     const eta =
@@ -172,11 +185,15 @@ async function atpFor(tx: Tx, skuKey: string): Promise<Atp> {
   return { ...r, atp: r.on_hand - r.committed + r.adjustment };
 }
 
-async function idsIn(tx: Tx, relation: "v_live_commitments" | "v_stale_commitments"): Promise<string[]> {
+type CommitmentView = "v_live_commitments" | "v_stale_commitments" | "v_autoclosed_commitments";
+
+async function idsIn(tx: Tx, relation: CommitmentView): Promise<string[]> {
   const rows =
     relation === "v_live_commitments"
       ? await tx`select id from v_live_commitments where id like ${`${P}%`} order by id`
-      : await tx`select id from v_stale_commitments where id like ${`${P}%`} order by id`;
+      : relation === "v_stale_commitments"
+        ? await tx`select id from v_stale_commitments where id like ${`${P}%`} order by id`
+        : await tx`select id from v_autoclosed_commitments where id like ${`${P}%`} order by id`;
   return (rows as { id: string }[]).map((r) => r.id);
 }
 
@@ -679,6 +696,217 @@ describe.skipIf(!hasDb)("ATP over the real schema", () => {
     });
   });
 
+  // ── ST-R22 — "delivered but never closed" auto-close ─────────────────────
+
+  describe(`ST-R22 — a '${AUTOCLOSE_STATUS}' line older than ${AUTOCLOSE_DAYS} days is auto-closed`, () => {
+    it("the knobs are config, and the threshold sits ABOVE the liveness window", async () => {
+      // The ordering IS the zero-ATP guarantee. Below the window, auto-close
+      // would start releasing live reservations — stock owed to a customer.
+      expect(AUTOCLOSE_DAYS).toBe(180);
+      expect(AUTOCLOSE_STATUSES).toEqual(["DO"]);
+      expect(AUTOCLOSE_DAYS).toBeGreaterThan(WINDOW_DAYS);
+    });
+
+    it("v_autoclosed_commitments exists and states WHY each row qualified", async () => {
+      const rows = await db!<{ column_name: string }[]>`
+        select column_name from information_schema.columns
+        where table_schema = 'public' and table_name = 'v_autoclosed_commitments'
+      `;
+      const cols = rows.map((r) => r.column_name);
+      // A machine decision has to carry its own grounds: which status, how old,
+      // and which date the age was measured from.
+      expect(cols).toEqual(expect.arrayContaining([
+        "status_order",
+        "estimate_delivery",
+        "autoclosed",
+        "autoclose_basis",
+      ]));
+    });
+
+    it("a DO line with an ETA 200 days ago leaves BOTH queues for the auto-closed set", async () => {
+      await inRollback(async (tx) => {
+        await seedLines(tx, [
+          { id: `${P}-r22-do`, qty_balance: 1200, eta: 200, status_order: AUTOCLOSE_STATUS },
+        ]);
+        expect(await idsIn(tx, "v_live_commitments")).toEqual([]);
+        expect(await idsIn(tx, "v_stale_commitments")).toEqual([]);
+        expect(await idsIn(tx, "v_autoclosed_commitments")).toEqual([`${P}-r22-do`]);
+      });
+    });
+
+    it("and ATP does not move by one sheet — it was already outside the sum", async () => {
+      // THE property of this whole feature, asserted as a before/after on ONE
+      // line rather than inferred: a reinstate lifts the auto-close and hands the
+      // line back to the liveness rule, so this crosses the rule's boundary in
+      // both directions. Anything but 0 means the machine released stock.
+      await inRollback(async (tx) => {
+        await seedFg(tx, [{ sn_fg: `${P}-fg-r22`, qty: 1000 }]);
+        await seedLines(tx, [
+          { id: `${P}-r22-do`, qty_balance: 1200, eta: 200, status_order: AUTOCLOSE_STATUS },
+        ]);
+        const autoclosed = await atpFor(tx, BG_KEY);
+
+        // Lift the auto-close: the line goes back to being a stale commitment.
+        await tx`
+          insert into stock_commitment_overrides (so_line_id, state, reason, actor)
+          values (${`${P}-r22-do`}, 'reinstated', 'PPIC: belum dikirim', ${ACTOR})
+        `;
+        const reinstated = await atpFor(tx, BG_KEY);
+
+        expect(reinstated.atp).toBe(autoclosed.atp);
+        expect(reinstated.atp - autoclosed.atp).toBe(0);
+        expect(autoclosed.committed).toBe(0);
+        expect(reinstated.committed).toBe(0);
+        // What DID move is the review queue, and only the review queue.
+        expect(autoclosed.stale_committed).toBe(0);
+        expect(reinstated.stale_committed).toBe(1200);
+        expect(await idsIn(tx, "v_stale_commitments")).toEqual([`${P}-r22-do`]);
+        expect(await idsIn(tx, "v_autoclosed_commitments")).toEqual([]);
+      });
+    });
+
+    it("an UNDATED DO line with a 200-day-old po_date is NEVER auto-closed", async () => {
+      // The withdrawn `coalesce(estimate_delivery, po_date)` age basis would have
+      // swept this line up, and closing it would have RAISED ATP by its whole
+      // balance — a machine releasing stock a customer is owed. It stays live,
+      // stays reserving, and stays in the undated review segment for a human.
+      await inRollback(async (tx) => {
+        await seedFg(tx, [{ sn_fg: `${P}-fg-r22u`, qty: 1000 }]);
+        await seedLines(tx, [
+          {
+            id: `${P}-r22-undated`,
+            qty_balance: 1200,
+            eta: null,
+            status_order: AUTOCLOSE_STATUS,
+            so_id: `${P}-r22-so-old`,
+            po_date_days_ago: 200,
+          },
+        ]);
+        expect(await idsIn(tx, "v_autoclosed_commitments")).toEqual([]);
+        expect(await idsIn(tx, "v_live_commitments")).toEqual([`${P}-r22-undated`]);
+        const a = await atpFor(tx, BG_KEY);
+        expect(a.committed).toBe(1200); // still reserving
+        expect(a.atp).toBe(-200);       // and still visibly over-committed
+
+        // The row the PPIC queue triages it from (AMENDMENT 1 / AMENDMENT 12).
+        const [row] = await tx`
+          select undated, autoclosed, to_char(po_date, 'YYYY-MM-DD') as po_date
+          from v_live_commitments where id = ${`${P}-r22-undated`}
+        `;
+        expect(row).toMatchObject({ undated: true, autoclosed: false });
+        expect((row as { po_date: string }).po_date).not.toBeNull();
+      });
+    });
+
+    it("a DO line with neither an ETA nor a po_date stays in review too", async () => {
+      await inRollback(async (tx) => {
+        await seedLines(tx, [
+          { id: `${P}-r22-nodate`, qty_balance: 7, eta: null, status_order: AUTOCLOSE_STATUS },
+        ]);
+        // No age exists for it, so it is not a candidate — and `NULL = any(...)`
+        // must not leak a NULL into the predicate and drop it out of every set.
+        expect(await idsIn(tx, "v_autoclosed_commitments")).toEqual([]);
+        expect(await idsIn(tx, "v_live_commitments")).toEqual([`${P}-r22-nodate`]);
+      });
+    });
+
+    it(`the boundary is exact: ${AUTOCLOSE_DAYS} stays in review, ${AUTOCLOSE_DAYS + 1} is auto-closed`, async () => {
+      // Asserted across the whole neighbourhood: an off-by-one here silently
+      // reclassifies thousands of rows in the same direction.
+      await inRollback(async (tx) => {
+        await seedLines(tx, [
+          { id: `${P}-r22-a179`, qty_balance: 1, eta: AUTOCLOSE_DAYS - 1, status_order: AUTOCLOSE_STATUS },
+          { id: `${P}-r22-b180`, qty_balance: 1, eta: AUTOCLOSE_DAYS, status_order: AUTOCLOSE_STATUS },
+          { id: `${P}-r22-c181`, qty_balance: 1, eta: AUTOCLOSE_DAYS + 1, status_order: AUTOCLOSE_STATUS },
+          { id: `${P}-r22-d182`, qty_balance: 1, eta: AUTOCLOSE_DAYS + 2, status_order: AUTOCLOSE_STATUS },
+        ]);
+        expect(await idsIn(tx, "v_stale_commitments")).toEqual([
+          `${P}-r22-a179`,
+          `${P}-r22-b180`,
+        ]);
+        expect(await idsIn(tx, "v_autoclosed_commitments")).toEqual([
+          `${P}-r22-c181`,
+          `${P}-r22-d182`,
+        ]);
+      });
+    });
+
+    it("a non-DO line is untouched at any age, including 2020", async () => {
+      await inRollback(async (tx) => {
+        await seedLines(tx, [
+          { id: `${P}-r22-open-2020`, qty_balance: 9, eta: "2020-08-27" },
+          { id: `${P}-r22-waiting-900`, qty_balance: 9, eta: 900, status_order: "Waiting" },
+          { id: `${P}-r22-open-live`, qty_balance: 9, eta: 5 },
+        ]);
+        expect(await idsIn(tx, "v_autoclosed_commitments")).toEqual([]);
+        expect(await idsIn(tx, "v_stale_commitments")).toEqual([
+          `${P}-r22-open-2020`,
+          `${P}-r22-waiting-900`,
+        ]);
+        expect(await idsIn(tx, "v_live_commitments")).toEqual([`${P}-r22-open-live`]);
+      });
+    });
+
+    it("no auto-closed line is ever undated — the property that keeps ATP still", async () => {
+      await inRollback(async (tx) => {
+        await seedLines(tx, [
+          { id: `${P}-r22-x1`, qty_balance: 5, eta: 900, status_order: AUTOCLOSE_STATUS },
+          { id: `${P}-r22-x2`, qty_balance: 5, eta: null, status_order: AUTOCLOSE_STATUS },
+          { id: `${P}-r22-x3`, qty_balance: 5, eta: 400, status_order: AUTOCLOSE_STATUS },
+        ]);
+        const rows = await tx`
+          select id, undated, autoclosed, autoclose_basis
+          from v_autoclosed_commitments where id like ${`${P}%`} order by id
+        `;
+        expect(rows).toEqual([
+          { id: `${P}-r22-x1`, undated: false, autoclosed: true, autoclose_basis: "estimate_delivery" },
+          { id: `${P}-r22-x3`, undated: false, autoclosed: true, autoclose_basis: "estimate_delivery" },
+        ]);
+      });
+    });
+
+    it("a confirm-close still beats the machine, and reinstating restores the line", async () => {
+      // ST-R21 over a machine decision. A human close removes it from every set
+      // (it becomes an audited human record); a reinstate puts it back where the
+      // liveness rule says it belongs — here, the stale queue.
+      await inRollback(async (tx) => {
+        await seedLines(tx, [
+          { id: `${P}-r22-flip`, qty_balance: 50, eta: 400, status_order: AUTOCLOSE_STATUS },
+        ]);
+        expect(await idsIn(tx, "v_autoclosed_commitments")).toEqual([`${P}-r22-flip`]);
+
+        await tx`
+          insert into stock_commitment_overrides (so_line_id, state, reason, actor)
+          values (${`${P}-r22-flip`}, 'closed', 'sudah dikirim, dikonfirmasi', ${ACTOR})
+        `;
+        expect(await idsIn(tx, "v_autoclosed_commitments")).toEqual([]);
+        expect(await idsIn(tx, "v_stale_commitments")).toEqual([]);
+        expect(await idsIn(tx, "v_live_commitments")).toEqual([]);
+
+        await tx`
+          update stock_commitment_overrides set state = 'reinstated', updated_at = now()
+          where so_line_id = ${`${P}-r22-flip`}
+        `;
+        expect(await idsIn(tx, "v_stale_commitments")).toEqual([`${P}-r22-flip`]);
+        expect(await idsIn(tx, "v_autoclosed_commitments")).toEqual([]);
+      });
+    });
+
+    it("cancelled and unapproved DO lines are still dead demand, not auto-closed", async () => {
+      // Auto-close must not become a back door that resurrects a line into a set.
+      await inRollback(async (tx) => {
+        await seedLines(tx, [
+          { id: `${P}-r22-dead-1`, qty_balance: 5, eta: 900, status_order: CANCELLED[0] ?? "Cancelled" },
+          { id: `${P}-r22-dead-2`, qty_balance: 5, eta: 900, status_order: AUTOCLOSE_STATUS, approval: "Waiting" },
+          { id: `${P}-r22-dead-3`, qty_balance: 0, eta: 900, status_order: AUTOCLOSE_STATUS },
+        ]);
+        expect(await idsIn(tx, "v_autoclosed_commitments")).toEqual([]);
+        expect(await idsIn(tx, "v_stale_commitments")).toEqual([]);
+        expect(await idsIn(tx, "v_live_commitments")).toEqual([]);
+      });
+    });
+  });
+
   // ── Dead demand must not reserve ─────────────────────────────────────────
 
   describe("dead demand reserves nothing", () => {
@@ -714,7 +942,7 @@ describe.skipIf(!hasDb)("ATP over the real schema", () => {
 
   // ── The partition property (invariant §7.6 as reworded by AMENDMENT 2) ───
 
-  describe("invariant §7.6 — live / stale / exception partition every countable line", () => {
+  describe("invariant §7.6 — live / stale / autoclosed partition every countable line", () => {
     /**
      * The universe, per AMENDMENT 2: approved, non-cancelled, `qty_balance > 0`.
      * Confirm-closed lines are excluded from the universe too — a closed line is
@@ -722,12 +950,15 @@ describe.skipIf(!hasDb)("ATP over the real schema", () => {
      * `stock_commitment_overrides`, which is the opposite of "silently dropped".
      * That narrowing is implied by §0 but not spelled in §7.6; see the WP-7 report.
      *
-     * With the schema as built there is no third bucket: an unmatched SKU is
-     * still a live commitment (ST-R5.3 requires it to read ATP-negative, not to
-     * vanish), and the ST-R5.4 UoM exception cannot occur because the mirror
-     * carries no unit column. So the exception set must be EMPTY, and the
-     * partition reduces to `live ⊎ stale = U`. A line in the residual is exactly
-     * the failure mode the stale queue exists to prevent.
+     * An unmatched SKU is NOT a third bucket: ST-R5.3 requires it to read
+     * ATP-negative rather than vanish, so it is a live commitment with a label,
+     * and the ST-R5.4 UoM exception cannot occur because the mirror carries no
+     * unit column.
+     *
+     * ST-R22 DOES add a third bucket, and it is a real one: `autoclosed`. So the
+     * partition is now `live ⊎ stale ⊎ autoclosed = U`. A line in the residual is
+     * exactly the failure mode the review queue exists to prevent — it reserves
+     * nothing and appears in no queue, which silently inflates ATP.
      */
     const POPULATION: LineRow[] = [
       // live, in every shape
@@ -742,7 +973,20 @@ describe.skipIf(!hasDb)("ATP over the real schema", () => {
       // stale
       { id: `${P}-p-stale-edge`, qty_balance: 3, eta: WINDOW_DAYS + 1 },
       { id: `${P}-p-stale-2020`, qty_balance: 3, eta: "2020-08-27" },
-      { id: `${P}-p-stale-do`, qty_balance: 3, eta: 900, status_order: "DO" },
+      // A DO line INSIDE the auto-close threshold: still a human's decision.
+      { id: `${P}-p-stale-do`, qty_balance: 3, eta: AUTOCLOSE_DAYS - 1, status_order: "DO" },
+      // autoclosed (ST-R22) — DO, and past the threshold
+      { id: `${P}-p-auto-do`, qty_balance: 3, eta: 900, status_order: "DO" },
+      { id: `${P}-p-auto-edge`, qty_balance: 3, eta: AUTOCLOSE_DAYS + 1, status_order: "DO" },
+      // DO but UNDATED — never a candidate at any po_date, so it stays LIVE.
+      {
+        id: `${P}-p-undated-do`,
+        qty_balance: 4,
+        eta: null,
+        status_order: "DO",
+        so_id: `${P}-so-oldpo`,
+        po_date_days_ago: 900,
+      },
       // outside the universe — dead demand
       { id: `${P}-p-dead-draft`, qty_balance: 5, eta: 5, approval: "Waiting" },
       { id: `${P}-p-dead-draft-null`, qty_balance: 5, eta: null, approval: "Draft" },
@@ -768,38 +1012,48 @@ describe.skipIf(!hasDb)("ATP over the real schema", () => {
       return (rows as { id: string }[]).map((r) => r.id);
     }
 
-    it("live and stale are disjoint", async () => {
+    /** The three sets, as arrays, in one round of reads. */
+    async function sets(tx: Tx): Promise<{ live: string[]; stale: string[]; auto: string[] }> {
+      return {
+        live: await idsIn(tx, "v_live_commitments"),
+        stale: await idsIn(tx, "v_stale_commitments"),
+        auto: await idsIn(tx, "v_autoclosed_commitments"),
+      };
+    }
+
+    it("live, stale and autoclosed are pairwise disjoint", async () => {
       await inRollback(async (tx) => {
         await seedLines(tx, POPULATION);
-        const live = new Set(await idsIn(tx, "v_live_commitments"));
-        const stale = await idsIn(tx, "v_stale_commitments");
-        expect(stale.filter((id) => live.has(id))).toEqual([]);
+        const { live, stale, auto } = await sets(tx);
+        const liveSet = new Set(live);
+        const staleSet = new Set(stale);
+        expect(stale.filter((id) => liveSet.has(id))).toEqual([]);
+        expect(auto.filter((id) => liveSet.has(id))).toEqual([]);
+        expect(auto.filter((id) => staleSet.has(id))).toEqual([]);
       });
     });
 
-    it("live ∪ stale covers the universe — the exception residual is empty", async () => {
+    it("live ∪ stale ∪ autoclosed covers the universe — the residual is empty", async () => {
       await inRollback(async (tx) => {
         await seedLines(tx, POPULATION);
         const u = await universe(tx);
-        const classified = new Set([
-          ...(await idsIn(tx, "v_live_commitments")),
-          ...(await idsIn(tx, "v_stale_commitments")),
-        ]);
+        const { live, stale, auto } = await sets(tx);
+        const classified = new Set([...live, ...stale, ...auto]);
         // Every countable line must land somewhere. A line in this residual
         // reserves nothing AND appears in no queue: it silently inflates ATP.
+        // ST-R22 is the reason this property is worth re-running: an auto-close
+        // is a REMOVAL from two sets, and a removal that lands nowhere is exactly
+        // the silent drop §7.6 forbids.
         expect(u.filter((id) => !classified.has(id))).toEqual([]);
       });
     });
 
-    it("neither view reaches outside the universe", async () => {
+    it("no view reaches outside the universe", async () => {
       await inRollback(async (tx) => {
         await seedLines(tx, POPULATION);
         const u = new Set(await universe(tx));
-        const classified = [
-          ...(await idsIn(tx, "v_live_commitments")),
-          ...(await idsIn(tx, "v_stale_commitments")),
-        ];
-        expect(classified.filter((id) => !u.has(id))).toEqual([]);
+        const { live, stale, auto } = await sets(tx);
+        expect([...live, ...stale, ...auto].filter((id) => !u.has(id))).toEqual([]);
       });
     });
 
@@ -813,12 +1067,32 @@ describe.skipIf(!hasDb)("ATP over the real schema", () => {
           `;
         }
         const u = await universe(tx);
-        const live = new Set(await idsIn(tx, "v_live_commitments"));
-        const stale = await idsIn(tx, "v_stale_commitments");
-        expect(stale.filter((id) => live.has(id))).toEqual([]);
-        const classified = new Set([...live, ...stale]);
+        const { live, stale, auto } = await sets(tx);
+        const liveSet = new Set(live);
+        expect(stale.filter((id) => liveSet.has(id))).toEqual([]);
+        expect(auto.filter((id) => liveSet.has(id))).toEqual([]);
+        const classified = new Set([...live, ...stale, ...auto]);
         expect(u.filter((id) => !classified.has(id))).toEqual([]);
         expect([...classified].filter((id) => !u.includes(id))).toEqual([]);
+      });
+    });
+
+    it("the partition still holds once an auto-closed line is reinstated", async () => {
+      // ST-R21 applied to a machine decision: the override lifts the auto-close
+      // and the line must reappear in exactly one set, not none and not two.
+      await inRollback(async (tx) => {
+        await seedLines(tx, POPULATION);
+        await tx`
+          insert into stock_commitment_overrides (so_line_id, state, reason, actor)
+          values (${`${P}-p-auto-do`}, 'reinstated', 'PPIC says it never shipped', ${ACTOR})
+        `;
+        const u = await universe(tx);
+        const { live, stale, auto } = await sets(tx);
+        expect(auto).not.toContain(`${P}-p-auto-do`);
+        expect(stale).toContain(`${P}-p-auto-do`);
+        expect(live).not.toContain(`${P}-p-auto-do`);
+        const classified = new Set([...live, ...stale, ...auto]);
+        expect(u.filter((id) => !classified.has(id))).toEqual([]);
       });
     });
 
@@ -828,11 +1102,11 @@ describe.skipIf(!hasDb)("ATP over the real schema", () => {
       await inRollback(async (tx) => {
         await seedLines(tx, POPULATION);
         const u = await universe(tx);
-        const live = await idsIn(tx, "v_live_commitments");
-        const stale = await idsIn(tx, "v_stale_commitments");
+        const { live, stale, auto } = await sets(tx);
         const all = await tx`select id from erp_so_line where id like ${`${P}%`}`;
         expect(live.length).toBeGreaterThanOrEqual(5);
         expect(stale.length).toBeGreaterThanOrEqual(3);
+        expect(auto.length).toBeGreaterThanOrEqual(2);
         expect(u.length).toBeLessThan((all as unknown[]).length); // dead demand exists
       });
     });

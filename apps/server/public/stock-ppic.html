@@ -650,8 +650,17 @@ async function loadSummary(){
   if(modalOpen()||typing()){ PENDING_SUMMARY=next; HAD_SUMMARY=true; return; }
   applySummary(next);
 }
+// The queue's own fingerprint: stale + undated + auto-closed. Any of the three
+// moving under a finger is a reason to OFFER a refresh (§6.9), never to take
+// one — including the auto-close rule running and quietly emptying rows the
+// operator is looking at.
+function queueSig(t){
+  if(!t) return null;
+  const a=nOrNull(t.stale_commitments), b=nOrNull(t.undated_commitments), c=nOrNull(t.autoclosed_commitments);
+  return (a==null&&b==null&&c==null)?null:`${a}/${b}/${c}`;
+}
 function applySummary(next){
-  const prevStale=SUMMARY.totals?nOrNull(SUMMARY.totals.stale_commitments):null;
+  const prevSig=queueSig(SUMMARY.totals);
   SUMMARY=next; HAD_SUMMARY=true;
   // §9.4 — one announcement per transition, never per poll.
   if(WAS_STALE&&SUMMARY.freshness.stale===false) toast("Data ERP sudah diperbarui.","ok");
@@ -660,8 +669,8 @@ function applySummary(next){
   if(WAS_OFF===false&&SUMMARY.freshness.erp_connected===false) announce("ERP tidak terhubung.");
   WAS_OFF=SUMMARY.freshness.erp_connected===false;
   // §6.9 — tab 2 never auto-refreshes its rows; it offers the choice instead.
-  const nowStale=nOrNull(SUMMARY.totals.stale_commitments);
-  if(TAB==="lama"&&LM.rows.length&&prevStale!=null&&nowStale!=null&&prevStale!==nowStale) LM.changed=true;
+  const nowSig=queueSig(SUMMARY.totals);
+  if(TAB==="lama"&&LM.rows.length&&prevSig!=null&&nowSig!=null&&prevSig!==nowSig) LM.changed=true;
   renderFreshness(); renderSkuAlarm(); renderTabs(); renderSkuList(); applyLocks();
   if(TAB==="lama") renderUpdPill();
 }
@@ -1013,14 +1022,21 @@ const TABS=[
   {id:"sinkron",    label:"Sinkronisasi",  badge:()=>null},
 ];
 // §6.2.1 — the badge is stale + undated combined, with a title breaking it down.
+//
+// ST-R22: the auto-closed count is DELIBERATELY NOT in the badge. The badge
+// counts decisions a human still owes; an auto-closed line owes none — it is
+// review work already removed. Adding it would inflate the queue badge at the
+// exact moment the queue got smaller, which is the opposite of what happened.
+// It rides in the title instead, where it reads as context, not as a backlog.
 function lamaBadge(){
-  const s=nOrNull(SUMMARY.totals.stale_commitments), u=SEGTOTAL.undated;
+  const s=nOrNull(SUMMARY.totals.stale_commitments), u=segCount("undated");
   if(s==null&&u==null) return null;
   return n(s)+n(u);
 }
 function lamaTitle(){
-  const s=nOrNull(SUMMARY.totals.stale_commitments), u=SEGTOTAL.undated;
-  return `${s==null?"—":num(s)} ETA lewat${u==null?"":` · ${num(u)} tanpa ETA`}`;
+  const s=nOrNull(SUMMARY.totals.stale_commitments), u=segCount("undated"), a=segCount("autoclosed");
+  return `${s==null?"—":num(s)} ETA lewat${u==null?"":` · ${num(u)} tanpa ETA`}`
+       + (a==null?"":` · ${num(a)} ditutup otomatis (tidak perlu keputusan)`);
 }
 const hashTab=()=>(location.hash||"").replace(/^#/,"").split(":")[0].split("?")[0];
 const hashSeg=()=>((location.hash||"").split(":")[1]||"").split("?")[0];
@@ -1144,13 +1160,25 @@ function renderShortfall(){
 /* ════════════════════════════════════════════════════════════════════════════
    TAB 2 · Tinjau Pesanan (ST-R18 / ST-R21 / AMENDMENT 1 + 6) — the centrepiece.
 
-   Two segments, never mixed (AMENDMENT 6 / UX-SPEC §6.2.1):
+   Four segments, never mixed (AMENDMENT 6 + 20 / UX-SPEC §6.2.1, §6.2.3):
      segment=stale    ETA past the window. Closing is COSMETIC — ATP unchanged.
                       One tap, composed reason, bulk close available.
      segment=undated  ETA null. These are LIVE and reserving. Closing RAISES ATP
                       by qty_balance. Inline confirm + typed reason every time,
                       per-row "efek jika ditutup" in the row, NO bulk close at all.
+     segment=autoclosed  ST-R22: the machine already closed these — an aged
+                      delivery order it treats as delivered. NOTHING WAS
+                      RELEASED: every line here failed the liveness window long
+                      before the rule reached it, so the count is review work
+                      removed, never stock freed. Read-only except Aktifkan Lagi,
+                      which goes through the SAME ST-R21 endpoint as a human
+                      close, because a machine decision deserves more
+                      auditability than a human one, not less.
      segment=closed   the recovery path once the session tray is gone.
+
+   An UNDATED line is never auto-closed at any age (AMENDMENT 20) — it stays
+   live, stays reserving, and stays in Tanpa ETA. That is what makes the rule
+   ATP-neutral, so the two segments must never blur into each other.
 
    The ~4,158-row triage problem is solved by: server paging at limit=50 (one
    desk screenful, and it bounds "select all on this page" to ≤50 by
@@ -1161,14 +1189,27 @@ function renderShortfall(){
    segment=closed).
    ════════════════════════════════════════════════════════════════════════════ */
 const AGE_CHIPS=[["0","Semua"],["180","> 6 bulan"],["365","> 1 tahun"],["1095","> 3 tahun"]];
-const SEG_LABEL={stale:"ETA Lewat",undated:"Tanpa ETA",closed:"Yang sudah ditutup"};
+const SEG_LABEL={stale:"ETA Lewat",undated:"Tanpa ETA",autoclosed:"Ditutup Otomatis",
+                 closed:"Yang sudah ditutup"};
+const SEG_ORDER=["stale","undated","autoclosed"];
 const SEGTOTAL={stale:null,undated:null};
+// The count behind each segment chip. `autoclosed` has a real total in /summary
+// (totals.autoclosed_commitments) and therefore never needs the counting probe;
+// the other two prefer the count learned from their own unfiltered page and fall
+// back to /summary so the control states a number on first paint.
+function segCount(s){
+  const t=SUMMARY.totals||{};
+  if(s==="autoclosed") return nOrNull(t.autoclosed_commitments);
+  if(s==="closed") return null;                 // no total exists; none is invented
+  if(SEGTOTAL[s]!=null) return SEGTOTAL[s];
+  return nOrNull(s==="stale"?t.stale_commitments:t.undated_commitments);
+}
 const LM={seg:"stale",page:1,limit:50,q:"",age:0,status:"",onlyDo:false,
           rows:[],total:null,grand:null,loading:false,sel:new Set(),fail:false,
           changed:false,facets:false};
 let TINJAU_LOADED=false, EXPANDED=null, TRAY=[];
 const TRAY_CAP=200;
-{ const s=hashSeg(); if(s==="undated"||s==="closed") LM.seg=s; }
+{ const s=hashSeg(); if(s==="undated"||s==="closed"||s==="autoclosed") LM.seg=s; }
 
 function normStale(r){
   const eta=pick(r,"estimate_delivery");
@@ -1187,9 +1228,17 @@ function normStale(r){
     status_order:pick(r,"status_order"),
     estimate_delivery:eta,
     undated:r.undated===true||eta==null,                  // AMENDMENT 1
+    // ST-R22 / AMENDMENT 20 — the machine's own grounds, carried on the row so
+    // the page narrates them instead of re-deriving the rule. The threshold and
+    // the qualifying status list are CONFIG and live server-side; nothing here
+    // may re-spell them.
+    autoclosed:r.autoclosed===true||st==="autoclosed",
+    autoclose_basis:pick(r,"autoclose_basis"),             // WHICH date the age was measured from
+    age_days:nOrNull(r.age_days),                          // HOW OLD, as the rule measured it
     ov_actor:(r.override&&r.override.actor)||pick(r,"override_actor"),
     ov_reason:(r.override&&r.override.reason)||pick(r,"override_reason"),
     _closed:st==="closed",
+    _landed:null,                                          // where a reinstate put it back
   };
 }
 // AMENDMENT 6c — one `segment` parameter replaces the ad-hoc state/undated pair.
@@ -1222,8 +1271,10 @@ async function loadLama(){
   let rows=readRows(res.json).map(normStale);
   LM.total=readTotal(res.json);
   LM.grand=nOrNull(pick(res.json,"grand_total","unfiltered_total"));
-  if(LM.grand==null&&LM.seg==="stale") LM.grand=nOrNull(SUMMARY.totals.stale_commitments);
-  if(LM.seg!=="closed"&&LM.total!=null&&!LM.q&&!LM.age&&!LM.status&&!LM.onlyDo) SEGTOTAL[LM.seg]=LM.total;
+  if((LM.seg==="stale"||LM.seg==="undated")&&LM.total!=null&&!LM.q&&!LM.age&&!LM.status&&!LM.onlyDo) SEGTOTAL[LM.seg]=LM.total;
+  // "difilter dari N" is per-segment, never a cross-segment number: the
+  // populations are never mixed, so neither are their totals.
+  if(LM.grand==null) LM.grand=segCount(LM.seg);
   // Safety net only: if the endpoint ever ignores page/limit, page here so the
   // DOM still never holds thousands of rows.
   if(rows.length>LM.limit){
@@ -1242,9 +1293,12 @@ async function loadLama(){
   if(lbl&&lbl.nodeType===3) lbl.nodeValue=LM.facets?"Status SO":"Status (halaman ini)";
   renderLama(); renderTray(); renderTabs();
   announce(`Menampilkan ${num(LM.rows.length)}${LM.total!=null?` dari ${num(LM.total)}`:""} baris.`);
-  // Learn the other segment's count once, so the segmented control and the tab
-  // badge can both state real numbers (no combined total exists in /summary).
-  if(SEGTOTAL.undated==null&&LM.seg!=="undated") probeUndatedCount();
+  // Learn the Tanpa ETA count once — but only when /summary does not already
+  // carry it. `totals.undated_commitments` (AMENDMENT 12) and
+  // `totals.autoclosed_commitments` (ST-R22) retire this probe on any current
+  // server; it survives only so an older deploy still labels the control.
+  if(SEGTOTAL.undated==null&&LM.seg!=="undated"
+     &&nOrNull((SUMMARY.totals||{}).undated_commitments)==null) probeUndatedCount();
 }
 async function probeUndatedCount(){
   const r=await api("/api/stock/stale-commitments?segment=undated&page=1&limit=1");
@@ -1254,17 +1308,26 @@ async function probeUndatedCount(){
 const SUBTITLE={
   stale:`Sales Order di bawah masih punya sisa, tapi ETA-nya sudah lewat lebih dari 60 hari. Baris ini <b>TIDAK</b> memotong angka Bisa Dijual. Tutup baris yang sudah jelas selesai atau batal agar antrean ini bersih.`,
   undated:`Sales Order di bawah sudah disetujui dan masih punya sisa, tapi belum punya tanggal kirim. Baris ini <b>TETAP</b> memotong angka Bisa Dijual — pesanannya nyata, hanya belum dijadwalkan. Menutup baris di sini akan <b>MENAMBAH</b> angka Bisa Dijual, jadi tutup hanya kalau pesanannya memang sudah batal.`,
+  // ST-R22 / AMENDMENT 20. Three things, in this order, and none of them may be
+  // dropped: the system closed it (not a petugas) · why (terkirim, ETA jauh
+  // lewat) · and that Bisa Dijual did not move. The last sentence is the one
+  // that must never turn into "stok dilepas": nothing was released, because
+  // nothing here was still being counted.
+  autoclosed:`Baris di bawah <b>ditutup otomatis oleh sistem</b>, bukan oleh petugas: status SO-nya menandakan barang sudah terkirim dan ETA-nya sudah jauh lewat. Angka Bisa Dijual <b>TIDAK berubah</b> — baris ini memang sudah tidak ikut dihitung sebelum ditutup, jadi yang berkurang hanya antrean tinjauan. Aktifkan lagi kalau pesanannya ternyata masih berjalan.`,
   closed:`Baris yang sudah ditutup. Ini jalur pemulihan kalau daftar "Baru Ditutup" sudah hilang — aktifkan lagi baris yang ternyata masih berjalan.`,
 };
 const FOOTER={
   stale:`Diurutkan dari ETA paling lama. Untuk penutupan massal di luar halaman ini, hubungi tim IT.`,
   undated:`Diurutkan dari sisa pesanan terbesar. Baris tanpa ETA ditutup satu per satu karena masing-masing menambah angka Bisa Dijual.`,
+  autoclosed:`Diurutkan dari ETA paling lama. Pesanan tanpa ETA tidak pernah ditutup otomatis pada umur berapa pun — baris itu tetap di segmen Tanpa ETA dan tetap memotong angka Bisa Dijual.`,
   closed:`Penutupan tercatat permanen di log audit; mengaktifkan lagi tidak menghapus catatannya.`,
 };
 function renderLamaChrome(){
-  // §6.2.1 segmented control — two populations, never a "Semua" option.
-  $("#lmSeg").innerHTML=["stale","undated"].map(s=>{
-    const c=SEGTOTAL[s];
+  // §6.2.1 + §6.2.3 segmented control — three populations, never a "Semua"
+  // option. `segment=all` exists on the wire but is close-batch's write scope,
+  // not a view, and it deliberately excludes the auto-closed set (AMENDMENT 20).
+  $("#lmSeg").innerHTML=SEG_ORDER.map(s=>{
+    const c=segCount(s);
     return `<button class="fchip" role="tab" data-seg="${s}" aria-selected="${LM.seg===s?"true":"false"}">${esc(SEG_LABEL[s])}${c==null?"":`<span class="n">${esc(num(c))}</span>`}</button>`;
   }).join("")
    + `<button class="fchip" data-seg="closed" aria-pressed="${LM.seg==="closed"?"true":"false"}">Yang sudah ditutup</button>`;
@@ -1348,9 +1411,11 @@ function renderLama(){
     }else{
       el.innerHTML=`<div class="empty">${LM.seg==="closed"
         ? "Belum ada baris yang ditutup."
-        : LM.seg==="undated"
-          ? "Tidak ada pesanan tanpa tanggal kirim.<br>Semua Sales Order yang disetujui sudah punya ETA."
-          : "Tidak ada pesanan dengan ETA lewat.<br>Semua Sales Order terbuka punya ETA dalam 60 hari terakhir."}</div>`;
+        : LM.seg==="autoclosed"
+          ? "Belum ada baris yang ditutup otomatis oleh sistem.<br>Angka Bisa Dijual tidak terpengaruh oleh segmen ini."
+          : LM.seg==="undated"
+            ? "Tidak ada pesanan tanpa tanggal kirim.<br>Semua Sales Order yang disetujui sudah punya ETA."
+            : "Tidak ada pesanan dengan ETA lewat.<br>Semua Sales Order terbuka punya ETA dalam 60 hari terakhir."}</div>`;
     }
     return;
   }
@@ -1361,22 +1426,70 @@ function renderLama(){
   const bulk=bulkAllowed();
   const closable=LM.rows.filter(r=>!r._closed);
   const selHere=LM.rows.filter(r=>LM.sel.has(r.so_line_id)).length;
-  const und=LM.seg==="undated";
-  const cap=und?"Antrean pesanan tanpa tanggal kirim":LM.seg==="closed"?"Baris yang sudah ditutup":"Antrean pesanan dengan ETA lewat";
+  const und=LM.seg==="undated", auto=LM.seg==="autoclosed";
+  const cap=und?"Antrean pesanan tanpa tanggal kirim"
+    :auto?"Baris yang ditutup otomatis oleh sistem"
+    :LM.seg==="closed"?"Baris yang sudah ditutup":"Antrean pesanan dengan ETA lewat";
   const head=`<tr>
     ${bulk?`<th class="cbcell"><input type="checkbox" id="lmAll" ${selHere>0&&selHere===closable.length?"checked":""}
       aria-label="Pilih semua di halaman ini (${LM.rows.length})" /></th>`:""}
     <th>SKU</th><th>Customer</th><th>No. SO</th><th>ETA</th><th>Umur</th>
     <th style="text-align:right">Sisa Pesanan</th><th>Status SO</th>
-    ${und?`<th>Efek jika ditutup</th>`:""}<th>Aksi</th></tr>`;
+    ${und?`<th>Efek jika ditutup</th>`:""}${auto?`<th>Dasar penutupan</th>`:""}<th>Aksi</th></tr>`;
   el.innerHTML=`<table class="stick1"><caption class="sr-only">${esc(cap)}</caption>
     <thead>${head}</thead><tbody>${LM.rows.map(r=>rowLama(r,bulk,und)).join("")}</tbody></table>`;
   $("#lmPagerTop").innerHTML=lmPagerHtml(); bindPager($("#lmPagerTop"));
   $("#lmPager").innerHTML=lmPagerHtml();     bindPager($("#lmPager"));
   bindLamaRows(); renderBulkBar(); applyLocks();
 }
-function colspan(){ return (bulkAllowed()?1:0)+(LM.seg==="undated"?1:0)+8; }
+function colspan(){ return (bulkAllowed()?1:0)+(LM.seg==="undated"?1:0)+(LM.seg==="autoclosed"?1:0)+8; }
+
+/* ── ST-R22 · the grounds cell ────────────────────────────────────────────────
+   The row states WHY it was closed out of the fields the server put on it, and
+   out of nothing else. The rule — which statuses qualify, how many days — is
+   config that lives server-side (STOCK_AUTOCLOSE_STATUSES /
+   STOCK_AUTOCLOSE_AFTER_DAYS); re-spelling it here would leave the page
+   narrating yesterday's rule the day someone changes a variable. So:
+     status_order    → which status qualified it
+     age_days        → how old, as the rule measured it
+     autoclose_basis → which date column that age was measured from
+   `autoclose_basis` arrives as the column name, so it gets the §1.6 treatment a
+   raw code always gets: a known name is translated, an unknown one is rendered
+   LABELLED as a column, never passed off as prose.                           */
+const BASIS_LABEL={estimate_delivery:"ETA",po_date:"tanggal pesan"};
+function basisLabel(b){
+  const k=trimStr(b);
+  if(!k) return "";
+  return BASIS_LABEL[k] || `kolom ${k}`;
+}
+function dasarCell(r){
+  if(r._landed){                       // reinstated in this session — say where it went
+    return `<span class="chip st-tersedia">Aktif lagi</span>`
+         + `<div class="sub2">${esc(LANDED[r._landed]||"kembali dinilai oleh aturan")}</div>`;
+  }
+  const b=basisLabel(r.autoclose_basis);
+  const bits=[];
+  if(trimStr(r.status_order)) bits.push(`Status SO ${trimStr(r.status_order)}`);
+  if(r.age_days!=null) bits.push(`${num(r.age_days)} hari sejak ${b||"tanggal acuan"}`);
+  else if(b) bits.push(`dihitung dari ${b}`);
+  // Same neutral chip as the human `Ditutup` result chip (§1.5): both are closed,
+  // and that IS the shared fact. What differs — who closed it — is carried by the
+  // words, never by colour alone (§9.5). An age-tier pill would be wrong here: it
+  // would claim a tier about the line's age rather than name its state.
+  return `<span class="chip st-kosong">Ditutup otomatis oleh sistem</span>`
+       + (bits.length?`<div class="sub2">${esc(bits.join(" · "))}</div>`:"");
+}
+// Where a reinstate handed the line back to. The liveness rule decides this, not
+// the page — we only name the answer the server returned.
+const LANDED={
+  live:"kembali jadi pesanan aktif",
+  stale:"masuk antrean ETA Lewat",
+  autoclosed:"masih ditutup otomatis",
+  closed:"tercatat ditutup oleh petugas",
+};
+
 function rowLama(r,bulk,und){
+  const auto=LM.seg==="autoclosed";
   const days=daysSince(r.estimate_delivery);
   const statusChip=r.status_order
     ? `<span class="chip umur${String(r.status_order).toUpperCase()==="DO"?" old":""}">${esc(r.status_order)}</span>` : "—";
@@ -1387,11 +1500,20 @@ function rowLama(r,bulk,und){
   const etaCell=r.undated
     ? `<span class="chip st-habis">Tanpa ETA</span>`      // never a bare em dash
     : esc(wibShort(r.estimate_delivery));
-  const aksi=r._closed
-    ? `<span class="chip st-kosong">Ditutup</span> <button class="btn ghost mini tap" data-write data-reinstate="${esc(r.so_line_id)}">Aktifkan Lagi</button>`
-    : und
-      ? `<button class="btn danger mini tap" data-write data-expand="${esc(r.so_line_id)}">Tutup</button>`
-      : `<button class="btn ghost mini tap" data-write data-close="${esc(r.so_line_id)}">Tutup</button>`;
+  // An auto-closed line is already closed: it is never offered `Tutup`, only the
+  // SAME ST-R21 reinstate a human close gets (AMENDMENT 20 — no second
+  // mechanism). Once reinstated in this session the row keeps its place but
+  // offers nothing further: it has left this population, and the segment it
+  // landed in is where it is acted on.
+  const aksi=(auto&&!r._closed)
+    ? (r._landed
+        ? `<span class="sub2">Ditinjau di segmen ${esc(r._landed==="live"?"Tanpa ETA / pesanan aktif":r._landed==="stale"?"ETA Lewat":SEG_LABEL[r._landed]||"lain")}</span>`
+        : `<button class="btn ghost mini tap" data-write data-reinstate="${esc(r.so_line_id)}">Aktifkan Lagi</button>`)
+    : r._closed
+      ? `<span class="chip st-kosong">Ditutup</span> <button class="btn ghost mini tap" data-write data-reinstate="${esc(r.so_line_id)}">Aktifkan Lagi</button>`
+      : und
+        ? `<button class="btn danger mini tap" data-write data-expand="${esc(r.so_line_id)}">Tutup</button>`
+        : `<button class="btn ghost mini tap" data-write data-close="${esc(r.so_line_id)}">Tutup</button>`;
   // FIX 5c — a row the server refused to close (it had left the segment the
   // selection was assembled from) stays open and keeps reserving. It gets its
   // own row tint and an explicit "Tidak ditutup" chip, because the one thing it
@@ -1408,6 +1530,7 @@ function rowLama(r,bulk,und){
     <td class="sisa nums">${esc(num(r.qty_balance))}</td>
     <td>${statusChip}</td>
     ${und?`<td class="gain">${r._closed?"—":`Bisa Dijual ${esc(signed(r.qty_balance))}`}</td>`:""}
+    ${auto?`<td>${dasarCell(r)}</td>`:""}
     <td style="white-space:nowrap">${skipChip}${aksi}</td>
   </tr>`;
 }
@@ -1561,6 +1684,15 @@ function markClosed(r,delta){
   if(tr){ tr.outerHTML=rowLama(r,bulkAllowed(),LM.seg==="undated"); bindLamaRows(); }
   renderBulkBar(); renderTray(); applyLocks();
 }
+/* One reinstate path for both kinds of close, human and machine (ST-R21 /
+   AMENDMENT 20: no second mechanism). The consequence it reports is always the
+   server's measured `atp_delta`, never a guess from the row:
+     · undoing a human close on a stale line   → 0
+     · undoing a human close on an undated line → NEGATIVE (it reserves again)
+     · undoing an auto-close                    → normally 0, because the line
+       lands back in ETA Lewat, outside the sum — but the page states whatever
+       came back, so a config change that made it non-zero is visible rather
+       than papered over. The sign decides the verb; we never assume one. */
 async function reinstateOne(id,btn){
   if(!requireActor()) return;
   busy(btn,"Mengaktifkan…");
@@ -1568,15 +1700,17 @@ async function reinstateOne(id,btn){
   if(!res.ok){ writeFailed("rein_"+id,res,"Gagal mengaktifkan lagi. Coba lagi.",btn,"Aktifkan Lagi"); return; }
   writeOk("rein_"+id);
   const j=res.json||{}; const delta=nOrNull(j.atp_delta);
+  const landed=(j.commitment&&trimStr(j.commitment.state))||null;
   const r=LM.rows.find(x=>eq(x.so_line_id,id));
   TRAY=TRAY.filter(t=>!eq(t.so_line_id,id));
-  if(r){ r._closed=false;
+  if(r){ r._closed=false; r.autoclosed=false; r._landed=landed;
     const tr=$(`[data-row="${CSS.escape(id)}"]`,$("#lmBody"));
     if(tr){ tr.outerHTML=rowLama(r,bulkAllowed(),LM.seg==="undated"); bindLamaRows(); } }
   renderTray(); applyLocks();
+  const where=landed&&LANDED[landed]?` — ${LANDED[landed]}`:"";
   toast(delta==null||delta===0
-    ? "Baris aktif lagi. Angka Bisa Dijual tidak berubah."
-    : `Baris aktif lagi. Bisa Dijual ${r?skuLabel(r):""} turun ${num(Math.abs(delta))} lembar.`.replace("  "," "),"ok");
+    ? `Baris aktif lagi${where}. Angka Bisa Dijual tidak berubah.`
+    : `Baris aktif lagi. Bisa Dijual ${r?skuLabel(r):""} ${delta<0?"turun":"naik"} ${num(Math.abs(delta))} lembar.`.replace("  "," "),"ok");
   loadSummary();
 }
 // ── the "Baru Ditutup" tray (UX-SPEC §6.7) ──────────────────────────────────
@@ -2247,6 +2381,11 @@ async function openSku(sku){
   const it=j.item||skuByKey(sku)||{sku_key:sku};
   const live=Array.isArray(j.live_commitments)?j.live_commitments:[];
   const stale=Array.isArray(j.stale_commitments)?j.stale_commitments:[];
+  // ST-R22 — listed so a SKU's ERP "open" balance still reconciles on screen
+  // after the review queue stops asking about these lines. NOT in the
+  // arithmetic below, because it never was in it: `autoclosed_committed` is not
+  // subtracted from Bisa Dijual and closing these lines subtracted nothing.
+  const autoc=Array.isArray(j.autoclosed_commitments)?j.autoclosed_commitments:[];
   const adjs=Array.isArray(j.adjustments)?j.adjustments:[];
   const on_hand=n(it.on_hand), committed=n(it.committed), adjustment=n(it.adjustment);
   const atp=it.atp!=null?n(it.atp):(on_hand+adjustment-committed);
@@ -2279,6 +2418,9 @@ async function openSku(sku){
     ${lineTbl(live,"Pesanan aktif untuk SKU ini")}
     <h2 style="background:none;border:none;padding:14px 0 6px;font-size:13px">Pesanan Lama — tidak dihitung (${esc(num(stale.length))})</h2>
     ${lineTbl(stale,"Pesanan lama untuk SKU ini")}
+    ${autoc.length?`<h2 style="background:none;border:none;padding:14px 0 6px;font-size:13px">Ditutup Otomatis — tidak dihitung (${esc(num(autoc.length))})</h2>
+      <p class="metaline">Ditutup oleh sistem karena barang sudah terkirim dan ETA-nya jauh lewat. Tidak pernah ikut dihitung, jadi angka Bisa Dijual di atas tidak berubah karenanya.</p>
+      ${lineTbl(autoc,"Pesanan yang ditutup otomatis untuk SKU ini")}`:""}
     ${adjs.length?`<h2 style="background:none;border:none;padding:14px 0 6px;font-size:13px">Penyesuaian (${esc(num(adjs.length))})</h2>
       <div class="scrollx"><table><caption class="sr-only">Penyesuaian untuk SKU ini</caption><tbody>${adjs.map(a=>{const x=normAdj(a);return `<tr>
         <td>${esc(wib(x.created_at))}</td><td class="sisa nums">${esc(signed(x.qty_delta))}</td>
@@ -2305,7 +2447,7 @@ setInterval(loadConnStatus,60000);
 window.addEventListener("hashchange",()=>{
   const h=hashTab(), s=hashSeg();
   if(TABS.some(t=>t.id===h)&&h!==TAB){ TAB=h; renderTabs(); loadTab(h); }
-  if(h==="lama"&&s&&s!==LM.seg&&["stale","undated","closed"].includes(s)){ LM.seg=s; LM.page=1; loadLama(); }
+  if(h==="lama"&&s&&s!==LM.seg&&["stale","undated","autoclosed","closed"].includes(s)){ LM.seg=s; LM.page=1; loadLama(); }
 });
 </script>
 </body>

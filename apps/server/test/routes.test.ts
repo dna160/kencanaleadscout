@@ -66,6 +66,7 @@ vi.mock("../src/db/client.js", async () => {
   return { ...actual, getSql: () => holder.tx ?? actual.getSql() };
 });
 
+import { config } from "../src/config.js";
 import { canonicalSkuKey, type SkuParts } from "../src/erp/sku.js";
 import { closeDatabase, getSql } from "../src/db/client.js";
 import { runErpStockMigrations } from "../src/db/migrateErpStock.js";
@@ -84,6 +85,10 @@ import type {
 } from "../src/routes/stock-atp.js";
 
 const hasDb = Boolean(process.env.DATABASE_URL);
+
+/** ST-R22 knobs, read from config so no fixture restates a threshold as a literal. */
+const AUTOCLOSE_DAYS = config.stock.autocloseAfterDays;
+const AUTOCLOSE_STATUS = config.stock.autocloseStatuses[0] ?? "DO";
 
 /** Everything this file writes is prefixed, so a leaked row is identifiable. */
 const P = "wp7rt";
@@ -202,6 +207,8 @@ type LineRow = {
   status_order?: string;
   so_id?: string;
   customer?: string;
+  /** Days before today for the header's `po_date` (AMENDMENT 12). ST-R22 only. */
+  po_date_days_ago?: number;
 };
 
 async function seedFg(tx: Tx, rows: readonly FgRow[]): Promise<void> {
@@ -224,9 +231,11 @@ async function seedLines(tx: Tx, rows: readonly LineRow[]): Promise<void> {
   for (const r of rows) {
     const pa = r.parts;
     const soId = r.so_id ?? `${P}-so`;
+    const poDate =
+      r.po_date_days_ago === undefined ? null : tx`(current_date - ${r.po_date_days_ago}::int)`;
     await tx`
-      insert into erp_so_header (id, so_number, customer_name_text, sales_name_text, status_order)
-      values (${soId}, ${`SO-${soId}`}, ${r.customer ?? "PT Pelanggan QA"}, ${"Rep QA"}, ${"Open"})
+      insert into erp_so_header (id, so_number, customer_name_text, sales_name_text, status_order, po_date)
+      values (${soId}, ${`SO-${soId}`}, ${r.customer ?? "PT Pelanggan QA"}, ${"Rep QA"}, ${"Open"}, ${poDate})
       on conflict (id) do nothing
     `;
     // ETA as an offset so fixtures move with `current_date` exactly as the view
@@ -310,11 +319,24 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
     if (!realDb) throw new Error("DATABASE_URL is set but getSql() returned null");
     // Only migrate if the views are missing: three suites share this database and
     // concurrent `create or replace view` is a needless lock fight.
+    // Count every view this suite depends on, not a subset: a new one (ST-R22's
+    // v_autoclosed_commitments) is exactly the case where "some views exist" is
+    // not "the schema is current", and skipping the migration then fails 60
+    // unrelated tests with a 500 that says nothing about the change that caused it.
     const [v] = await realDb<{ n: number }[]>`
       select count(*)::int as n from information_schema.views
-      where table_schema = 'public' and table_name in ('v_live_commitments', 'v_stale_commitments')
+      where table_schema = 'public'
+        and table_name in ('v_live_commitments', 'v_stale_commitments', 'v_autoclosed_commitments')
     `;
-    if (!v || v.n < 2) await runErpStockMigrations(realDb);
+    // …and that the ones that exist carry the CURRENT column list. Presence alone
+    // is not currency: a view left behind by an older build answers every query
+    // with a 42703 the moment the routes select a column it predates.
+    const [c] = await realDb<{ n: number }[]>`
+      select count(*)::int as n from information_schema.columns
+      where table_schema = 'public' and table_name = 'v_live_commitments'
+        and column_name in ('autoclosed', 'autoclose_basis')
+    `;
+    if (!v || v.n < 3 || !c || c.n < 2) await runErpStockMigrations(realDb);
 
     // The whole live module plus the 1.0 archive/tombstone file, exactly as
     // index.ts registers them. No port is bound.
@@ -862,9 +884,14 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
 
     async function seedDoQueue(tx: Tx): Promise<void> {
       await seedFg(tx, [{ sn_fg: `${P}-do-fg`, qty: 10, parts: parts("SEG-DO") }]);
+      // Stale but INSIDE the ST-R22 auto-close threshold, so the DO line is still
+      // in the review queue these two tests filter. A DO line past the threshold
+      // is auto-closed and lives in `segment=autoclosed` instead — which is what
+      // the ST-R22 block below asserts, and is not what `status`/`only_do` are for.
+      const eta = AUTOCLOSE_DAYS - 80;
       await seedLines(tx, [
-        { id: `${P}-do-1`, qty_balance: 5, eta: 400, parts: parts("SEG-DO"), status_order: "DO" },
-        { id: `${P}-do-2`, qty_balance: 5, eta: 400, parts: parts("SEG-DO"), status_order: "Waiting" },
+        { id: `${P}-do-1`, qty_balance: 5, eta, parts: parts("SEG-DO"), status_order: "DO" },
+        { id: `${P}-do-2`, qty_balance: 5, eta, parts: parts("SEG-DO"), status_order: "Waiting" },
       ]);
     }
 
@@ -966,6 +993,230 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
         const body = JSON.parse(res.payload) as PagedResponse<CommitLine>;
         const mine = (body.rows ?? body.items).filter((r) => r.so_line_id.startsWith(`${P}-age-`));
         expect(mine.map((r) => r.so_line_id)).toEqual([`${P}-age-old`]);
+      });
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 2b · ST-R22 auto-close over the HTTP surface
+  //
+  // The rule itself is proved in atp.test.ts against the views. This block proves
+  // the part an operator actually touches: the segment exists, the rows say why
+  // they qualified, the totals count them, and the undo works — and that ATP on
+  // the wire does not move by a single sheet in the process.
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("GET /stale-commitments?segment=autoclosed and its undo (ST-R22)", () => {
+    const AC = parts("R22-AC"); // DO, ETA 200 days old  → auto-closed
+    const UN = parts("R22-UN"); // DO, undated, old po_date → live, reserving
+    const KAC = canonicalSkuKey(AC);
+    const KUN = canonicalSkuKey(UN);
+
+    async function seedR22(tx: Tx): Promise<void> {
+      await seedWarna(tx);
+      await seedFg(tx, [
+        { sn_fg: `${P}-r22-fg-ac`, qty: 1000, parts: AC },
+        { sn_fg: `${P}-r22-fg-un`, qty: 1000, parts: UN },
+      ]);
+      await seedLines(tx, [
+        // Population 1: aged ETA. Already outside ATP before the rule ran.
+        { id: `${P}-r22-aged`, qty_balance: 120, eta: 200, parts: AC, status_order: AUTOCLOSE_STATUS },
+        // Population 2: undated with a very old order date. Live and reserving,
+        // and the withdrawn po_date age basis is the only thing that would have
+        // swept it up.
+        {
+          id: `${P}-r22-undated`,
+          qty_balance: 300,
+          eta: null,
+          parts: UN,
+          status_order: AUTOCLOSE_STATUS,
+          so_id: `${P}-r22-so-old`,
+          po_date_days_ago: 200,
+        },
+        // A DO line inside the threshold: still a human's call.
+        {
+          id: `${P}-r22-young`,
+          qty_balance: 40,
+          eta: AUTOCLOSE_DAYS - 1,
+          parts: AC,
+          status_order: AUTOCLOSE_STATUS,
+        },
+      ]);
+    }
+
+    async function idsFor(url: string): Promise<string[]> {
+      const { body } = await GET<PagedResponse<CommitLine>>(url);
+      return (body.rows ?? body.items)
+        .filter((r) => r.so_line_id.startsWith(`${P}-r22-`))
+        .map((r) => r.so_line_id);
+    }
+
+    it("the aged DO line is in `autoclosed` and in no other segment", async () => {
+      await inRollback(async (tx) => {
+        await seedR22(tx);
+        expect(await idsFor("/api/stock/stale-commitments?segment=autoclosed&limit=500")).toEqual([
+          `${P}-r22-aged`,
+        ]);
+        expect(await idsFor("/api/stock/stale-commitments?segment=stale&limit=500")).toEqual([
+          `${P}-r22-young`,
+        ]);
+        expect(await idsFor("/api/stock/stale-commitments?segment=undated&limit=500")).toEqual([
+          `${P}-r22-undated`,
+        ]);
+        // `all` is the review queue — decisions still owed. An auto-closed line is
+        // decided, and it is also close-batch's default scope, so it stays out.
+        expect(await idsFor("/api/stock/stale-commitments?segment=all&limit=500")).toEqual([
+          `${P}-r22-undated`,
+          `${P}-r22-young`,
+        ].sort());
+      });
+    });
+
+    it("each auto-closed row states WHY: the status, the age, and the date it came from", async () => {
+      await inRollback(async (tx) => {
+        await seedR22(tx);
+        const { body } = await GET<PagedResponse<CommitLine>>(
+          "/api/stock/stale-commitments?segment=autoclosed&limit=500",
+        );
+        const row = (body.rows ?? body.items).find((r) => r.so_line_id === `${P}-r22-aged`);
+        expect(row).toBeDefined();
+        expect(row!.state).toBe("autoclosed");
+        expect(row!.autoclosed).toBe(true);
+        expect(row!.status_order).toBe(AUTOCLOSE_STATUS);
+        expect(row!.age_days).toBe(200);
+        expect(row!.autoclose_basis).toBe("estimate_delivery");
+        expect(row!.undated).toBe(false);
+        // The balance is on the row, so a reinstate preview can state its own
+        // consequence without a second request.
+        expect(row!.qty_balance).toBe(120);
+      });
+    });
+
+    it("ATP is byte-identical with the line auto-closed and with it reinstated", async () => {
+      // POPULATION 1, the whole point: it had already failed the 60-day liveness
+      // window, so the machine's decision released exactly nothing. Measured on
+      // the wire, through the endpoint the operator's page reads.
+      await inRollback(async (tx) => {
+        await seedR22(tx);
+        const before = await summaryItem(KAC);
+        expect(before!.atp).toBe(1000 - 0); // the two DO lines reserve nothing
+
+        const { status, body } = await POST<OverrideResponse>(
+          `/api/stock/stale-commitments/${P}-r22-aged/reinstate`,
+          { actor: ACTOR },
+        );
+        expect(status).toBe(200);
+        expect(body.atp_delta).toBe(0);
+        expect(body.atp_after).toBe(body.atp_before);
+
+        const after = await summaryItem(KAC);
+        expect(after!.atp).toBe(before!.atp);
+        expect(after!.committed).toBe(before!.committed);
+        // The line is back in the queue a human works, which is the ONLY change.
+        expect(await idsFor("/api/stock/stale-commitments?segment=autoclosed&limit=500")).toEqual([]);
+        expect((await idsFor("/api/stock/stale-commitments?segment=stale&limit=500")).sort()).toEqual(
+          [`${P}-r22-aged`, `${P}-r22-young`],
+        );
+      });
+    });
+
+    it("the undated DO line keeps reserving — the machine never touches it", async () => {
+      // POPULATION 2, and the reason the po_date age basis was withdrawn: closing
+      // this line would raise ATP by its entire balance. Nothing auto-closes it,
+      // at any order date, so nothing releases that stock but a person.
+      await inRollback(async (tx) => {
+        await seedR22(tx);
+        const item = await summaryItem(KUN);
+        expect(item!.committed).toBe(300);
+        expect(item!.atp).toBe(700);
+        expect(item!.autoclosed_committed).toBe(0);
+
+        const { body } = await GET<PagedResponse<CommitLine>>(
+          "/api/stock/stale-commitments?segment=undated&limit=500",
+        );
+        const row = (body.rows ?? body.items).find((r) => r.so_line_id === `${P}-r22-undated`);
+        expect(row).toBeDefined();
+        expect(row!.autoclosed).toBe(false);
+        expect(row!.autoclose_basis).toBeNull();
+        expect(row!.state).toBe("live");
+        // AMENDMENT 12: the order date is shown for triage — and NOT used to age.
+        expect(row!.po_date).not.toBeNull();
+        expect(row!.estimate_delivery).toBeNull();
+
+        // A human closing it is the only path, and it releases the whole balance.
+        const closed = await POST<OverrideResponse>(
+          `/api/stock/stale-commitments/${P}-r22-undated/close`,
+          { actor: ACTOR, reason: "dikonfirmasi ke pemilik order" },
+        );
+        expect(closed.body.atp_delta).toBe(300);
+      });
+    });
+
+    it("/summary counts the auto-closed lines, and still counts what PPIC owes an answer on", async () => {
+      await inRollback(async (tx) => {
+        // Measured as a DELTA across the seed, because the totals strip is global
+        // and this database carries other suites' fixtures. The delta is exact;
+        // the absolute number is not this suite's to assert.
+        const before = (await GET<SummaryResponse>("/api/stock/summary")).body.totals;
+        await seedR22(tx);
+        const { body } = await GET<SummaryResponse>("/api/stock/summary");
+        // One aged DO line auto-closed; one undated line still owed an answer.
+        expect(body.totals.autoclosed_commitments - before.autoclosed_commitments).toBe(1);
+        expect(body.totals.undated_commitments - before.undated_commitments).toBe(1);
+        // And the queue shrank by the auto-closed line only — the young DO line
+        // and nothing else joined the stale count.
+        expect(body.totals.stale_commitments - before.stale_commitments).toBe(1);
+        const mine = body.items.filter((i) => i.sku_key === KAC || i.sku_key === KUN);
+        expect(mine.length).toBe(2);
+        // Counted per SKU as context — never subtracted.
+        const ac = mine.find((i) => i.sku_key === KAC)!;
+        expect(ac.autoclosed_committed).toBe(120);
+        expect(ac.stale_committed).toBe(40);
+        expect(ac.committed).toBe(0);
+        expect(ac.atp).toBe(1000);
+      });
+    });
+
+    it("/sku/:sku_key still shows the auto-closed line — it left the queue, not the record", async () => {
+      await inRollback(async (tx) => {
+        await seedR22(tx);
+        const { body } = await GET<SkuDetailResponse>(
+          `/api/stock/sku/${encodeURIComponent(KAC)}`,
+        );
+        expect(body.autoclosed_commitments.map((r) => r.so_line_id)).toEqual([`${P}-r22-aged`]);
+        expect(body.live_commitments.map((r) => r.so_line_id)).toEqual([]);
+        expect(body.stale_commitments.map((r) => r.so_line_id)).toEqual([`${P}-r22-young`]);
+      });
+    });
+
+    it("an auto-closed line can still be confirm-closed, and the row says who did it", async () => {
+      await inRollback(async (tx) => {
+        await seedR22(tx);
+        const { status, body } = await POST<OverrideResponse>(
+          `/api/stock/stale-commitments/${P}-r22-aged/close`,
+          { actor: ACTOR, reason: "sudah dikirim, dicek DO" },
+        );
+        expect(status).toBe(200);
+        expect(body.atp_delta).toBe(0); // still zero: it was never in the sum
+        expect(body.commitment?.state).toBe("closed");
+        // A human record now, not a machine one.
+        expect(body.commitment?.autoclosed).toBe(false);
+        expect(await overrideRows(tx)).toEqual([
+          { so_line_id: `${P}-r22-aged`, state: "closed", reason: "sudah dikirim, dicek DO", actor: ACTOR },
+        ]);
+      });
+    });
+
+    it("auto-closing writes nothing — the mirror and the override table are untouched", async () => {
+      // It is a derived classification, not a write. Nothing to replay, nothing
+      // to migrate, and flipping the config back restores the queue exactly.
+      await inRollback(async (tx) => {
+        await seedR22(tx);
+        const digest = await mirrorDigest(tx);
+        await GET("/api/stock/stale-commitments?segment=autoclosed&limit=500");
+        await GET("/api/stock/summary");
+        expect(await mirrorDigest(tx)).toEqual(digest);
+        expect(await overrideRows(tx)).toEqual([]);
       });
     });
   });
@@ -1139,7 +1390,8 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
         const one = body.items.find((i) => i.sku_key === keyOf("LADE"))!;
         expect(Object.keys(one).sort()).toEqual(
           [
-            "adjustment", "atp", "atp_m2", "brand", "brand_text", "committed", "kode_barang", "l",
+            "adjustment", "atp", "atp_m2", "autoclosed_committed", "brand", "brand_text",
+            "committed", "kode_barang", "l",
             "name", "nearest_eta", "on_hand", "p", "sku_key", "stale_committed", "state", "th",
             "th_panel", "unit", "warna", "warna_name",
           ].sort(),
@@ -2033,8 +2285,19 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
         const { status, body } = await GET<SkuDetailResponse>(`/api/stock/sku/${encodeURIComponent(key)}`);
         expect(status).toBe(200);
         expect(Object.keys(body).sort()).toEqual(
-          ["adjustments", "item", "live_commitments", "on_hand_rows", "stale_commitments"].sort(),
+          [
+            "adjustments",
+            // ST-R22: the timeline gained a fourth array. Additive, and always
+            // present like the rest — a SKU's ERP balance has to keep reconciling
+            // after the machine stops listing a line in the other two.
+            "autoclosed_commitments",
+            "item",
+            "live_commitments",
+            "on_hand_rows",
+            "stale_commitments",
+          ].sort(),
         );
+        expect(body.autoclosed_commitments).toEqual([]);
 
         expect(body.item.on_hand).toBe(100);
         expect(body.item.committed).toBe(50); // 30 dated + 20 undated (AMENDMENT 1)

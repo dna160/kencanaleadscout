@@ -14,10 +14,11 @@
  * "subtract the new SO" path, and no cache. `loadItems()` below is the entire
  * engine: ONE grouped SQL aggregate over
  *
- *     erp_live_fg          → on_hand        (physical truth, ERP-owned)
- *     v_live_commitments   → committed      (ST-R17 liveness lives in the VIEW)
- *     v_stale_commitments  → stale_committed (quarantined, NOT subtracted)
- *     stock_adjustments    → adjustment     (signed, additive, audited)
+ *     erp_live_fg               → on_hand              (physical truth, ERP-owned)
+ *     v_live_commitments        → committed            (ST-R17 liveness in the VIEW)
+ *     v_stale_commitments       → stale_committed      (quarantined, NOT subtracted)
+ *     v_autoclosed_commitments  → autoclosed_committed (ST-R22, NOT subtracted)
+ *     stock_adjustments         → adjustment           (signed, additive, audited)
  *
  * joined on `sku_key` (erp/sku.ts + erp_sku_key() — invariant §7.4). Never a
  * per-row loop, never N+1: /summary returns every SKU from one round trip.
@@ -35,6 +36,15 @@
  * reserves stock. Every commitment this file returns carries `undated`, and
  * /stale-commitments accepts `segment=undated` so PPIC can triage those lines
  * next to the genuinely stale ones.
+ *
+ * ST-R22 (auto-close): a line whose `status_order` is in the configured set and
+ * whose `estimate_delivery` is older than the configured threshold is treated as
+ * delivered and leaves the review queue — into `segment=autoclosed`, never into
+ * nothing (§7.6). Its ATP consequence is exactly ZERO by construction: the age
+ * threshold is above the liveness window, so such a line had already failed
+ * ST-R17 and was already excluded from `committed`. An UNDATED line is never a
+ * candidate at any age, which is what keeps that property true — see the rule's
+ * comment in migrateErpStock.ts.
  */
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { Sql } from "../db/client.js";
@@ -173,6 +183,13 @@ export interface SkuItem {
   atp_m2: number | null;
   state: SkuState;
   stale_committed: number;
+  /**
+   * ST-R22. Σ `qty_balance` of this SKU's auto-closed lines. Context only — it is
+   * not subtracted, and it never was: every line in it had already failed the
+   * liveness window before the machine closed it. Shown so a SKU's total ERP
+   * "open" balance still reconciles on screen after the queue stops listing them.
+   */
+  autoclosed_committed: number;
   nearest_eta: string | null;
 }
 
@@ -210,8 +227,21 @@ export interface CommitLine {
   undated: boolean;
   /** Days past ETA; null when undated. Negative when the ETA is in the future. */
   age_days: number | null;
-  /** 'live' reserves stock · 'stale' is quarantined · 'closed' was confirm-closed. */
-  state: "live" | "stale" | "closed";
+  /**
+   * ST-R22 — this line was auto-closed: `status_order` is in the configured set
+   * and it is older than the configured threshold. A machine decision, so the row
+   * states its own grounds rather than making a reader reconstruct them:
+   * `status_order` (which status), `age_days` (how old) and `autoclose_basis`
+   * (which date that age was measured from).
+   */
+  autoclosed: boolean;
+  /** The date column `age_days` was measured from; null unless auto-closed. */
+  autoclose_basis: string | null;
+  /**
+   * 'live' reserves stock · 'stale' is quarantined · 'autoclosed' was closed by
+   * the ST-R22 rule · 'closed' was confirm-closed by a human.
+   */
+  state: "live" | "stale" | "autoclosed" | "closed";
   /** True when this SKU has no erp_live_fg row at all (ST-R5.3 exception). */
   unmatched: boolean;
   override: CommitOverride | null;
@@ -261,6 +291,19 @@ export interface SummaryTotals {
    * it reads the same way as `stale_commitments` beside it.
    */
   undated_commitments: number;
+  /**
+   * ST-R22. LIVE commitment lines the machine closed as "delivered but never
+   * closed", in LINES, so it reads beside `stale_commitments` the same way.
+   *
+   * Its ATP consequence is nil and that is the point of surfacing it: every line
+   * counted here was already outside `open_commitment` (the auto-close threshold
+   * sits above the liveness window, and an undated line is never a candidate), so
+   * this number says how much REVIEW WORK disappeared, never how much stock was
+   * released. Nothing was released. A count of auto-closed lines that HAD been
+   * reserving would be the number worth alarming on, and it is structurally
+   * always zero — `undated_commitments` is what still needs a human.
+   */
+  autoclosed_commitments: number;
   /** ST-R5.3 unmatched demand, counted in SO LINES. */
   exceptions: number;
   /**
@@ -306,6 +349,8 @@ export interface SkuDetailResponse {
   item: SkuItem;
   live_commitments: CommitLine[];
   stale_commitments: CommitLine[];
+  /** ST-R22. Always present, `[]` when empty, like every other array here. */
+  autoclosed_commitments: CommitLine[];
   adjustments: AdjustmentRow[];
   on_hand_rows: OnHandRow[];
 }
@@ -394,6 +439,8 @@ interface AggregateRow {
   nearest_eta: string | null;
   stale_committed: string | null;
   stale_lines: string | null;
+  autoclosed_committed: string | null;
+  autoclosed_lines: string | null;
   adjustment: string | null;
 }
 
@@ -403,6 +450,7 @@ interface EngineItem extends SkuItem {
   live_lines: number;
   undated_lines: number;
   stale_lines: number;
+  autoclosed_lines: number;
 }
 
 /**
@@ -549,6 +597,15 @@ async function loadItems(
       from v_stale_commitments ${f}
       group by sku_key
     ),
+    -- ST-R22. Counted, never subtracted — and it was never in the subtraction to
+    -- begin with, which is the whole property this feature is claiming.
+    autoclosed as (
+      select sku_key,
+             sum(qty_balance) as autoclosed_committed,
+             count(*)         as autoclosed_lines
+      from v_autoclosed_commitments ${f}
+      group by sku_key
+    ),
     adj as (
       select sku_key, sum(qty_delta) as adjustment
       from stock_adjustments ${f}
@@ -580,6 +637,7 @@ async function loadItems(
       select sku_key from fg
       union select sku_key from live
       union select sku_key from stale
+      union select sku_key from autoclosed
       union select sku_key from adj
     )
     select k.sku_key,
@@ -604,6 +662,8 @@ async function loadItems(
            live.nearest_eta                       as nearest_eta,
            coalesce(stale.stale_committed, 0)::text as stale_committed,
            coalesce(stale.stale_lines, 0)::text   as stale_lines,
+           coalesce(autoclosed.autoclosed_committed, 0)::text as autoclosed_committed,
+           coalesce(autoclosed.autoclosed_lines, 0)::text     as autoclosed_lines,
            coalesce(adj.adjustment, 0)::text      as adjustment
     from keys k
     left join ident i    on i.sku_key    = k.sku_key
@@ -611,6 +671,7 @@ async function loadItems(
     left join fg         on fg.sku_key    = k.sku_key
     left join live       on live.sku_key  = k.sku_key
     left join stale      on stale.sku_key = k.sku_key
+    left join autoclosed on autoclosed.sku_key = k.sku_key
     left join adj        on adj.sku_key   = k.sku_key
     order by k.sku_key
   `;
@@ -660,11 +721,13 @@ async function loadItems(
       atp_m2: m2PerUnit != null ? round2(atp * m2PerUnit) : null,
       state: deriveState(on_hand, adjustment, atp),
       stale_committed: round2(numOf(r.stale_committed)),
+      autoclosed_committed: round2(numOf(r.autoclosed_committed)),
       nearest_eta: r.nearest_eta,
       stock_rows: numOf(r.stock_rows),
       live_lines: numOf(r.live_lines),
       undated_lines: numOf(r.undated_lines),
       stale_lines: numOf(r.stale_lines),
+      autoclosed_lines: numOf(r.autoclosed_lines),
     };
   });
 }
@@ -698,6 +761,7 @@ function toWire(it: EngineItem): SkuItem {
     atp_m2: it.atp_m2,
     state: it.state,
     stale_committed: it.stale_committed,
+    autoclosed_committed: it.autoclosed_committed,
     nearest_eta: it.nearest_eta,
   };
 }
@@ -800,6 +864,8 @@ interface CommitRow {
   sales_name_text: string | null;
   line_state: string;
   undated: boolean;
+  autoclosed: boolean;
+  autoclose_basis: string | null;
   age_days: string | null;
   unmatched: boolean;
   ov_state: string | null;
@@ -810,7 +876,14 @@ interface CommitRow {
   total_count: string | null;
 }
 
-type CommitSegment = "live" | "stale" | "undated" | "closed" | "all" | "exceptions";
+type CommitSegment =
+  | "live"
+  | "stale"
+  | "undated"
+  | "autoclosed"
+  | "closed"
+  | "all"
+  | "exceptions";
 
 /**
  * The FROM clause for a commitment listing. Every branch selects the same column
@@ -830,11 +903,17 @@ function commitSource(db: Sql, segment: CommitSegment) {
     select v.id, v.so_id, v.sku_key, v.brand, v.brand_text, v.warna, v.warna_text,
            v.th, v.th_panel, v.p, v.l,
            v.qty_order, v.qty_delivered, v.qty_balance, v.status_order, v.approval,
-           v.estimate_delivery, v.po_date, v.so_number, v.customer_name_text, v.sales_name_text
+           v.estimate_delivery, v.po_date, v.so_number, v.customer_name_text, v.sales_name_text,
+           v.autoclosed, v.autoclose_basis
   `;
 
   const fromLive = db`${cols}, 'live'::text as line_state from v_live_commitments v`;
   const fromStale = db`${cols}, 'stale'::text as line_state from v_stale_commitments v`;
+  // ST-R22. A third set, read from its own view — the rule is never re-spelled
+  // here any more than the liveness rule is (§7.3).
+  const fromAutoclosed = db`
+    ${cols}, 'autoclosed'::text as line_state from v_autoclosed_commitments v
+  `;
   const fromUndated = db`
     ${cols}, 'live'::text as line_state
     from v_live_commitments v
@@ -846,7 +925,11 @@ function commitSource(db: Sql, segment: CommitSegment) {
       select l.id, l.so_id, l.sku_key, l.brand, l.brand_text, l.warna, l.warna_text,
              l.th, l.th_panel, l.p, l.l,
              l.qty_order, l.qty_delivered, l.qty_balance, l.status_order, l.approval,
-             l.estimate_delivery, h.po_date, h.so_number, h.customer_name_text, h.sales_name_text
+             l.estimate_delivery, h.po_date, h.so_number, h.customer_name_text, h.sales_name_text,
+             -- A confirm-closed line is a HUMAN decision, whatever the ST-R22 rule
+             -- would have said about it: an operator with a name and a reason
+             -- closed it, and that is what the audit trail must show.
+             false as autoclosed, null::text as autoclose_basis
       from erp_so_line l
       left join erp_so_header h on h.id = l.so_id
     ) v
@@ -860,11 +943,16 @@ function commitSource(db: Sql, segment: CommitSegment) {
       return fromStale;
     case "undated":
       return fromUndated;
+    case "autoclosed":
+      return fromAutoclosed;
     case "closed":
       return fromClosed;
     case "all":
       // The PPIC review queue as a whole: stale lines + the undated live lines
-      // AMENDMENT 1 routes here alongside them.
+      // AMENDMENT 1 routes here alongside them. NOT the auto-closed set — those
+      // lines are decided, not pending, and `all` is also close-batch's default
+      // scope, where widening the population that a bulk write may touch is
+      // exactly the mistake AMENDMENT 6b's guards exist to prevent.
       return db`${fromStale} union all ${fromUndated}`;
     case "exceptions":
       // Every line that is still demand — live or stale — so the unmatched
@@ -989,6 +1077,7 @@ async function loadCommitments(
            to_char(c.po_date, 'YYYY-MM-DD') as po_date,
            c.so_number, c.customer_name_text, c.sales_name_text,
            c.line_state,
+           c.autoclosed, c.autoclose_basis,
            (c.estimate_delivery is null) as undated,
            case when c.estimate_delivery is null then null
                 else (current_date - c.estimate_delivery)::text end as age_days,
@@ -1039,7 +1128,10 @@ function shapeCommit(r: CommitRow): CommitLine {
   const p = numOrNull(r.p);
   const l = numOrNull(r.l);
   const lineState: CommitLine["state"] =
-    r.line_state === "closed" ? "closed" : r.line_state === "stale" ? "stale" : "live";
+    r.line_state === "closed" ? "closed"
+    : r.line_state === "autoclosed" ? "autoclosed"
+    : r.line_state === "stale" ? "stale"
+    : "live";
   return {
     so_line_id: String(r.id),
     sku_key: r.sku_key,
@@ -1077,6 +1169,8 @@ function shapeCommit(r: CommitRow): CommitLine {
     po_date: r.po_date,
     undated: Boolean(r.undated),
     age_days: numOrNull(r.age_days),
+    autoclosed: Boolean(r.autoclosed),
+    autoclose_basis: r.autoclose_basis,
     state: lineState,
     unmatched: Boolean(r.unmatched),
     override: r.ov_state
@@ -1153,12 +1247,16 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
       perlu_produksi: 0,
       stale_commitments: 0,
       undated_commitments: 0,
+      autoclosed_commitments: 0,
       exceptions: 0,
       exception_skus: 0,
     };
     for (const it of items) {
       totals[it.state] += 1;
       totals.stale_commitments += it.stale_lines;
+      // ST-R22: how much review work the machine took off PPIC's desk. Zero stock
+      // moved with it — see the field's doc comment.
+      totals.autoclosed_commitments += it.autoclosed_lines;
       // AMENDMENT 12: the engine already counts these per item; summing them is
       // the whole implementation, and it retires the page's counting probe.
       totals.undated_commitments += it.undated_lines;
@@ -1193,9 +1291,10 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
     const [item] = await loadItems(db, skuKey);
     if (!item) return reply.code(404).send({ error: "Kode SKU tidak ditemukan." });
 
-    const [live, stale, adjustments, onHand] = await Promise.all([
+    const [live, stale, autoclosed, adjustments, onHand] = await Promise.all([
       loadCommitments(db, { segment: "live", skuKey, sort: "eta_asc", limit: MAX_LIMIT }),
       loadCommitments(db, { segment: "stale", skuKey, sort: "eta_asc", limit: MAX_LIMIT }),
+      loadCommitments(db, { segment: "autoclosed", skuKey, sort: "eta_asc", limit: MAX_LIMIT }),
       db<{
         id: string; sku_key: string; qty_delta: string; reason: string; actor: string; created_at: Date | string;
       }[]>`
@@ -1223,6 +1322,9 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
       item: toWire(item),
       live_commitments: live.rows,
       stale_commitments: stale.rows,
+      // ST-R22: the timeline must still show the lines the machine closed, or a
+      // SKU's ERP balance stops reconciling with no trace of where it went.
+      autoclosed_commitments: autoclosed.rows,
       adjustments: adjustments.map((a) => ({
         id: String(a.id),
         sku_key: a.sku_key,
@@ -1324,9 +1426,14 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
     // left v_stale_commitments, so without this the undo path dies the moment
     // the operator reloads the page and can never reinstate. `state=closed` is
     // kept as an alias — the shipped PPIC page sends that spelling.
+    // `autoclosed` (ST-R22) is the machine's own segment. It exists for the same
+    // reason `closed` does: the row has left v_stale_commitments, so without a
+    // segment to find it in, an auto-close would be invisible AND un-undoable —
+    // and a decision nobody made is the one most in need of a way back.
     const segment: CommitSegment =
       asked === "closed" || str(qs.state) === "closed" ? "closed"
       : asked === "undated" ? "undated"
+      : asked === "autoclosed" ? "autoclosed"
       : asked === "all" ? "all"
       : "stale";
 
@@ -1594,6 +1701,13 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
   // The undo. The line goes back to being whatever the liveness rule says it is:
   // live (reserving again) or stale (back in the queue). We never decide that
   // here — we only remove our own override.
+  //
+  // ST-R22: this is ALSO the undo for an auto-close, by the same path and with no
+  // second mechanism. A `reinstated` override lifts the machine's decision (the
+  // rule's last clause in migrateErpStock.ts) and hands the line back to the
+  // liveness predicate, which puts it in the stale queue for a human. An
+  // auto-close that could not be undone would be worse than one that never
+  // happened, because nobody typed it and so nobody would know to look.
   app.post<{ Params: { so_line_id: string }; Body: Record<string, unknown> }>(
     "/api/stock/stale-commitments/:so_line_id/reinstate",
     async (request, reply) => {
@@ -1870,7 +1984,9 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
 
   /** One line by id, from whichever set now holds it. Null if it holds none. */
   async function loadCommitmentById(db: Sql, soLineId: string): Promise<CommitLine | null> {
-    for (const segment of ["closed", "live", "stale"] as const) {
+    // `autoclosed` is in this scan because a reinstate must be able to report
+    // where the line went, and an auto-closed line is in none of the other three.
+    for (const segment of ["closed", "live", "stale", "autoclosed"] as const) {
       const { rows } = await loadCommitments(db, {
         segment,
         limit: 1,
