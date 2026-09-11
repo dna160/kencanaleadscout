@@ -46,6 +46,7 @@ import { syHunterRoutes } from "./routes/sy-hunter.js";
 import { stockRoutes } from "./routes/stock.js";
 import { runStockMigrations } from "./db/migrateStock.js";
 import { runErpStockMigrations } from "./db/migrateErpStock.js";
+import { startErpSync } from "./erp/syncWorker.js";
 
 const PUBLIC_DIR = fileURLToPath(new URL("../public", import.meta.url));
 
@@ -175,6 +176,9 @@ async function main(): Promise<void> {
   startCadenceEngine();
   startProjectCadenceEngine();
   startDistributorCadenceEngine();
+  // [STK 2.0] ERP mirror poll. Self-guards on hasErp/hasDatabase, so it is safe
+  // unconditionally: with no ERP configured it logs once and does nothing.
+  startErpSync();
 
   try {
     await app.listen({ host: config.host, port: config.port });

@@ -48,6 +48,9 @@ const UNIT = "lembar";
 const MAX_LIMIT = 500;
 const DEFAULT_LIMIT = 50;
 
+/** Cap on one bulk confirm-close. An explicit id list, never a filter (ST-R21). */
+const MAX_BATCH_CLOSE = 200;
+
 /** mm² → m². Used only when a SKU has no FG rows to take a real ratio from. */
 const MM2_PER_M2 = 1_000_000;
 
@@ -230,6 +233,27 @@ export interface PagedResponse<T> {
   limit: number;
   has_more: boolean;
   items: T[];
+}
+
+/** Response of POST /stale-commitments/:id/close and /reinstate. */
+export interface OverrideResponse {
+  ok: true;
+  so_line_id: string;
+  sku_key: string;
+  /** Signed, MEASURED (not predicted) change this action made to ATP(sku_key). */
+  atp_delta: number;
+  atp_before: number;
+  atp_after: number;
+  override: CommitOverride;
+  commitment: CommitLine | null;
+}
+
+/** Response of POST /stale-commitments/close-batch. */
+export interface BatchCloseResponse {
+  ok: true;
+  closed: number;
+  skipped: { so_line_id: string; reason: string }[];
+  atp_delta_by_sku: Record<string, number>;
 }
 
 export interface SyncTableStatus {
@@ -458,6 +482,13 @@ async function loadItems(
   });
 }
 
+/** sku_key → ATP, for measuring what a write actually did to the number. */
+function atpBySku(items: readonly EngineItem[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const it of items) out[it.sku_key] = it.atp;
+  return out;
+}
+
 /** Strip the engine's internal counters — /summary.items[] is exactly §4.1. */
 function toWire(it: EngineItem): SkuItem {
   return {
@@ -572,28 +603,32 @@ type CommitSegment = "live" | "stale" | "undated" | "closed" | "all" | "exceptio
  * read from the mirror joined to the override table.
  */
 function commitSource(db: Sql, segment: CommitSegment) {
-  const cols = (alias: string, state: string) => db`
-    select ${db.unsafe(alias)}.id, ${db.unsafe(alias)}.so_id, ${db.unsafe(alias)}.sku_key,
-           ${db.unsafe(alias)}.kode_barang, ${db.unsafe(alias)}.warna, ${db.unsafe(alias)}.th,
-           ${db.unsafe(alias)}.p, ${db.unsafe(alias)}.l, ${db.unsafe(alias)}.qty_order,
-           ${db.unsafe(alias)}.qty_delivered, ${db.unsafe(alias)}.qty_balance,
-           ${db.unsafe(alias)}.status_order, ${db.unsafe(alias)}.approval,
-           ${db.unsafe(alias)}.estimate_delivery, ${db.unsafe(alias)}.so_number,
-           ${db.unsafe(alias)}.customer_name_text, ${db.unsafe(alias)}.sales_name_text,
-           ${state}::text as line_state
+  // Columns are enumerated, never `v.*`: the views select `l.*`, so a new mirror
+  // column (or the `undated` column AMENDMENT 1 adds to the view) would otherwise
+  // collide with the aliases the outer query computes.
+  const cols = db`
+    select v.id, v.so_id, v.sku_key, v.kode_barang, v.warna, v.th, v.p, v.l,
+           v.qty_order, v.qty_delivered, v.qty_balance, v.status_order, v.approval,
+           v.estimate_delivery, v.so_number, v.customer_name_text, v.sales_name_text
   `;
 
-  const fromLive = db`${cols("v", "live")} from v_live_commitments v`;
-  const fromStale = db`${cols("v", "stale")} from v_stale_commitments v`;
-  const fromUndated = db`${cols("v", "live")} from v_live_commitments v where v.estimate_delivery is null`;
+  const fromLive = db`${cols}, 'live'::text as line_state from v_live_commitments v`;
+  const fromStale = db`${cols}, 'stale'::text as line_state from v_stale_commitments v`;
+  const fromUndated = db`
+    ${cols}, 'live'::text as line_state
+    from v_live_commitments v
+    where v.estimate_delivery is null
+  `;
   const fromClosed = db`
-    ${cols("l", "closed")}
+    ${cols}, 'closed'::text as line_state
     from (
-      select l.*, h.so_number, h.customer_name_text, h.sales_name_text
+      select l.id, l.so_id, l.sku_key, l.kode_barang, l.warna, l.th, l.p, l.l,
+             l.qty_order, l.qty_delivered, l.qty_balance, l.status_order, l.approval,
+             l.estimate_delivery, h.so_number, h.customer_name_text, h.sales_name_text
       from erp_so_line l
       left join erp_so_header h on h.id = l.so_id
-    ) l
-    join stock_commitment_overrides oc on oc.so_line_id = l.id and oc.state = 'closed'
+    ) v
+    join stock_commitment_overrides oc on oc.so_line_id = v.id and oc.state = 'closed'
   `;
 
   switch (segment) {
@@ -619,6 +654,7 @@ function commitSource(db: Sql, segment: CommitSegment) {
 interface CommitQueryOpts {
   segment: CommitSegment;
   skuKey?: string | null;
+  soLineId?: string | null;
   q?: string | null;
   minAgeDays?: number | null;
   statusOrder?: string | null;
@@ -635,6 +671,7 @@ interface CommitQueryOpts {
 async function loadCommitments(db: Sql, o: CommitQueryOpts): Promise<{ rows: CommitLine[]; total: number }> {
   const where: ReturnType<Sql>[] = [];
   if (o.skuKey) where.push(db`c.sku_key = ${o.skuKey}`);
+  if (o.soLineId) where.push(db`c.id = ${o.soLineId}`);
   if (o.statusOrder) where.push(db`c.status_order = ${o.statusOrder}`);
   if (o.minAgeDays != null && o.minAgeDays > 0) {
     where.push(db`c.estimate_delivery <= current_date - ${o.minAgeDays}`);
@@ -1164,7 +1201,110 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
     },
   );
 
-  /** Shared body of close/reinstate: validate, upsert the override, re-read. */
+  // ── 10b · POST /api/stock/stale-commitments/close-batch — ST-R21 + ST-R22 ──
+  // One transaction, all-or-nothing. Exists because ST-R22's "delivered but
+  // never closed" rows are the known-dead phantoms and there are thousands of
+  // them; closing those one tap at a time is work nobody finishes.
+  //
+  // Two deliberate refusals:
+  //   - the request carries an EXPLICIT id list, never a filter. A filter-shaped
+  //     "close everything matching X" is one typo away from releasing thousands
+  //     of live reservations, and the reservation is the thing protecting stock
+  //     that is already owed to a customer.
+  //   - `expected_count` must equal the list length. The client states how many
+  //     rows it believes it is closing; if its view of the queue has moved since
+  //     the operator picked them, we write nothing and say so.
+  // `reason` is mandatory here even though a single close may omit it — a bulk
+  // action with a blank audit row is exactly the one you cannot reconstruct later.
+  app.post<{ Body: Record<string, unknown> }>(
+    "/api/stock/stale-commitments/close-batch",
+    async (request, reply) => {
+      const db = getSql();
+      if (!db) return dbErr(reply);
+
+      const b = request.body ?? {};
+      const rawIds = Array.isArray(b.so_line_ids) ? b.so_line_ids : null;
+      const reason = str(b.reason);
+      const actor = str(b.actor);
+      const expected = numOrNull(b.expected_count);
+
+      if (!rawIds) return reply.code(400).send({ error: "Daftar baris SO wajib diisi." });
+      const ids = [...new Set(rawIds.map((v) => str(v)).filter((v) => v !== ""))];
+      if (ids.length === 0) return reply.code(400).send({ error: "Daftar baris SO wajib diisi." });
+      if (ids.length > MAX_BATCH_CLOSE) {
+        return reply.code(400).send({ error: `Maksimum ${MAX_BATCH_CLOSE} baris sekali tutup.` });
+      }
+      if (reason.length < 4) return reply.code(400).send({ error: "Alasan wajib diisi." });
+      if (!actor) return reply.code(400).send({ error: "Nama petugas wajib diisi." });
+      if (expected === null) return reply.code(400).send({ error: "Jumlah baris wajib disertakan." });
+      // Deduplication above can legitimately shrink the list — compare against
+      // what the client actually sent, then refuse on a real mismatch.
+      if (rawIds.length !== expected) {
+        return reply.code(409).send({
+          error: "Jumlah baris tidak cocok — daftar berubah. Muat ulang antrean.",
+          expected_count: expected,
+          received_count: rawIds.length,
+        });
+      }
+
+      // Which ids exist in the mirror (read-only on erp_*, §7.2). Anything else
+      // is reported as skipped rather than failing the whole batch.
+      const found = await db<{ id: string; sku_key: string }[]>`
+        select id, sku_key from erp_so_line where id = any(${ids})
+      `;
+      const foundIds = found.map((r) => String(r.id));
+      const foundSet = new Set(foundIds);
+      const skipped = ids
+        .filter((id) => !foundSet.has(id))
+        .map((id) => ({ so_line_id: id, reason: "tidak_ditemukan" }));
+      const skus = [...new Set(found.map((r) => r.sku_key))];
+
+      if (foundIds.length === 0) {
+        return reply.code(404).send({ error: "Tidak ada baris Sales Order yang cocok." });
+      }
+
+      // ATP is derived, so the delta is measured, not predicted: snapshot the
+      // affected SKUs, write, snapshot again.
+      const before = atpBySku(await loadItems(db, skus));
+
+      await db.begin(async (sql) => {
+        await sql`
+          insert into stock_commitment_overrides (so_line_id, state, reason, actor)
+          select id, 'closed', ${reason}, ${actor} from erp_so_line where id = any(${foundIds})
+          on conflict (so_line_id) do update
+            set state = 'closed',
+                reason = excluded.reason,
+                actor = excluded.actor,
+                updated_at = now()
+        `;
+      });
+
+      const after = atpBySku(await loadItems(db, skus));
+      const atp_delta_by_sku: Record<string, number> = {};
+      for (const sku of skus) {
+        atp_delta_by_sku[sku] = round2((after[sku] ?? 0) - (before[sku] ?? 0));
+      }
+
+      return {
+        ok: true,
+        closed: foundIds.length,
+        skipped,
+        atp_delta_by_sku,
+      };
+    },
+  );
+
+  /**
+   * Shared body of close/reinstate: validate, measure ATP, write, measure again.
+   *
+   * `atp_delta` is computed here and never inferred by the client, because the
+   * two populations in the review queue behave in opposite ways: closing a stale
+   * line moves ATP by exactly 0 (it was already excluded from the sum), while
+   * closing an undated line (AMENDMENT 1) RAISES ATP by its whole balance,
+   * because that line was reserving stock. An operator who learned "closing
+   * changes nothing" from the first population would silently release reserved
+   * stock in the second. The number the UI states has to be the real one.
+   */
   async function overrideCommitment(
     db: Sql,
     request: { params: { so_line_id: string }; body: Record<string, unknown> | undefined },
@@ -1180,8 +1320,13 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
     if (!actor) return reply.code(400).send({ error: "Nama petugas wajib diisi." });
 
     // The line must exist in the mirror. We read erp_so_line, we never write it.
-    const [line] = await db<{ id: string }[]>`select id from erp_so_line where id = ${soLineId}`;
+    const [line] = await db<{ id: string; sku_key: string }[]>`
+      select id, sku_key from erp_so_line where id = ${soLineId}
+    `;
     if (!line) return reply.code(404).send({ error: "Baris Sales Order tidak ditemukan." });
+
+    const [itemBefore] = await loadItems(db, line.sku_key);
+    const atpBefore = itemBefore?.atp ?? 0;
 
     const [override] = await db<{
       so_line_id: string; state: string; reason: string | null; actor: string;
@@ -1198,13 +1343,21 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
     `;
     if (!override) return reply.code(500).send({ error: "Gagal menyimpan keputusan." });
 
+    const [itemAfter] = await loadItems(db, line.sku_key);
+    const atpAfter = itemAfter?.atp ?? 0;
+
     // Re-read the line through the views so the caller sees where it landed —
-    // 'closed', or back to 'live'/'stale' as the liveness rule decides.
-    const segment: CommitSegment = state === "closed" ? "closed" : "all";
-    const back = await loadCommitments(db, { segment, limit: 1, offset: 0, sort: "eta_asc" })
-      .then(() => loadCommitmentById(db, soLineId));
+    // 'closed', or back to 'live'/'stale' as the liveness rule decides. We never
+    // decide that here; removing our override hands the line back to the rule.
+    const back = await loadCommitmentById(db, soLineId);
 
     return {
+      ok: true,
+      so_line_id: String(line.id),
+      sku_key: line.sku_key,
+      atp_delta: round2(atpAfter - atpBefore),
+      atp_before: atpBefore,
+      atp_after: atpAfter,
       override: {
         so_line_id: override.so_line_id,
         state: override.state,
@@ -1220,8 +1373,14 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
   /** One line by id, from whichever set now holds it. Null if it holds none. */
   async function loadCommitmentById(db: Sql, soLineId: string): Promise<CommitLine | null> {
     for (const segment of ["closed", "live", "stale"] as const) {
-      const { rows } = await loadCommitments(db, { segment, limit: MAX_LIMIT, offset: 0, sort: "sku_asc" });
-      const hit = rows.find((r) => r.so_line_id === soLineId);
+      const { rows } = await loadCommitments(db, {
+        segment,
+        limit: 1,
+        offset: 0,
+        sort: "sku_asc",
+        soLineId,
+      });
+      const hit = rows[0];
       if (hit) return hit;
     }
     return null;

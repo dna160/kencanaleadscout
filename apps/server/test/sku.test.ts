@@ -401,6 +401,57 @@ describe("canonicalSkuKey — structural invariants (no database required)", () 
 // The parity block. Needs Postgres; skips cleanly without it.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// AMENDMENT 5 — `sku_key` as a URL path segment. No database needed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("AMENDMENT 5 — sku_key survives the URL round trip", () => {
+  it("encodeURIComponent → decodeURIComponent is the identity for every fixture key", () => {
+    // `GET /api/stock/sku/:sku_key` carries a key containing '|' and '.'.
+    // Clients send encodeURIComponent(sku_key); Fastify decodes the path param,
+    // so the handler must read the decoded value and stop there.
+    for (const { label, parts } of ALL_FIXTURES) {
+      const key = canonicalSkuKey(parts);
+      expect(decodeURIComponent(encodeURIComponent(key)), label).toBe(key);
+    }
+  });
+
+  it("percent-encodes every character that would break a path segment", () => {
+    const encoded = encodeURIComponent("ACP-4MM|004|0.3|4880|1220");
+    expect(encoded).toBe("ACP-4MM%7C004%7C0.3%7C4880%7C1220");
+    expect(encoded).not.toContain("|");
+    // A '/' in a text segment is legal under rule 2 and MUST be encoded, or it
+    // would split the path and route to the wrong handler.
+    expect(encodeURIComponent(canonicalSkuKey(withKode("A/B")))).not.toContain("A/B");
+    // A space is legal too (rule 2 collapses runs but keeps single spaces).
+    expect(encodeURIComponent(canonicalSkuKey(withKode("BLACK GALAXY")))).toContain("%20");
+  });
+
+  it("decoding twice corrupts a key containing '%' — which is why the handler must not", () => {
+    // Latent today, not live: rule 2 strips '%', so no canonical key can contain
+    // one under the v1 charset. Pinned here so the hazard is already covered if
+    // `STRIP_RE` ever widens. A double decode turns '%7C' back into '|' and
+    // silently forges a different SKU's key.
+    const hypothetical = "AB%7CCD|004|0.3|4880|1220";
+    const once = decodeURIComponent(encodeURIComponent(hypothetical));
+    expect(once).toBe(hypothetical);
+    expect(decodeURIComponent(once)).not.toBe(hypothetical);
+    expect(decodeURIComponent(once)).toBe("AB|CD|004|0.3|4880|1220");
+  });
+
+  it("no canonical key contains '%' under the v1 composition", () => {
+    for (const { label, parts } of ALL_FIXTURES) {
+      expect(canonicalSkuKey(parts).includes("%"), label).toBe(false);
+    }
+  });
+
+  it("a malformed percent-escape must be rejected, not crash the handler", () => {
+    // decodeURIComponent throws URIError on '%zz'. The route needs a try/catch
+    // returning 400, not a 500. Owner: WP-3 (routes/stock-atp.ts).
+    expect(() => decodeURIComponent("%zz")).toThrow(URIError);
+  });
+});
+
 describe.skipIf(!hasDb)("erp_sku_key(SQL) === canonicalSkuKey(TS) — parity (invariant §7.4)", () => {
   const reachable = ALL_FIXTURES.filter((f) => !f.sqlUnreachable);
   /** label → the key Postgres produced. Filled once, in one round trip. */

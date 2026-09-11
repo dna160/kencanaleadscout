@@ -404,8 +404,10 @@ async function syncTable(
 
     // An ERP that ignores `page` returns page 1 forever. Detect it rather than
     // spin: the rows are already committed and idempotent, so stopping is safe.
+    // `rows.length > 0` guards a false positive: two consecutive pages that are
+    // entirely malformed both signature as empty without the ERP misbehaving.
     const signature = pageSignature(table, rows);
-    if (signature === previousSignature) {
+    if (rows.length > 0 && signature === previousSignature) {
       log.warn(
         `${table}: page ${page} repeated page ${page - 1} verbatim — the 'page' query param ` +
           `looks ignored (assumption A2). Stopping this table; rows already committed are intact.`,

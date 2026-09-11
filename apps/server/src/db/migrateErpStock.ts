@@ -298,8 +298,12 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
     const cancelled = cancelledStatusArraySql(safeCancelledStatuses(config.stock.cancelledStatuses));
 
     // The shared FROM/JOIN spine. A line that is confirm-closed leaves both sets.
+    // `undated` (AMENDMENT 1) lets the PPIC queue separate two populations whose
+    // close consequences are opposite: closing a stale line moves ATP by zero,
+    // closing an undated one raises it by the whole balance (AMENDMENT 6).
     const spine = (etaPredicate: string) => `
-      select l.*, h.customer_name_text, h.sales_name_text, h.so_number
+      select l.*, h.customer_name_text, h.sales_name_text, h.so_number,
+             (l.estimate_delivery is null) as undated
       from erp_so_line l
       left join erp_so_header h on h.id = l.so_id
       left join stock_commitment_overrides o on o.so_line_id = l.id
@@ -312,8 +316,18 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
 
     // ST-R17: live => reserves stock. Stale => same line, ETA outside the window;
     // excluded from ATP, surfaced in the review queue (ST-R18) instead.
+    //
+    // AMENDMENT 1 — the `is null` arm is load-bearing, not defensive. `NULL >= x`
+    // and `NULL < x` are both NULL, so without it an approved line with no ETA
+    // matches NEITHER view: it reserves nothing, appears in no queue, and inflates
+    // ATP by its whole balance. That is the silent-drop failure ST-R18 exists to
+    // prevent and a breach of invariant §7.6. An undated line is real demand that
+    // is merely unscheduled — an absent date is not evidence of abandonment the
+    // way a 2020 ETA is — so it reserves, and `undated` flags it for PPIC review.
     const views: ReadonlyArray<readonly [string, string]> = [
-      ["v_live_commitments", spine(`l.estimate_delivery >= current_date - ${windowDays}`)],
+      ["v_live_commitments", spine(
+        `(l.estimate_delivery >= current_date - ${windowDays} or l.estimate_delivery is null)`,
+      )],
       ["v_stale_commitments", spine(`l.estimate_delivery < current_date - ${windowDays}`)],
     ];
 

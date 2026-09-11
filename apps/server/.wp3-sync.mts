@@ -1,0 +1,10 @@
+import Fastify from "fastify";
+import { stockAtpRoutes } from "./src/routes/stock-atp.js";
+const app = Fastify({ logger: false });
+await app.register(stockAtpRoutes);
+const r = await app.inject({ method: "POST", url: "/api/stock/sync", payload: { actor: "ppic" } });
+console.log("POST /api/stock/sync →", r.statusCode, r.body);
+await new Promise((res) => setTimeout(res, 400));
+const s = await app.inject({ method: "GET", url: "/api/stock/sync-status" });
+console.log("sync-status →", s.statusCode, s.body.slice(0, 260));
+await app.close(); process.exit(0);
