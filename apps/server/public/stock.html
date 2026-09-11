@@ -218,6 +218,19 @@
     <span id="staleText"></span>
   </div>
 
+  <!-- ST-R5.3, sales half (CONTRACTS amendment, this session). When the SKU
+       join does not resolve, every commitment lands in the exceptions tray,
+       ATP silently equals Stok Fisik, and this page presents a whole inventory
+       as promiseable while looking perfectly healthy. PPIC seeing an alarm does
+       not stop the sale — the rep is the one in the room. §5.0 withholds the
+       exception COUNT from sales and that still holds: this is an instruction,
+       not a hygiene number, and it carries no figures at all. Lowest priority
+       of the five connection claims; it never shows beside one. -->
+  <div class="alarmbox" id="skuWarn" role="status" style="display:none">
+    <span aria-hidden="true">⚠️</span>
+    <div>Angka Bisa Dijual sedang tidak bisa dipakai untuk menjanjikan stok — konfirmasi ke PPIC dulu.</div>
+  </div>
+
   <div id="stateArea"></div>
 
   <div id="listArea" style="display:none">
@@ -423,6 +436,34 @@ function connState(){
   return "ok";
 }
 
+/* ── ST-R5.3 · is the SKU join resolving? ────────────────────────────────────
+   Identical trigger on both pages; only what it renders differs (PPIC gets the
+   numbers and a link to the tray, sales gets one sentence and no figures).
+
+   THRESHOLD. Today `totals.exceptions` counts SO LINES while `totals.skus`
+   counts SKUs — different units, and several lines share one SKU, so the ratio
+   runs a few times higher than the true share of unmatched SKUs. A working join
+   lands in the low tens of percent; a broken join key lands at several hundred.
+   50% is the empty space between them, which is what stops this crying wolf.
+   `totals.exception_skus` (distinct unmatched sku_key) has been asked for; the
+   moment it arrives the ratio becomes a true share, the inflation headroom is
+   no longer needed, and the limit drops to 25% on its own. */
+const EXC_ALARM_PCT=50;        // line-over-SKU ratio, inflated
+const EXC_ALARM_PCT_TRUE=25;   // true share, once exception_skus lands
+function excAlarm(){
+  const t=(SUMMARY&&SUMMARY.totals)||{};
+  const skus=Number(t.skus);
+  if(!Number.isFinite(skus)||skus<=0) return null;
+  const exact=Number(t.exception_skus);          // preferred when present
+  const hasExact=Number.isFinite(exact);
+  const un=hasExact?exact:Number(t.exceptions);
+  if(!Number.isFinite(un)) return null;
+  const limit=hasExact?EXC_ALARM_PCT_TRUE:EXC_ALARM_PCT;
+  const pct=(un/skus)*100;
+  return { pct, limit, exact:hasExact, fires:pct>=limit, unmatched:un, skus,
+           lines:Number(t.exceptions)||0 };
+}
+
 // ── state ─────────────────────────────────────────────────────────────────────
 // SUMMARY holds the last payload that actually arrived. A failed poll never
 // blanks the table — the rep keeps reading the last known numbers (ST-R7).
@@ -581,10 +622,10 @@ function setDisabled(off){
 }
 
 function renderFreshness(){
-  const el=$("#dataPer"), banner=$("#staleBanner"), authBox=$("#authBox");
+  const el=$("#dataPer"), banner=$("#staleBanner"), authBox=$("#authBox"), skuWarn=$("#skuWarn");
   if(!SUMMARY){
     el.textContent=LASTERR?"Data stok gagal dimuat":"Memuat…";
-    banner.style.display="none"; authBox.style.display="none"; return;
+    banner.style.display="none"; authBox.style.display="none"; skuWarn.style.display="none"; return;
   }
   const f=SUMMARY.freshness, st=connState();
 
@@ -603,7 +644,7 @@ function renderFreshness(){
 
   // Exactly one box or banner, highest state first. #offBox is owned by
   // renderAll(); the two here are cleared first so no pair can ever coexist.
-  authBox.style.display="none"; banner.style.display="none";
+  authBox.style.display="none"; banner.style.display="none"; skuWarn.style.display="none";
   if(st==="off") return;                       // slate box wins, and it alone
   if(st==="auth"){
     authBox.style.display="";
@@ -629,7 +670,14 @@ function renderFreshness(){
     $("#staleText").innerHTML = f.last_ok_at
       ? `Data ERP belum diperbarui sejak <b>${esc(wib(f.last_ok_at,!relFresh(f.last_ok_at)))}</b>. Angka di bawah mungkin sudah tidak akurat — konfirmasi ke PPIC sebelum menjanjikan stok.`
       : `Sinkronisasi ERP belum pernah berhasil. Angka di bawah mungkin sudah tidak akurat — konfirmasi ke PPIC sebelum menjanjikan stok.`;
+    return;
   }
+  // Fifth and lowest claim: the connection is healthy, so nothing above is on
+  // screen, but the numbers themselves cannot be trusted. Stale data is
+  // visibly old; this is confidently wrong, which is worse — and the rep is the
+  // one who will quote it. One instruction, no numbers (§5.0 keeps the count).
+  const a=excAlarm();
+  if(a&&a.fires) skuWarn.style.display="";
 }
 // The relative half re-renders on a client tick, without refetching.
 setInterval(()=>{ if(SUMMARY) renderFreshness(); },30000);

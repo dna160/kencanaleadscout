@@ -140,7 +140,16 @@ export interface SoLineRow extends MirrorRowBase {
 }
 
 export interface LiveFgRow extends MirrorRowBase {
-  sn_fg: string;
+  /** The mirror's primary key: the ERP row id (`tbl_1210_STLiveFGMX_id`). */
+  erp_row_id: string;
+  /**
+   * The ERP's ROLL SERIAL — what PPIC reads off the physical panel and what
+   * `/api/stock/sku/:sku_key` shows in `on_hand_rows[]`. Not the primary key
+   * (the spec keys every table on `{table}_id`) and not part of the SKU key
+   * (SO lines carry `sn_fg = NULL`, which is why the join is by product
+   * identity at all). Nullable, because a row may not have one.
+   */
+  sn_fg: string | null;
   /** Display only. The SO side has no such column, so it is NOT in the key. */
   kode_barang: string | null;
   brand: string | null;
@@ -432,6 +441,14 @@ function noticeAuthFailure(table: SelarasTable, status: number): void {
  * the dedicated line above; 400 is what an unknown filter column returns, which
  * is the other realistic first-run fault.
  */
+/** The failure kind for an HTTP status the ERP answered with. */
+function failureKind(status: number): SelarasFailureKind {
+  if (status === 401 || status === 403) return "auth";
+  if (status >= 500) return "server";
+  if (status >= 400) return "erp_error";
+  return "other";
+}
+
 function describeClientError(table: SelarasTable, status: number): string {
   if (status === 401 || status === 403) {
     noticeAuthFailure(table, status);
@@ -452,9 +469,11 @@ function describeClientError(table: SelarasTable, status: number): string {
  * the mirror would keep a stale commitment forever with nothing in the log.
  */
 function successFailure(table: SelarasTable, env: SelarasEnvelope): string {
+  void env;
   return (
-    `ERP answered 200 with success=false for '${SELARAS_ENDPOINTS[table]}' — the page was refused, ` +
-    `so the cursor stays put and nothing was mirrored from it (observed envelope: ${env.shape})`
+    `ERP answered 200 with success=false for '${SELARAS_ENDPOINTS[table]}' — the ERP itself refused ` +
+    `the request, so the page fetched nothing, the cursor stays put and nothing was mirrored. This ` +
+    `is an ERP-side error, NOT a client shape problem: check the ERP, not the envelope reader`
   );
 }
 
@@ -872,11 +891,15 @@ export function adaptSoLineRow(raw: unknown): SoLineRow | null {
 export function adaptLiveFgRow(raw: unknown): LiveFgRow | null {
   const row = rowMap(raw);
   if (!row) return null;
-  const snFg = asText(pick(row, ...pkNames("live_fg")));
-  if (snFg === null) return null;
+  const rowId = asText(pick(row, ...pkNames("live_fg")));
+  if (rowId === null) return null;
   const parts = skuParts(row, "live_fg");
   return {
-    sn_fg: snFg,
+    erp_row_id: rowId,
+    // The serial is read from its own column and kept as its own column. It used
+    // to BE the primary key, which quietly threw the real serial away and showed
+    // an operator a row id where they expect FG-AAA-0001.
+    sn_fg: asText(pick(row, "sn_fg", "snFg", "serial", "serial_number")),
     // Display only (§FIX 1): there is no `kode_barang` on the demand side, so it
     // can never be part of the key — but it is what PPIC calls the product.
     kode_barang: asText(pick(row, "kode_barang", "kodeBarang", "kode")),
@@ -904,12 +927,16 @@ export function adaptWarnaRow(raw: unknown): WarnaRow | null {
   if (!row) return null;
   const id = asText(pick(row, ...pkNames("warna")));
   if (id === null) return null;
-  // The id normalized to a number, computed HERE so there is exactly one rule:
-  // a mirrored row may carry '004' where the master's id is '4'.
-  const code = parseErpNumber(id, "en");
+  // The code a mirrored row's `warna` actually carries. The master may publish
+  // it as its own column (`warna_code`); where it does not, the row id IS the
+  // code. Both are kept, plus a numeric form, because '004' and '4' are the same
+  // colour and the normalization rule belongs in one place — here.
+  const code = asText(pick(row, "warna_code", "kode_warna_id", "code")) ?? id;
+  const numeric = parseErpNumber(code, "en");
   return {
     id,
-    code_num: code.value,
+    code,
+    code_num: numeric.value,
     rm_warna: asText(pick(row, "rm_warna", "rmWarna", "warna_text", "nama_warna", "warna")),
     erp_updated_at: pickUpdatedAt(row),
     deleted_at: pickDeletedAt(row),
@@ -1011,9 +1038,81 @@ export interface SelarasPage<T> {
   totalPages: number | null;
 }
 
+/**
+ * WHY a page failed, as a value rather than a sentence (FIX D).
+ *
+ * The stock pages need to tell an operator "wait" from "call IT", and an auth
+ * failure is the one where those differ completely — it is also the likeliest
+ * first-run outcome. Classifying by grepping `last_error` for /HTTP 401/ works
+ * only until someone rewords a message, and then the page silently downgrades to
+ * "sync failing" and tells people to wait for something that will never fix
+ * itself. So the kind travels with the failure and is stored beside it.
+ */
+export type SelarasFailureKind =
+  /** 401/403 — the credential pair is wrong, absent, or in the wrong placement. */
+  | "auth"
+  /** Transport: timeout, DNS, reset, TLS. Usually transient. */
+  | "network"
+  /** A 2xx body we could not read as JSON (a login page, an HTML error). */
+  | "shape"
+  /** The ERP answered, understood us, and refused (a 4xx, or success:false). */
+  | "erp_error"
+  /** A 5xx, after the one retry. */
+  | "server"
+  | "other";
+
 export type SelarasResult<T> =
   | { ok: true; page: SelarasPage<T> }
-  | { ok: false; error: string; status: number | null; retryable: boolean };
+  | { ok: false; error: string; status: number | null; kind: SelarasFailureKind; retryable: boolean };
+
+// ── The cursor's datetime grammar (FIX A) ───────────────────────────────────
+//
+// THE FAILURE THIS PREVENTS, because it is silent and permanent:
+//
+// The verified documentation spells datetimes `YYYY-MM-DD` or
+// `YYYY-MM-DD HH:mm:ss`, in **WIB (UTC+7)**. It says nothing about ISO-8601.
+// This client used to send `2026-09-02T03:00:00.000Z`. Three things could
+// happen, and only the third is dangerous:
+//   1. the ERP honours the `Z`                        → correct;
+//   2. the ERP rejects it                             → a 400, loud, diagnosable;
+//   3. the ERP parses it and DISCARDS the offset, reading 03:00Z as 03:00 WIB →
+//      the cursor sits SEVEN HOURS AHEAD of where it belongs. Every row updated
+//      in that window is skipped, and because a cursor only ever moves forward
+//      no later run revisits them. Nothing logs. ATP is quietly wrong for every
+//      SKU whose commitment landed in a skipped window.
+//
+// So we send exactly what is documented, rather than hoping the parser is
+// liberal — and we subtract a lookback wide enough to absorb a whole misread
+// timezone anyway (STOCK_SYNC_LOOKBACK_MINUTES, 12h by default > the 7h offset).
+// Re-fetching costs nothing: every write is an idempotent upsert keyed on the
+// ERP's primary key, which is the property that makes this free.
+
+const WIB_OFFSET_MINUTES = 7 * 60;
+
+function pad(n: number, width = 2): string {
+  return String(n).padStart(width, "0");
+}
+
+/** `YYYY-MM-DD HH:mm:ss` in WIB — the documented grammar, and nothing else. */
+export function formatErpDatetime(instant: Date): string {
+  const wib = new Date(instant.getTime() + WIB_OFFSET_MINUTES * 60_000);
+  return (
+    `${wib.getUTCFullYear()}-${pad(wib.getUTCMonth() + 1)}-${pad(wib.getUTCDate())} ` +
+    `${pad(wib.getUTCHours())}:${pad(wib.getUTCMinutes())}:${pad(wib.getUTCSeconds())}`
+  );
+}
+
+/**
+ * The exact `updated_at__gte` value a request will carry, cursor and lookback
+ * included. Exported so the sync worker can LOG it verbatim on the first page of
+ * each table: the grammar question above is answerable from one real log line,
+ * and unanswerable by inference.
+ */
+export function cursorParam(since: Date | null | undefined): string | null {
+  if (!since) return null;
+  const lookbackMs = Math.max(0, config.stock.syncLookbackMinutes) * 60_000;
+  return formatErpDatetime(new Date(since.getTime() - lookbackMs));
+}
 
 /**
  * `<base>/table/<erp table>` — VERIFIED 2026-09-11. It is NOT `<base>/<table>`,
@@ -1038,7 +1137,8 @@ function tableUrl(table: SelarasTable): string {
  */
 export function buildPageUrl(table: SelarasTable, opts: { since?: Date | null; page: number; limit: number }): string {
   const url = new URL(tableUrl(table));
-  if (opts.since) url.searchParams.set("updated_at__gte", opts.since.toISOString());
+  const since = cursorParam(opts.since);
+  if (since !== null) url.searchParams.set("updated_at__gte", since);
   url.searchParams.set("order_by", "updated_at");
   url.searchParams.set("order_dir", "asc");
   url.searchParams.set("limit", String(opts.limit));
@@ -1179,9 +1279,10 @@ export async function fetchPage<K extends SelarasTable>(
 ): Promise<SelarasResult<SelarasRowByTable[K]>> {
   const url = buildPageUrl(table, opts);
   const retryDelayMs = opts.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
-  let last: { error: string; status: number | null; retryable: boolean } = {
+  let last: { error: string; status: number | null; kind: SelarasFailureKind; retryable: boolean } = {
     error: "no attempt made",
     status: null,
+    kind: "other",
     retryable: false,
   };
 
@@ -1190,20 +1291,36 @@ export async function fetchPage<K extends SelarasTable>(
     try {
       const res = await requestOnce(url, config.selarasTimeoutMs, opts.dispatcher);
       if (res.status >= 500) {
-        last = { error: `HTTP ${res.status} from ERP`, status: res.status, retryable: true };
+        last = { error: `HTTP ${res.status} from ERP`, status: res.status, kind: "server", retryable: true };
         continue;
       }
       if (res.status >= 400) {
         // 4xx is terminal for this run: no retry (§5).
-        return { ok: false, error: describeClientError(table, res.status), status: res.status, retryable: false };
+        return {
+          ok: false,
+          error: describeClientError(table, res.status),
+          status: res.status,
+          kind: failureKind(res.status),
+          retryable: false,
+        };
       }
 
       const env = readEnvelope(res.body, opts.limit);
-      noticeShape(table, env);
       if (env.success === false) {
-        // Not retryable: the ERP understood us and said no.
-        return { ok: false, error: successFailure(table, env), status: res.status, retryable: false };
+        // FIX C: checked BEFORE the shape notice. A well-formed `{success:false}`
+        // error body is not the A1 shape (it has no meta.total_pages), so the
+        // envelope warning used to fire and send an operator to
+        // erp/selarasClient.ts at the exact moment the problem is at the ERP.
+        // Not retryable either: the ERP understood us and said no.
+        return {
+          ok: false,
+          error: successFailure(table, env),
+          status: res.status,
+          kind: "erp_error",
+          retryable: false,
+        };
       }
+      noticeShape(table, env);
 
       const adapt = ADAPTERS[table];
       const rows: SelarasRowByTable[K][] = [];
@@ -1246,11 +1363,11 @@ export async function fetchPage<K extends SelarasTable>(
       // redactSecrets() is applied HERE, at the boundary, so no caller can
       // accidentally log a raw undici error carrying the request options.
       const message = redactSecrets(err);
-      // An unparseable body is a shape fault (A1), not a transient blip —
-      // retrying would only hide it. Everything else gets its one retry.
-      const retryable = !(err instanceof BodyNotJsonError);
-      last = { error: message, status: null, retryable };
-      if (!retryable) break;
+      // An unparseable body is a shape fault, not a transient blip — retrying
+      // would only hide it. Everything else gets its one retry.
+      const isShape = err instanceof BodyNotJsonError;
+      last = { error: message, status: null, kind: isShape ? "shape" : "network", retryable: !isShape };
+      if (isShape) break;
     }
   }
 
@@ -1278,7 +1395,7 @@ export interface SelarasKeyPage {
 
 export type SelarasKeyResult =
   | { ok: true; page: SelarasKeyPage }
-  | { ok: false; error: string; status: number | null; retryable: boolean };
+  | { ok: false; error: string; status: number | null; kind: SelarasFailureKind; retryable: boolean };
 
 /**
  * One page of the FULL current key set for a table. Same transport posture as
@@ -1292,9 +1409,10 @@ export async function fetchKeyPage(
 ): Promise<SelarasKeyResult> {
   const url = buildKeyPageUrl(table, opts);
   const retryDelayMs = opts.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
-  let last: { error: string; status: number | null; retryable: boolean } = {
+  let last: { error: string; status: number | null; kind: SelarasFailureKind; retryable: boolean } = {
     error: "no attempt made",
     status: null,
+    kind: "other",
     retryable: false,
   };
 
@@ -1303,16 +1421,28 @@ export async function fetchKeyPage(
     try {
       const res = await requestOnce(url, config.selarasTimeoutMs, opts.dispatcher);
       if (res.status >= 500) {
-        last = { error: `HTTP ${res.status} from ERP`, status: res.status, retryable: true };
+        last = { error: `HTTP ${res.status} from ERP`, status: res.status, kind: "server", retryable: true };
         continue;
       }
       if (res.status >= 400) {
-        return { ok: false, error: describeClientError(table, res.status), status: res.status, retryable: false };
+        return {
+          ok: false,
+          error: describeClientError(table, res.status),
+          status: res.status,
+          kind: failureKind(res.status),
+          retryable: false,
+        };
       }
 
       const env = readEnvelope(res.body, opts.limit);
       if (env.success === false) {
-        return { ok: false, error: successFailure(table, env), status: res.status, retryable: false };
+        return {
+          ok: false,
+          error: successFailure(table, env),
+          status: res.status,
+          kind: "erp_error",
+          retryable: false,
+        };
       }
       const keys: string[] = [];
       let dropped = 0;
@@ -1336,9 +1466,9 @@ export async function fetchKeyPage(
       };
     } catch (err) {
       const message = redactSecrets(err);
-      const retryable = !(err instanceof BodyNotJsonError);
-      last = { error: message, status: null, retryable };
-      if (!retryable) break;
+      const isShape = err instanceof BodyNotJsonError;
+      last = { error: message, status: null, kind: isShape ? "shape" : "network", retryable: !isShape };
+      if (isShape) break;
     }
   }
 

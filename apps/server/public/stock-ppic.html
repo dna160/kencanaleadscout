@@ -735,32 +735,48 @@ function adoptSync(j){
    user-facing half of that safety net; the other half is a server log nobody
    watches.
 
-   THRESHOLD. `totals.exceptions` counts SO LINES; `totals.skus` counts SKUs —
-   different units, and several lines share one SKU, so the ratio runs a few
-   times higher than the true share of unmatched SKUs. A working join (a few
-   percent of SKUs, a handful of lines each) lands in the low tens of percent; a
-   broken join key lands at several hundred. 50% sits in the empty space between
-   them, which is what keeps this from ever crying wolf — and the copy says so,
-   because an alarm that will not state its own trigger does not get believed. */
-const EXC_ALARM_PCT=50;
-function excShare(){
+   THRESHOLD. Today `totals.exceptions` counts SO LINES while `totals.skus`
+   counts SKUs — different units, and several lines share one SKU, so the ratio
+   runs a few times higher than the true share of unmatched SKUs. A working join
+   (a few percent of SKUs, a handful of lines each) lands in the low tens of
+   percent; a broken join key lands at several hundred. 50% sits in the empty
+   space between them, which is what keeps this from ever crying wolf — and the
+   copy says so, because an alarm that will not state its own trigger does not
+   get believed. `totals.exception_skus` (distinct unmatched sku_key) has been
+   asked for; the moment it arrives the ratio becomes a TRUE share, the
+   inflation headroom is no longer needed, and the limit drops to 25% by itself.
+   Identical trigger on /stock, which renders one sentence and no figures. */
+const EXC_ALARM_PCT=50;        // line-over-SKU ratio, inflated
+const EXC_ALARM_PCT_TRUE=25;   // true share, once exception_skus lands
+function excAlarm(){
   const t=SUMMARY.totals||{};
-  const ex=nOrNull(t.exceptions), sk=nOrNull(t.skus);
-  if(ex==null||sk==null||sk<=0) return null;
-  return (ex/sk)*100;
+  const skus=nOrNull(t.skus);
+  if(skus==null||skus<=0) return null;
+  const exact=nOrNull(t.exception_skus);         // preferred when present
+  const un=exact!=null?exact:nOrNull(t.exceptions);
+  if(un==null) return null;
+  const limit=exact!=null?EXC_ALARM_PCT_TRUE:EXC_ALARM_PCT;
+  const pct=(un/skus)*100;
+  return { pct, limit, exact:exact!=null, fires:pct>=limit, unmatched:un, skus,
+           lines:n(t.exceptions) };
 }
 function renderSkuAlarm(){
   const el=$("#skuAlarm"); if(!el) return;
-  const pct=excShare();
-  if(pct==null||pct<EXC_ALARM_PCT){ el.innerHTML=""; return; }
-  const t=SUMMARY.totals||{};
+  const a=excAlarm();
+  if(!a||!a.fires){ el.innerHTML=""; return; }
+  // Two phrasings because the ratio means two different things. Saying "512%
+  // dari 812 SKU" when the numerator is lines would be a false share.
+  const scale=a.exact
+    ? `${esc(num(a.unmatched))} dari ${esc(num(a.skus))} SKU (${esc(num(Math.round(a.pct)))}%) tidak punya
+       baris stok yang cocok.`
+    : `${esc(num(a.lines))} baris Sales Order belum cocok dengan SKU stok.
+       Dibandingkan jumlah SKU (${esc(num(a.skus))}), itu ${esc(num(Math.round(a.pct)))}%.`;
   el.innerHTML=`<div class="alarmbox" role="status">
     <span aria-hidden="true">⚠️</span>
     <div class="bd">
       <b>Angka Bisa Dijual belum bisa dipercaya.</b>
-      <p>${esc(num(n(t.exceptions)))} baris Sales Order belum cocok dengan SKU stok.
-         Dibandingkan jumlah SKU (${esc(num(n(t.skus)))}), itu ${esc(num(Math.round(pct)))}%.
-         Peringatan ini baru muncul di atas ${esc(String(EXC_ALARM_PCT))}%, jadi ini bukan soal
+      <p>${scale}
+         Peringatan ini baru muncul di atas ${esc(String(a.limit))}%, jadi ini bukan soal
          beberapa baris yang nyasar: pencocokan Kode SKU antara Sales Order dan stok belum jalan.</p>
       <p>Baris yang belum cocok tidak memotong stok, jadi hampir seluruh stok terlihat bisa
          dijual padahal sudah dipesan. Jangan pakai angka Bisa Dijual untuk menjanjikan stok,

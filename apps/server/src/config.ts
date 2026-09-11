@@ -183,6 +183,25 @@ export const config = {
     syncIntervalMs: int("STOCK_SYNC_INTERVAL_MS", 180_000),
     /** `limit` query param per page of the mirror pull. */
     syncPageSize: int("STOCK_SYNC_PAGE_SIZE", 1_000),
+    /**
+     * Safety lookback subtracted from the stored cursor on every incremental
+     * request. 12 hours by default, and the size is the point: it must
+     * comfortably exceed the SEVEN-hour WIB offset.
+     *
+     * The failure it absorbs: the verified documentation spells datetimes as
+     * `YYYY-MM-DD HH:mm:ss` in WIB (UTC+7) and says nothing about ISO-8601. If
+     * the ERP were to parse an offset-bearing cursor and then DISCARD the
+     * offset, our cursor would land seven hours ahead of where it belongs,
+     * every row updated in that window would be skipped, and — because a cursor
+     * only moves forward — no later run would ever revisit them. Nothing logs;
+     * ATP is simply, quietly wrong for those SKUs. We now send the documented
+     * WIB grammar, and this lookback means even a whole misread timezone cannot
+     * lose a row.
+     *
+     * It costs nothing: every write is an idempotent upsert keyed on the ERP's
+     * primary key, which is exactly the property that makes re-fetching free.
+     */
+    syncLookbackMinutes: int("STOCK_SYNC_LOOKBACK_MINUTES", 720),
     /** ST-R17 liveness window: an SO line older than this is stale, not live. */
     staleWindowDays: int("STOCK_STALE_WINDOW_DAYS", 60),
     /** status_order values that mean "this line is dead" (OQ-1, tune at validation). */

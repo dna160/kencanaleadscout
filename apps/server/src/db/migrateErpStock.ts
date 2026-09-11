@@ -194,6 +194,14 @@ function statusArraySql(statuses: readonly string[]): string {
 }
 
 export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> {
+  /**
+   * Set by a one-time structural change that invalidates what is already
+   * mirrored — a dropped table, or the SKU key composition changing. Every
+   * mirrored row's `sku_key` is computed at WRITE time, so a key change only
+   * reaches rows that are re-fetched: without resetting the cursor, rows older
+   * than it keep their retired key forever and never match anything again.
+   */
+  let needsFullRepull = false;
   // ── erp_sku_key() — the SQL half of the canonical key (ST-R5.1) ─────────────
   // First, because everything that mirrors a row computes a sku_key with it.
   try {
@@ -218,18 +226,49 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
   }
 
   // ── erp_live_fg — mirror of tbl_1210_STLiveFGMX; physical on-hand ──────────
-  // sn_fg is the mirror's primary key and holds the ERP row identity
-  // (`tbl_1210_STLiveFGMX_id`, with the old serial spellings as fallbacks —
-  // see SELARAS_KEY_FIELDS). The identity columns below are the VERIFIED ones,
-  // and they are the SO side's columns too, under the mirror's spelling:
+  // PRIMARY KEY: `erp_row_id`, holding the ERP's documented `tbl_1210_STLiveFGMX_id`.
+  // `sn_fg` is kept as a plain column holding the ERP's actual ROLL SERIAL — the
+  // thing PPIC reads off the physical panel and the thing /api/stock/sku/:sku_key
+  // shows in `on_hand_rows[].sn_fg`. Keying on the row id is right per the spec;
+  // storing the row id in a column called `sn_fg` was not, and would have shown
+  // an operator a row id where they expect a serial.
+  //
+  // The identity columns are the VERIFIED ones, and they are the SO side's
+  // columns too, under the mirror's spelling:
   //   brand → brand · warna → warna · th (alu skin) → th_alu_skin ·
   //   th_panel (total panel) → total_thickness_acp · p → p · l → l
   // `kode_barang` is kept here for DISPLAY only — the SO table has no such
   // column, so it can never be part of the join key (erp/sku.ts).
   try {
+    // A database created before the 2026-09-11 remap has this table keyed on
+    // `sn_fg` with a row id stored in it. It cannot be migrated in place: the
+    // next sync would upsert the same physical roll under its REAL row id and
+    // the old row would linger, double-counting that stock — the over-promising
+    // direction. The mirror is a disposable copy of the ERP, so the correct fix
+    // is to drop it and re-pull (the cursor is reset below).
+    const [legacyFg] = await db<{ n: string }[]>`
+      select count(*)::text as n from information_schema.tables t
+       where t.table_name = 'erp_live_fg' and t.table_schema = current_schema()
+         and not exists (
+           select 1 from information_schema.columns c
+            where c.table_name = 'erp_live_fg' and c.table_schema = current_schema()
+              and c.column_name = 'erp_row_id'
+         )
+    `;
+    if (Number(legacyFg?.n ?? 0) > 0) {
+      console.warn(
+        "[migrateErpStock] erp_live_fg predates the 2026-09-11 remap (keyed on sn_fg, which held a " +
+          "row id) — dropping and re-pulling it. Upserting the new primary key onto the old rows " +
+          "would leave both copies of every roll in the mirror and double-count on-hand.",
+      );
+      await db`drop table if exists erp_live_fg cascade`;
+      needsFullRepull = true;
+    }
+
     await db`
       create table if not exists erp_live_fg (
-        sn_fg          text primary key,
+        erp_row_id     text primary key,             -- tbl_1210_STLiveFGMX_id
+        sn_fg          text,                         -- the ERP's roll serial, for humans
         kode_barang    text,                          -- display only; NOT in the key
         brand          text,
         brand_text     text,                          -- resolved name when the ERP sends one
@@ -249,12 +288,14 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
         synced_at      timestamptz not null default now()
       )
     `;
-    // The 2026-09-11 remap on a database created before it.
+    // The 2026-09-11 remap on a database created between it and now.
     await db`alter table erp_live_fg add column if not exists brand      text`;
     await db`alter table erp_live_fg add column if not exists brand_text text`;
     await db`alter table erp_live_fg add column if not exists warna_text text`;
     await db`alter table erp_live_fg add column if not exists th_panel   numeric`;
+    await db`alter table erp_live_fg add column if not exists sn_fg      text`;
     await db`create index if not exists erp_live_fg_sku_idx on erp_live_fg (sku_key)`;
+    await db`create index if not exists erp_live_fg_sn_idx  on erp_live_fg (sn_fg)`;
   } catch (liveFgErr) {
     console.error("[migrateErpStock] erp_live_fg step failed (non-fatal):", liveFgErr);
   }
@@ -310,6 +351,7 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
          and table_schema = current_schema()
     `;
     if (Number(legacy?.n ?? 0) > 0) {
+      needsFullRepull = true; // the key composition changed with it
       console.warn(
         "[migrateErpStock] dropping erp_so_line.kode_barang — tbl_1203 has no such column " +
           "(verified 2026-09-11); the SKU key now uses brand/warna/th/th_panel/p/l. " +
@@ -348,20 +390,25 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
   // `warna` on both mirrored tables is an ID, not a name: warna = 4 is
   // "BLACK GALAXY" (273 rows, verified 2026-09-11). Matching by id is correct
   // and unchanged — this table exists only so a human reads a colour instead of
-  // a number. `code_num` is the id read as a number, so '004' on a mirrored row
-  // still finds id '4' here; it is written by the sync adapter, never derived in
-  // SQL, so there is one normalization rule and it lives in TypeScript.
+  // a number. The code a mirrored row carries is matched against `code` (the
+  // master's own `warna_code`, when it has one), then against `id`, then
+  // numerically via `code_num` so a mirrored '004' still finds a master '4'.
+  // All three are written by the sync adapter, never derived in SQL, so there is
+  // one normalization rule and it lives in TypeScript.
   try {
     await db`
       create table if not exists erp_warna (
         id             text primary key,             -- tbl_1228_DBRMWarnaID_id
-        code_num       numeric,                      -- the id as a number, when it is one
+        code           text,                         -- the colour code a mirrored row carries
+        code_num       numeric,                      -- that code as a number, when it is one
         rm_warna       text,                         -- the display name, e.g. 'BLACK GALAXY'
         erp_updated_at timestamptz,
         synced_at      timestamptz not null default now()
       )
     `;
-    await db`create index if not exists erp_warna_code_idx on erp_warna (code_num)`;
+    await db`alter table erp_warna add column if not exists code text`;
+    await db`create index if not exists erp_warna_code_idx     on erp_warna (code_num)`;
+    await db`create index if not exists erp_warna_code_txt_idx on erp_warna (code)`;
   } catch (warnaErr) {
     console.error("[migrateErpStock] erp_warna step failed (non-fatal):", warnaErr);
   }
@@ -428,6 +475,18 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
         insert into erp_sync_state (table_name) values (${t})
         on conflict (table_name) do nothing
       `;
+    }
+    // The one-time re-pull, requested by a structural change above. Cursors
+    // only ever move forward, so this is the only way a row written under the
+    // retired SKU key is ever recomputed.
+    if (needsFullRepull) {
+      console.warn(
+        "[migrateErpStock] resetting every ERP sync cursor — the mirror predates the 2026-09-11 " +
+          "remap, so its stored sku_key values were computed with the retired composition and " +
+          "would never match again. The next sync re-pulls each table in full (every write is an " +
+          "idempotent upsert, so this is safe).",
+      );
+      await db`update erp_sync_state set cursor_value = null`;
     }
   } catch (syncStateErr) {
     console.error("[migrateErpStock] erp_sync_state step failed (non-fatal):", syncStateErr);
