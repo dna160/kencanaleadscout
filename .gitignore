@@ -8,3 +8,6 @@ dist/
 coverage/
 *.tsbuildinfo
 .pnpm-store/
+
+# Agent scratch probes — never belong in the branch
+apps/server/.wp*-*.mts

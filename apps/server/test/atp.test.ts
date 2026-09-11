@@ -610,6 +610,67 @@ describe.skipIf(!hasDb)("ATP over the real schema", () => {
     });
   });
 
+  // ── AMENDMENT 6a — the consequence of a close, per population ────────────
+
+  describe("AMENDMENT 6a — closing has opposite consequences for stale and undated lines", () => {
+    /** The exact number `atp_delta` must report. Computed, never assumed. */
+    async function closeAndMeasure(tx: Tx, lineId: string): Promise<number> {
+      const before = (await atpFor(tx, BG_KEY)).atp;
+      await tx`
+        insert into stock_commitment_overrides (so_line_id, state, reason, actor)
+        values (${lineId}, 'closed', 'triage', ${ACTOR})
+      `;
+      const after = (await atpFor(tx, BG_KEY)).atp;
+      return after - before;
+    }
+
+    it("closing a STALE line moves ATP by exactly zero", async () => {
+      await inRollback(async (tx) => {
+        await seedFg(tx, [{ sn_fg: `${P}-fg-6a`, qty: 1000 }]);
+        await seedLines(tx, [{ id: `${P}-6a-stale`, qty_balance: 1200, eta: 900 }]);
+        expect(await closeAndMeasure(tx, `${P}-6a-stale`)).toBe(0);
+      });
+    });
+
+    it("closing an UNDATED line releases its entire balance into ATP", async () => {
+      // This is the asymmetry AMENDMENT 6 exists for: an operator who learns
+      // "closing does nothing" from the stale queue would silently release
+      // reserved stock here. The number must be surfaced, not inferred.
+      await inRollback(async (tx) => {
+        await seedFg(tx, [{ sn_fg: `${P}-fg-6a`, qty: 1000 }]);
+        await seedLines(tx, [{ id: `${P}-6a-undated`, qty_balance: 1200, eta: null }]);
+        expect(await closeAndMeasure(tx, `${P}-6a-undated`)).toBe(1200);
+      });
+    });
+
+    it("closing a dated LIVE line releases its balance too", async () => {
+      await inRollback(async (tx) => {
+        await seedFg(tx, [{ sn_fg: `${P}-fg-6a`, qty: 1000 }]);
+        await seedLines(tx, [{ id: `${P}-6a-live`, qty_balance: 300, eta: 5 }]);
+        expect(await closeAndMeasure(tx, `${P}-6a-live`)).toBe(300);
+      });
+    });
+
+    it("AMENDMENT 6c — a closed row leaves both views, so the undo path needs its own segment", async () => {
+      // `segment=closed` is not optional: without it a confirm-close is
+      // unrecoverable from the UI after a reload, because the row is in neither
+      // view. Assert the premise; the route-level filter is WP-3's to test.
+      await inRollback(async (tx) => {
+        await seedLines(tx, [{ id: `${P}-6c`, qty_balance: 50, eta: 900 }]);
+        await tx`
+          insert into stock_commitment_overrides (so_line_id, state, reason, actor)
+          values (${`${P}-6c`}, 'closed', 'triage', ${ACTOR})
+        `;
+        expect(await idsIn(tx, "v_live_commitments")).toEqual([]);
+        expect(await idsIn(tx, "v_stale_commitments")).toEqual([]);
+        const rows = await tx`
+          select so_line_id from stock_commitment_overrides where so_line_id = ${`${P}-6c`}
+        `;
+        expect(rows).toEqual([{ so_line_id: `${P}-6c` }]); // recoverable only from here
+      });
+    });
+  });
+
   // ── Dead demand must not reserve ─────────────────────────────────────────
 
   describe("dead demand reserves nothing", () => {

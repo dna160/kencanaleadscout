@@ -12,67 +12,50 @@
 
 | # | Gate | How it is checked | Status |
 |---|---|---|---|
-| G1 | `pnpm -r build` clean | CI | ✅ |
-| G2 | `pnpm --filter @kencana/server test` green | CI | ❌ **blocked — see §1** |
-| G3 | TS↔SQL `sku_key` parity green | `test/sku.test.ts` (515 fixtures incl. 400 fuzz) | ✅ |
-| G4 | Black Galaxy worked example reproduces | `test/atp.test.ts` | ✅ |
-| G5 | §7.6 partition holds on a seeded population | `test/atp.test.ts` | ❌ **blocked — see §1** |
-| G6 | Boots with no `DATABASE_URL`, no `SELARAS_BASE_URL` | manual, both suites skip cleanly | ✅ |
-| G7 | ST-R5.2 fill/overlap validation run against live ERP | §3 runbook — **cannot run yet** | ⛔ blocked on credentials |
-| G8 | ST-R16 shadow cycle reconciled and signed off | §2 | ⛔ not started |
-| G9 | Cold-start calibration pass with PPIC | §4 | ⛔ not started |
+| G1 | `pnpm -r build` clean | `tsc -p apps/server` | ✅ |
+| G2 | `pnpm --filter @kencana/server test` green | 196 tests, 4 files | ✅ |
+| G3 | TS↔SQL `sku_key` parity | `test/sku.test.ts` — 515 fixtures (115 hand-written + 400 seeded fuzz), compared against live `erp_sku_key()` output | ✅ |
+| G4 | Black Galaxy worked example reproduces | `test/atp.test.ts` — 4,168 − 319 = **3,849**, 1,810 quarantined | ✅ |
+| G5 | §7.6 partition holds on a seeded population | `test/atp.test.ts` — live/stale disjoint, residual empty, holds under confirm-close | ✅ |
+| G6 | Boots with no `DATABASE_URL`, no `SELARAS_BASE_URL` | manual; both DB suites skip cleanly rather than fail | ✅ |
+| G7 | Sync idempotency + cursor discipline (ST-R6/R7) | `test/erpSync.test.ts` (WP-2) | ✅ |
+| G8 | Route-level behaviour (§4, AMENDMENTS 3–9) | **no test file exists** — see §7 X3 | ⛔ **gap** |
+| G9 | ST-R5.2 fill/overlap validation against live ERP | §3 runbook — **cannot run yet** | ⛔ blocked on credentials |
+| G10 | ST-R16 shadow cycle reconciled and signed off | §2 | ⛔ not started |
+| G11 | Cold-start calibration pass with PPIC | §4 | ⛔ not started |
 
-**G2/G5 are release blockers, not flakes.** They are a single real defect,
-described immediately below. Do not ship around them, and do not "fix" them by
-weakening the test — the test is asserting the frozen contract.
+**G9–G11 are sequencing, not defects: they need credentials and a business cycle.
+G8 is a real hole and the only one that can be closed today** — see §7 X3.
 
 ---
 
-## 1. Open release blocker (found by WP-7, owned by WP-1)
+## 1. Resolved during this cycle — AMENDMENT 1 was specified but not built
 
-**`AMENDMENT 1` is specified in `CONTRACTS.md` but is not implemented in
-`apps/server/src/db/migrateErpStock.ts`.** The commitment views still carry the
-pre-amendment ETA predicate and no `undated` column:
+Recorded because the failure mode is instructive and the regression tests exist
+to keep it closed.
 
-```ts
-// migrateErpStock.ts, current
-["v_live_commitments",  spine(`l.estimate_delivery >= current_date - ${windowDays}`)],
-["v_stale_commitments", spine(`l.estimate_delivery <  current_date - ${windowDays}`)],
-```
+WP-7 found that `migrateErpStock.ts` shipped the commitment views with the
+**pre-amendment** ETA predicate and no `undated` column. `NULL >= x` and
+`NULL < x` are both NULL, so an approved, undelivered, **undated** line matched
+neither view: it reserved nothing, appeared in no queue, and silently inflated
+ATP by its whole balance. Reproduced against the live database on the
+pre-existing fixture line `L5` (`qty_balance = 700`, `estimate_delivery IS NULL`),
+invisible to both views. A breach of AMENDMENT 1 and of invariant §7.6, in the
+over-promising direction.
 
-A NULL `estimate_delivery` satisfies neither comparison, so an approved,
-undelivered, undated line falls out of **both** views: it reserves nothing,
-appears in no review queue, and silently inflates ATP by its whole balance.
-Confirmed against the live database — the pre-existing fixture line `L5`
-(`qty_balance = 700`, `estimate_delivery IS NULL`) is invisible to both views
-today. That is a breach of invariant §7.6 and of the amendment itself, and it
-over-promises stock, which is the failure direction AMENDMENT 1 exists to close.
+It was silent on every surface. WP-3 had implemented **its** half correctly —
+`stock-atp.ts` reads `v_live_commitments … where estimate_delivery is null` for
+the `segment=undated` filter — so the endpoint returned an empty list rather than
+an error. Nothing logged, nothing 500'd, ATP simply read high.
 
-`stock-atp.ts` (WP-3) **has** implemented its half — it reads
-`v_live_commitments … where estimate_delivery is null` for the PPIC undated
-filter — so the endpoint returns an empty list rather than an error. The defect
-is silent on every surface.
+WP-1 has since landed the fix (the `or l.estimate_delivery is null` arm and the
+`undated` column). Seven tests in `test/atp.test.ts` now pin it, including the
+§7.6 partition property, which caught the same defect **independently of the
+amendment tests** — the case for asserting the partition as a property rather
+than only by example.
 
-**The fix is two edits in one file, and it is verified.** `create or replace
-view` accepts an appended trailing column, so WP-1's drop-cascade fallback is not
-even exercised:
-
-```ts
-const spine = (etaPredicate: string) => `
-  select l.*, h.customer_name_text, h.sales_name_text, h.so_number,
-         (l.estimate_delivery is null) as undated          -- AMENDMENT 1
-  ...
-`;
-["v_live_commitments",  spine(`(l.estimate_delivery >= current_date - ${windowDays}
-                                or l.estimate_delivery is null)`)],
-["v_stale_commitments", spine(`l.estimate_delivery <  current_date - ${windowDays}`)],
-```
-
-(The stale predicate is already correct: `<` excludes NULL, so undated lines stay
-out of the stale queue, exactly as the amendment requires.) Applying that view
-body in a rolled-back transaction on the live database empties the §7.6 residual
-and turns all seven failures green. **WP-1 owns the change; WP-7 does not write
-feature code to make its own tests pass.**
+**Lesson for the checklist: an entry in an assumption log is not evidence that
+the code implements it.** Every amendment needs a test that fails before it lands.
 
 ---
 
@@ -594,8 +577,8 @@ Stated plainly. "Unverified" is a much better answer than a false claim.
 |---|---|---|---|
 | X1 | **The real Selaras API** — envelope shape, pagination, field casing, date format, whether `updated_at__gte` is real | No credentials, no base URL, no recorded response (`HANDOVER.md` §2). Everything is fixture-driven. | **High, but bounded.** If the shape is wrong the mirror stays empty and every surface reads "ERP tidak terhubung" — the app does not crash and does not serve wrong numbers. Mitigated by funnelling parsing through one `adaptRow()` per table. First contact with the live API is the single riskiest moment of this rollout; treat it as a change, with a rollback ready. |
 | X2 | **ST-R5.2 fill/overlap on real data** | Same. §3 is the runbook for the moment it becomes possible. | **High.** The key composition is a guess (A3). A wrong key does not corrupt ATP silently — it floods the exceptions tray (§6.3). The measurement is a gate, not optional. |
-| X3 | **HTTP route behaviour** — `/summary`, `/sku/:key`, `/shortfall`, `/stale-commitments`, `/exceptions`, `/adjustments`, the 410s, the `state` ladder | WP-7's files are `sku.test.ts` and `atp.test.ts`; route tests belong to the route packages and none were written. WP-7 tested the schema, views and formula the routes sit on. | **Medium-high.** The ATP *math* is proven; the *serialization* of it is not. Specifically untested: the §4.1 `state` derivation order (`perlu_produksi` must outrank `habis`), the 410 bodies, `atp_m2` conversion, the shortfall ranking, pagination. **Recommend WP-3/WP-4 add `test/stockAtpRoutes.test.ts` before the flip.** |
-| X4 | **The sync worker** — idempotency, cursor discipline, the `running` guard, cursor-does-not-advance-on-failure | `test/erpSync.test.ts` is WP-7's package on paper but was assigned to another agent and has not landed. Nothing in this suite exercises `syncWorker.ts`. | **High.** ST-R6 idempotency is the acceptance criterion for the whole mirror design and is currently **unverified**. §2's five-day shadow window is the compensating control: a non-idempotent sync would show as day-over-day ATP drift. That is detection, not prevention. |
+| X3 | **HTTP route behaviour** — `/summary`, `/sku/:sku_key`, `/shortfall`, `/stale-commitments`, `/exceptions`, `/adjustments`, `/sync`, the 410s | WP-7's files are `sku.test.ts` and `atp.test.ts`; route tests belong to the route packages and **no route test file exists**. WP-7 proved the schema, the views and the formula the routes sit on. | **The largest remaining gap, and it grew.** The ATP *math* is proven; its *serialization* is not. Untested: the §4.1 `state` ladder (`perlu_produksi` must outrank `habis`), `atp_m2`, the 410 bodies, ST-R14 archive reads — plus everything the amendments added: **6a** `atp_delta`/`atp_before`/`atp_after` (the data-level consequence IS tested in `atp.test.ts`, the reported number is not), **6b** `close-batch` atomicity and the `expected_count` 409 guard, **6c** `segment=closed` (without which confirm-close is unrecoverable after a reload), **8** the `rows`/`total`/`grand_total`/`status_facets` envelope, `POST /sync` → 409, mandatory server-side `reason`, **9** `/shortfall` server-side ranking, **3** the frozen `/sku/:key` body, **4** pagination caps. **6b is the one to test first: an un-guarded batch close can release thousands of live commitments in one transaction.** Recommend WP-3/WP-4 add `test/stockAtpRoutes.test.ts` before the flip; treat G8 as blocking. |
+| X4 | ~~The sync worker~~ — **now covered** | `test/erpSync.test.ts` (38 tests) landed after this document's first draft: fixture-driven idempotency, cursor-does-not-advance-on-first-page-failure, cursor holds at the last committed page, survives a total ERP outage without throwing, and `SELARAS_TOKEN` never reaches a log line on either path. | **Low, residual.** Still fixture-driven, so it proves the worker's *logic*, not the ERP's *shape* (X1). The suite also surfaced that the assumed A1 envelope is not the only shape the client tolerates — read its stderr warning during a real backfill. |
 | X5 | **Both HTML pages** at 380px, in Bahasa, against empty/stale/populated ERP | Front-end packages; no browser harness in this repo. | **Medium.** Cosmetic and layout failures only — the pages are read-only over an API that is tested. The one substantive risk is a booking affordance surviving in the DOM; §8 makes that a manual checklist item. |
 | X6 | **§7.2 "`erp_*` written only by the sync worker"** | Not expressible as a runtime test: any process with the connection string can write. | **Low.** Enforced by review and by the fact that no route imports the mirror for writing. A DB role with `select`-only on `erp_*` for the web process would make it structural; out of scope for v1. |
 | X7 | **§7.7 "boots with no ERP and no database"** as an automated test | Config is a module-level singleton read once at import; faking it needs module-registry surgery that would make the suite fragile. Verified manually, and both suites demonstrably skip cleanly with `DATABASE_URL` unset. | **Low.** Regression would be caught on the first boot of any environment without a database. |
@@ -627,6 +610,16 @@ Things no automated test in this repo can cover.
       /api/stock/bookings` and `/uploads` still return frozen history (ST-R14).
 - [ ] `explain (analyze)` on `/summary` against the full mirror — record it.
 - [ ] Adjustment with no reason, and with `qty_delta = 0`, are both rejected.
+- [ ] **AMENDMENT 6a:** close one *stale* line and one *undated* line from the
+      UI and confirm the toast states the true consequence (`0` vs the whole
+      balance). A wrong number here trains the operator to release stock.
+- [ ] **AMENDMENT 6b:** a batch close with a deliberately wrong `expected_count`
+      returns 409 and writes **nothing** — verify the rows are still open.
+- [ ] **AMENDMENT 6c:** confirm-close a line, reload the page, and recover it via
+      `segment=closed`. If reinstate is unreachable after a reload, do not flip.
+- [ ] **AMENDMENT 5:** open `/api/stock/sku/:sku_key` for a SKU whose key contains
+      a space and a `/`; confirm no double-decode and no 500 on a malformed
+      escape (`%zz` must be 400).
 
 ---
 
@@ -634,4 +627,5 @@ Things no automated test in this repo can cover.
 
 | Date | Change | By |
 |---|---|---|
-| 2026-09-11 | First draft: shadow plan, ST-R5.2 runbook, cold start, rollback, monitoring, exclusions. Release blocker §1 raised against WP-1. | WP-7 |
+| 2026-09-11 | First draft: shadow plan, ST-R5.2 runbook, cold start, rollback, monitoring, exclusions. Release blocker raised against WP-1 (AMENDMENT 1 unimplemented). | WP-7 |
+| 2026-09-11 | WP-1 landed the AMENDMENT 1 fix; §1 rewritten as a resolved finding. `erpSync.test.ts` landed, closing X4. AMENDMENTS 3–9 folded into X3 and the §8 checklist. Suite green at 196 tests. | WP-7 |
