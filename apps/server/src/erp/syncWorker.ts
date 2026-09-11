@@ -35,6 +35,7 @@ import { config, hasDatabase, hasErp } from "../config.js";
 import { getSql, type Sql } from "../db/client.js";
 import { checkCommitmentGate, checkSkuKeyMatch } from "../db/migrateErpStock.js";
 import {
+  cursorParam,
   redactSecrets,
   selarasClient,
   SELARAS_KEY_FIELDS,
@@ -43,6 +44,7 @@ import {
   type SelarasTable,
   type LiveFgRow,
   type SoHeaderRow,
+  type SelarasFailureKind,
   type SoLineRow,
   type WarnaRow,
 } from "./selarasClient.js";
@@ -254,11 +256,12 @@ async function upsertSoLines(tx: AnySql, rows: readonly SoLineRow[]): Promise<nu
 }
 
 async function upsertLiveFg(tx: AnySql, rows: readonly LiveFgRow[]): Promise<number> {
-  const batch = dedupeByKey(rows, (r) => r.sn_fg);
+  const batch = dedupeByKey(rows, (r) => r.erp_row_id);
   if (batch.length === 0) return 0;
   await tx`
     insert into erp_live_fg ${tx(
       batch,
+      "erp_row_id",
       "sn_fg",
       "kode_barang",
       "brand",
@@ -277,7 +280,8 @@ async function upsertLiveFg(tx: AnySql, rows: readonly LiveFgRow[]): Promise<num
       "sku_key",
       "erp_updated_at",
     )}
-    on conflict (sn_fg) do update set
+    on conflict (erp_row_id) do update set
+      sn_fg          = excluded.sn_fg,
       kode_barang    = excluded.kode_barang,
       brand          = excluded.brand,
       brand_text     = excluded.brand_text,
@@ -308,8 +312,9 @@ async function upsertWarna(tx: AnySql, rows: readonly WarnaRow[]): Promise<numbe
   const batch = dedupeByKey(rows, (r) => r.id);
   if (batch.length === 0) return 0;
   await tx`
-    insert into erp_warna ${tx(batch, "id", "code_num", "rm_warna", "erp_updated_at")}
+    insert into erp_warna ${tx(batch, "id", "code", "code_num", "rm_warna", "erp_updated_at")}
     on conflict (id) do update set
+      code           = excluded.code,
       code_num       = excluded.code_num,
       rm_warna       = excluded.rm_warna,
       erp_updated_at = excluded.erp_updated_at,
@@ -322,7 +327,7 @@ type AnyMirrorRow = SoHeaderRow | SoLineRow | LiveFgRow | WarnaRow;
 
 /** The mirror's primary key for a row, whichever table it came from. */
 function rowKey(row: AnyMirrorRow): string {
-  return "id" in row ? row.id : row.sn_fg;
+  return "id" in row ? row.id : row.erp_row_id;
 }
 
 async function upsertPage(tx: AnySql, table: SelarasTable, rows: readonly AnyMirrorRow[]): Promise<number> {
@@ -369,7 +374,7 @@ async function deleteRows(tx: AnySql, table: SelarasTable, ids: readonly string[
       return r.count ?? 0;
     }
     case "live_fg": {
-      const r = await tx`delete from erp_live_fg where sn_fg = any(${keys})`;
+      const r = await tx`delete from erp_live_fg where erp_row_id = any(${keys})`;
       return r.count ?? 0;
     }
   }
@@ -472,10 +477,11 @@ async function commitPage(
     await tx`
       update erp_sync_state
          set cursor_value  = greatest(cursor_value, ${pageMaxUpdatedAt}::timestamptz),
-             rows_synced   = rows_synced + ${written},
-             last_ok_at    = now(),
-             last_error    = null,
-             last_error_at = null
+             rows_synced     = rows_synced + ${written},
+             last_ok_at      = now(),
+             last_error      = null,
+             last_error_kind = null,
+             last_error_at   = null
        where table_name = ${table}
     `;
     return { written, removed };
@@ -486,16 +492,27 @@ async function commitPage(
 async function markTableOk(db: Sql, table: SelarasTable): Promise<void> {
   await db`
     update erp_sync_state
-       set last_ok_at = now(), last_error = null, last_error_at = null
+       set last_ok_at = now(), last_error = null, last_error_kind = null, last_error_at = null
      where table_name = ${table}
   `;
 }
 
 /** Failure path: record it, LEAVE THE CURSOR ALONE, keep the old mirror readable. */
-async function markTableError(db: Sql, table: SelarasTable, error: string): Promise<void> {
+async function markTableError(
+  db: Sql,
+  table: SelarasTable,
+  error: string,
+  kind: SelarasFailureKind = "other",
+): Promise<void> {
+  // FIX D: the KIND is stored beside the message, not inferred from it later.
+  // The stock pages have to tell "wait, the ERP is down" from "call IT, the
+  // credentials were rejected", and grepping a prose string for /HTTP 401/
+  // survives exactly until somebody rewords it.
   await db`
     update erp_sync_state
-       set last_error = ${redactSecrets(error).slice(0, 500)}, last_error_at = now()
+       set last_error      = ${redactSecrets(error).slice(0, 500)},
+           last_error_kind = ${kind},
+           last_error_at   = now()
      where table_name = ${table}
   `;
 }
@@ -542,6 +559,17 @@ async function syncTable(
   const ambiguousSamples: string[] = [];
   const nonFiniteSamples: string[] = [];
 
+  // FIX A — the exact `updated_at__gte` the first page carries, logged verbatim.
+  // The documented grammar is `YYYY-MM-DD HH:mm:ss` in WIB and the client sends
+  // exactly that, minus STOCK_SYNC_LOOKBACK_MINUTES. Whether the ERP reads it the
+  // way we mean is the one thing only real traffic can answer, and this line is
+  // what makes it answerable from the logs instead of by inference.
+  log.info(
+    `${table}: pulling with updated_at__gte=${cursorParam(cursorBefore) ?? "(none — full pull)"}` +
+      ` (stored cursor ${cursorBefore?.toISOString() ?? "null"}, lookback ` +
+      `${config.stock.syncLookbackMinutes} min)`,
+  );
+
   let previousSignature = "";
   for (let page = 1; page <= MAX_PAGES_PER_TABLE; page += 1) {
     const res = await client.fetchPage(table, { since: cursorBefore, page, limit: pageSize });
@@ -549,7 +577,7 @@ async function syncTable(
       // Cursor untouched. The mirror keeps whatever it already had (ST-R7).
       result.ok = false;
       result.error = res.error;
-      await markTableError(db, table, res.error);
+      await markTableError(db, table, res.error, res.kind);
       log.error(`${table}: page ${page} failed — ${res.error}; cursor left at ${cursorBefore?.toISOString() ?? "null"}`);
       reportRefusals(table, result, ambiguousSamples, nonFiniteSamples, log);
       return result;
@@ -686,7 +714,7 @@ const MIRROR_TABLES: Record<SelarasTable, { table: string; pk: string }> = {
   warna: { table: "erp_warna", pk: "id" },
   so_header: { table: "erp_so_header", pk: "id" },
   so_line: { table: "erp_so_line", pk: "id" },
-  live_fg: { table: "erp_live_fg", pk: "sn_fg" },
+  live_fg: { table: "erp_live_fg", pk: "erp_row_id" },
 };
 
 /** Keys per INSERT while filling the scratch table. Big enough to be few round trips. */
@@ -744,7 +772,7 @@ async function purgeAbsent(tx: AnySql, table: SelarasTable): Promise<number> {
     case "live_fg": {
       const r = await tx`
         delete from erp_live_fg t
-         where not exists (select 1 from _erp_recon_keys k where k.k = t.sn_fg)
+         where not exists (select 1 from _erp_recon_keys k where k.k = t.erp_row_id)
       `;
       return r.count ?? 0;
     }
@@ -774,7 +802,7 @@ async function fetchErpKeySet(
   log: SyncLogger,
 ): Promise<
   | { ok: true; keys: Set<string>; pages: number; dropped: number; projected: boolean; capped: boolean }
-  | { ok: false; error: string }
+  | { ok: false; error: string; kind: SelarasFailureKind }
 > {
   const keys = new Set<string>();
   let pages = 0;
@@ -785,7 +813,7 @@ async function fetchErpKeySet(
 
   for (let page = 1; page <= MAX_PAGES_PER_TABLE; page += 1) {
     const res = await client.fetchKeyPage(table, { page, limit: pageSize });
-    if (!res.ok) return { ok: false, error: res.error };
+    if (!res.ok) return { ok: false, error: res.error, kind: res.kind };
 
     const { keys: pageKeys, rawCount, dropped: pageDropped, totalPages, projected: pageProjected } = res.page;
     dropped += pageDropped;
@@ -803,9 +831,10 @@ async function fetchErpKeySet(
     if (pageKeys.length > 0 && signature === previousSignature) {
       return {
         ok: false,
+        kind: "erp_error",
         error:
-          `page ${page} repeated page ${page - 1} verbatim — the 'page' query param looks ignored ` +
-          `(assumption A2), so the key set is incomplete and nothing may be purged from it`,
+          `page ${page} repeated page ${page - 1} verbatim — the 'page' query param looks ignored, ` +
+          `so the key set is incomplete and nothing may be purged from it`,
       };
     }
     previousSignature = signature;
@@ -818,6 +847,7 @@ async function fetchErpKeySet(
     if (page === MAX_PAGES_PER_TABLE) {
       return {
         ok: false,
+        kind: "erp_error",
         error: `hit the ${MAX_PAGES_PER_TABLE}-page cap before the key set ended — it is incomplete, so nothing may be purged`,
       };
     }
@@ -853,7 +883,7 @@ async function reconcileTable(
 
   const fetched = await fetchErpKeySet(client, table, pageSize, log);
   if (!fetched.ok) {
-    await markReconcileError(db, table, `reconcile aborted — ${fetched.error}`);
+    await markReconcileError(db, table, `reconcile aborted — ${fetched.error}`, fetched.kind);
     log.error(
       `reconcile ${table}: ABORTED, mirror untouched (${mirrored} row(s) kept) — ${fetched.error}`,
     );
@@ -921,10 +951,19 @@ async function reconcileTable(
 }
 
 /** Failure path for the sweep. Prefixed so sync-status never mistakes it for a pull error. */
-async function markReconcileError(db: Sql, table: SelarasTable, error: string): Promise<void> {
+async function markReconcileError(
+  db: Sql,
+  table: SelarasTable,
+  error: string,
+  kind: SelarasFailureKind = "other",
+): Promise<void> {
+  // The kind is written here too, so a sweep failure cannot leave a stale `auth`
+  // kind standing and keep the page telling people to call IT (FIX D).
   await db`
     update erp_sync_state
-       set last_error = ${redactSecrets(error).slice(0, 500)}, last_error_at = now()
+       set last_error      = ${redactSecrets(error).slice(0, 500)},
+           last_error_kind = ${kind},
+           last_error_at   = now()
      where table_name = ${table}
   `;
 }

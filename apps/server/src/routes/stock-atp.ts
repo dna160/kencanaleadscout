@@ -230,7 +230,21 @@ export interface Freshness {
   last_ok_at: string | null;
   stale: boolean;
   erp_connected: boolean;
+  /**
+   * FIX D — false ONLY when the last sync attempt failed authentication
+   * (HTTP 401/403); true otherwise, including when nothing has ever synced.
+   *
+   * It exists so a page can tell "wait, the ERP is unreachable" from "call IT,
+   * the credentials were rejected" — the likeliest first-run outcome, and the
+   * one where waiting is exactly the wrong advice because the fix is an admin
+   * action. Previously the only way to know was to grep `last_error` for
+   * /HTTP 401/, which silently stops working the day somebody rewords it.
+   */
+  erp_authorized: boolean;
 }
+
+/** Mirrors `SelarasFailureKind` in erp/selarasClient.ts; stored per table. */
+export type SyncErrorKind = "auth" | "network" | "shape" | "erp_error" | "server" | "other";
 
 export interface SummaryTotals {
   skus: number;
@@ -247,7 +261,16 @@ export interface SummaryTotals {
    * it reads the same way as `stale_commitments` beside it.
    */
   undated_commitments: number;
+  /** ST-R5.3 unmatched demand, counted in SO LINES. */
   exceptions: number;
+  /**
+   * FIX E — the same unmatched demand counted in distinct SKUs, so it can be
+   * compared against `skus` without inflating the share. Several lines routinely
+   * share one SKU, so `exceptions / skus` overstates the problem (a realistic
+   * population measured 512%); `exception_skus / skus` is a true fraction, which
+   * is what an alarm threshold should be set against.
+   */
+  exception_skus: number;
 }
 
 export interface SummaryResponse {
@@ -267,7 +290,10 @@ export interface AdjustmentRow {
 }
 
 export interface OnHandRow {
-  sn_fg: string;
+  /** The ERP's roll serial — what PPIC reads off the panel. May be absent. */
+  sn_fg: string | null;
+  /** The mirror's primary key for the row (`tbl_1210_STLiveFGMX_id`). */
+  erp_row_id: string;
   lokasi: string | null;
   qty: number;
   qty_m2: number | null;
@@ -330,6 +356,8 @@ export interface SyncTableStatus {
   cursor_value: string | null;
   last_ok_at: string | null;
   last_error: string | null;
+  /** Why the last attempt failed, as a value rather than a sentence (FIX D). */
+  last_error_kind: SyncErrorKind | null;
   last_error_at: string | null;
   rows_synced: number;
   running: boolean;
@@ -681,6 +709,7 @@ interface SyncStateRow {
   cursor_value: Date | string | null;
   last_ok_at: Date | string | null;
   last_error: string | null;
+  last_error_kind: string | null;
   last_error_at: Date | string | null;
   rows_synced: string | null;
   running: boolean;
@@ -688,7 +717,8 @@ interface SyncStateRow {
 
 async function loadSyncState(db: Sql): Promise<SyncStateRow[]> {
   return db<SyncStateRow[]>`
-    select table_name, cursor_value, last_ok_at, last_error, last_error_at, rows_synced, running
+    select table_name, cursor_value, last_ok_at, last_error, last_error_kind,
+           last_error_at, rows_synced, running
     from erp_sync_state
     order by case table_name
                when 'so_header' then 1 when 'so_line' then 2 when 'live_fg' then 3 else 4
@@ -707,6 +737,22 @@ function staleAfterMs(): number {
  * ERP is actually configured: with SELARAS_BASE_URL unset the page renders the
  * "ERP tidak terhubung" box instead, and UX-SPEC §4 forbids showing both.
  */
+/** Whitelist the stored kind: it reaches a response, so it is never free text. */
+const SYNC_ERROR_KINDS: readonly SyncErrorKind[] = [
+  "auth",
+  "network",
+  "shape",
+  "erp_error",
+  "server",
+  "other",
+];
+
+function errorKind(raw: string | null): SyncErrorKind | null {
+  if (raw === null) return null;
+  const hit = SYNC_ERROR_KINDS.find((k) => k === raw);
+  return hit ?? "other";
+}
+
 function freshnessOf(rows: readonly SyncStateRow[]): Freshness {
   let newest: number | null = null;
   for (const r of rows) {
@@ -716,10 +762,15 @@ function freshnessOf(rows: readonly SyncStateRow[]): Freshness {
     if (Number.isFinite(ms) && (newest === null || ms > newest)) newest = ms;
   }
   const stale = hasErp && (newest === null || Date.now() - newest > staleAfterMs());
+  // FIX D: unauthorized ONLY on a recorded auth failure. Never having synced is
+  // not an authorization verdict, and claiming it is would put an alarming "call
+  // IT" banner on every fresh deployment.
+  const erpAuthorized = !rows.some((r) => errorKind(r.last_error_kind) === "auth");
   return {
     last_ok_at: newest === null ? null : new Date(newest).toISOString(),
     stale,
     erp_connected: hasErp,
+    erp_authorized: erpAuthorized,
   };
 }
 
@@ -1087,6 +1138,7 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
       stale_commitments: 0,
       undated_commitments: 0,
       exceptions: 0,
+      exception_skus: 0,
     };
     for (const it of items) {
       totals[it.state] += 1;
@@ -1094,8 +1146,13 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
       // AMENDMENT 12: the engine already counts these per item; summing them is
       // the whole implementation, and it retires the page's counting probe.
       totals.undated_commitments += it.undated_lines;
-      // ST-R5.3: demand against a SKU with no Live FG row at all.
-      if (it.stock_rows === 0) totals.exceptions += it.live_lines + it.stale_lines;
+      // ST-R5.3: demand against a SKU with no Live FG row at all. Counted both
+      // ways — in lines (what the exceptions tray lists) and in SKUs (FIX E:
+      // what `skus` can actually be divided by, since many lines share a SKU).
+      if (it.stock_rows === 0 && it.live_lines + it.stale_lines > 0) {
+        totals.exceptions += it.live_lines + it.stale_lines;
+        totals.exception_skus += 1;
+      }
     }
 
     const body: SummaryResponse = {
@@ -1133,14 +1190,14 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
         limit ${MAX_LIMIT}
       `,
       db<{
-        sn_fg: string; lokasi: string | null; qty: string; qty_m2: string | null;
+        erp_row_id: string; sn_fg: string | null; lokasi: string | null; qty: string; qty_m2: string | null;
         buffer_qty: string | null; buffer_status: string | null; erp_updated_at: Date | string | null;
       }[]>`
-        select sn_fg, lokasi, qty::text as qty, qty_m2::text as qty_m2,
+        select erp_row_id, sn_fg, lokasi, qty::text as qty, qty_m2::text as qty_m2,
                buffer_qty::text as buffer_qty, buffer_status, erp_updated_at
         from erp_live_fg
         where sku_key = ${skuKey}
-        order by lokasi nulls last, sn_fg
+        order by lokasi nulls last, sn_fg nulls last, erp_row_id
         limit ${MAX_LIMIT}
       `,
     ]);
@@ -1160,7 +1217,10 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
         created_at: iso(a.created_at),
       })),
       on_hand_rows: onHand.map((r) => ({
+        // The serial, not the row id: an operator matching this against a
+        // physical panel needs FG-AAA-0001, not 1210-000001 (FIX B).
         sn_fg: r.sn_fg,
+        erp_row_id: r.erp_row_id,
         lokasi: r.lokasi,
         qty: round2(numOf(r.qty)),
         qty_m2: numOrNull(r.qty_m2),
@@ -1345,6 +1405,7 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
         // Never echo a secret into a response (§7.9) — last_error is written by
         // the worker, which is contractually forbidden from putting the token in it.
         last_error: r.last_error,
+        last_error_kind: errorKind(r.last_error_kind),
         last_error_at: iso(r.last_error_at),
         rows_synced: numOf(r.rows_synced),
         running: Boolean(r.running),

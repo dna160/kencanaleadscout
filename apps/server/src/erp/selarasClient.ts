@@ -172,7 +172,9 @@ export interface LiveFgRow extends MirrorRowBase {
 /** The colour master `tbl_1228_DBRMWarnaID` — 273 rows, `warna` 4 = BLACK GALAXY. */
 export interface WarnaRow extends MirrorRowBase {
   id: string;
-  /** The id read as a number, so a mirrored '004' still finds id '4'. */
+  /** The colour code a mirrored `warna` carries — the master's own, else the id. */
+  code: string;
+  /** That code as a number, so a mirrored '004' still finds a master '4'. */
   code_num: number | null;
   rm_warna: string | null;
   erp_updated_at: Date | null;
@@ -1110,7 +1112,8 @@ export function formatErpDatetime(instant: Date): string {
  */
 export function cursorParam(since: Date | null | undefined): string | null {
   if (!since) return null;
-  const lookbackMs = Math.max(0, config.stock.syncLookbackMinutes) * 60_000;
+  const minutes = config.stock.syncLookbackMinutes > 0 ? config.stock.syncLookbackMinutes : 0;
+  const lookbackMs = minutes * 60_000;
   return formatErpDatetime(new Date(since.getTime() - lookbackMs));
 }
 

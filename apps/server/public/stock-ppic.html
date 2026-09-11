@@ -660,11 +660,12 @@ function warnaLabel(i){
    1 and 4 stay where the contract puts them, on /summary's freshness block. */
 let SYNC=null;        // last /sync-status payload that arrived, or null
 let WAS_CONN=null;    // to announce a recovery exactly once
-// The ERP client writes "HTTP 401 from ERP" / "HTTP 403 from ERP" into
-// last_error verbatim. Until the server classifies auth failures itself this is
-// the only way to tell "wrong credentials" from "the ERP fell over" — and the
-// two need opposite instructions. Anything it does not match degrades to
-// state 3, which is the honest answer when we cannot tell.
+// Last-resort probe only. The server now classifies auth failures itself —
+// `freshness.erp_authorized` (FIX D) and per-table `last_error_kind:"auth"` —
+// and both are preferred below. This regex stays as the floor for a mirror that
+// predates those fields: the ERP client writes "HTTP 401 from ERP" verbatim into
+// last_error. Anything unmatched degrades to state 3, which is the honest
+// answer when we cannot tell.
 const AUTH_RE=/\bHTTP\s*(401|403)\b|\b(unauthorized|forbidden)\b/i;
 function normSync(j){
   const o=j&&typeof j==="object"?j:{};
@@ -675,19 +676,29 @@ function normSync(j){
     tables:tbl.map(t=>({
       table_name:trimStr(t&&t.table_name),
       last_error:trimStr(t&&t.last_error),
+      last_error_kind:trimStr(t&&t.last_error_kind),   // SyncErrorKind: "auth" | …
       last_error_at:(t&&t.last_error_at)||null,
       last_ok_at:(t&&t.last_ok_at)||null,
     })),
   };
 }
 function authRejected(){
+  // 1 · the typed field, straight off /summary's own freshness block — so this
+  //     is known on the 30s poll and does not need /sync-status to be reachable.
+  //     It is false ONLY on a recorded auth failure: never-synced is not an
+  //     authorization verdict, so a fresh deployment gets no "call IT" banner.
+  const sf=SUMMARY.freshness||{};
+  if(sf.erp_authorized===false) return true;
   if(!SYNC) return false;
-  // An explicit server signal wins if one ever lands. Nothing is invented:
-  // absent means "unknown", which falls through to the text probe below.
+  // 2 · the same field (and the spellings this page has always tolerated) on
+  //     /sync-status, at either level.
   for(const k of ["erp_authorized","authorized"])
     if(SYNC.freshness[k]===false || SYNC.root[k]===false) return true;
   for(const k of ["erp_auth_failed","auth_failed","unauthorized"])
     if(SYNC.freshness[k]===true || SYNC.root[k]===true) return true;
+  // 3 · the typed per-table classification.
+  if(SYNC.tables.some(t=>t.last_error_kind==="auth")) return true;
+  // 4 · floor: the prose the ERP client writes.
   return SYNC.tables.some(t=>AUTH_RE.test(t.last_error));
 }
 // The worker clears last_error on a successful table pull, so a message that is

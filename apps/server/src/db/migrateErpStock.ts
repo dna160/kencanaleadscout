@@ -465,11 +465,13 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
         cursor_value  timestamptz,
         last_ok_at    timestamptz,
         last_error    text,
+        last_error_kind text,                  -- 'auth' | 'network' | 'shape' | ... (FIX D)
         last_error_at timestamptz,
         rows_synced   bigint not null default 0,
         running       boolean not null default false
       )
     `;
+    await db`alter table erp_sync_state add column if not exists last_error_kind text`;
     for (const t of ["live_fg", "so_line", "so_header", "warna"]) {
       await db`
         insert into erp_sync_state (table_name) values (${t})

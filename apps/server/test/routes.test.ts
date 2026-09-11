@@ -165,7 +165,10 @@ async function inRollback<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
 
 /** A SKU identity nobody else in this database uses. */
 function parts(tag: string, over: Partial<SkuParts> = {}): SkuParts {
-  return { kode_barang: `WP7RT-${tag}`, warna: "004", th: 0.3, p: 4880, l: 1220, ...over };
+  // 2026-09-11 composition: brand|warna|th|th_panel|p|l (erp/sku.ts). `brand`
+  // carries the suite's unique tag, since `kode_barang` is no longer in the key
+  // (tbl_1203 has no such column) and could not isolate this suite's rows.
+  return { brand: `WP7RT-${tag}`, warna: "4", th: 0.3, th_panel: 4, p: 4880, l: 1220, ...over };
 }
 function keyOf(tag: string, over: Partial<SkuParts> = {}): string {
   return canonicalSkuKey(parts(tag, over));
@@ -188,10 +191,14 @@ async function seedFg(tx: Tx, rows: readonly FgRow[]): Promise<void> {
   for (const r of rows) {
     const pa = r.parts;
     await tx`
-      insert into erp_live_fg (sn_fg, kode_barang, warna, th, p, l, qty, qty_m2, lokasi, sku_key)
-      values (${r.sn_fg}, ${String(pa.kode_barang ?? "")}, ${String(pa.warna ?? "")},
-              ${Number(pa.th ?? 0)}, ${Number(pa.p ?? 0)}, ${Number(pa.l ?? 0)},
-              ${r.qty}, ${r.qty_m2 ?? null}, ${r.lokasi ?? "GD-A"}, ${canonicalSkuKey(pa)})
+      insert into erp_live_fg (
+        erp_row_id, sn_fg, kode_barang, brand, warna, th, th_panel, p, l, qty, qty_m2, lokasi, sku_key
+      ) values (
+        ${r.sn_fg}, ${r.sn_fg}, ${String(pa.brand ?? "")}, ${String(pa.brand ?? "")},
+        ${String(pa.warna ?? "")},
+        ${Number(pa.th ?? 0)}, ${Number(pa.th_panel ?? 0)}, ${Number(pa.p ?? 0)}, ${Number(pa.l ?? 0)},
+        ${r.qty}, ${r.qty_m2 ?? null}, ${r.lokasi ?? "GD-A"}, ${canonicalSkuKey(pa)}
+      )
     `;
   }
 }
@@ -211,12 +218,12 @@ async function seedLines(tx: Tx, rows: readonly LineRow[]): Promise<void> {
       r.eta === null ? null : typeof r.eta === "number" ? tx`(current_date - ${r.eta}::int)` : tx`${r.eta}::date`;
     await tx`
       insert into erp_so_line (
-        id, so_id, kode_barang, warna, th, p, l,
+        id, so_id, brand, warna, th, th_panel, p, l,
         qty_order, qty_delivered, qty_balance,
         status_order, approval, estimate_delivery, sn_fg, sku_key
       ) values (
-        ${r.id}, ${soId}, ${String(pa.kode_barang ?? "")}, ${String(pa.warna ?? "")},
-        ${Number(pa.th ?? 0)}, ${Number(pa.p ?? 0)}, ${Number(pa.l ?? 0)},
+        ${r.id}, ${soId}, ${String(pa.brand ?? "")}, ${String(pa.warna ?? "")},
+        ${Number(pa.th ?? 0)}, ${Number(pa.th_panel ?? 0)}, ${Number(pa.p ?? 0)}, ${Number(pa.l ?? 0)},
         ${r.qty_balance}, ${0}, ${r.qty_balance},
         ${r.status_order ?? "Open"}, ${r.approval ?? "Approved"}, ${eta},
         ${null}, ${canonicalSkuKey(pa)}

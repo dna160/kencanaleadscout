@@ -258,6 +258,7 @@ page is a defect on both.
 | `sku_key` | **Kode SKU** | "Key", "ID" |
 | `kode_barang` | **Kode Barang** | "Brand", "Part no" |
 | `warna` | **Warna** | |
+| `warna` when it is still a raw ID | **`Kode warna 004`** — see §1.6 | a bare `004` |
 | `qty_balance` | **Sisa Pesanan** | "Balance" |
 | `status_order` | **Status SO** | |
 | `estimate_delivery` | **ETA** (kept — universally used in the plant) | "Tanggal kirim" |
@@ -270,6 +271,36 @@ page is a defect on both.
 | PPIC operator | **Petugas PPIC** | |
 | `actor` | **Petugas** | "User" |
 | unit | from `item.unit`, normally **lembar** | |
+
+### 1.6 `warna` is an ID, not a name — how the colour label is resolved
+
+> **Added this session, verified against the real Selaras payload.** Both mirror
+> tables carry `warna` as a numeric code (e.g. `4`) into the colour master
+> `tbl_1228_DBRMWarnaID`, whose `rm_warna` holds the name (`BLACK GALAXY`). Every
+> place this document writes `{warna}` as something to render — §5.2, §5.3,
+> §6.1, §6.2.2, §6.10 — was therefore specifying **"4"** in the position where a
+> rep expects the single most important label on a stock screen.
+
+The back end resolves it into `warna_name` (= `coalesce(warna_text,
+erp_warna.rm_warna)`) and folds the same name into the composed `name`. The
+pages read, in this order, and stop at the first that is **not** all digits:
+
+1. `warna_name` — the resolved name.
+2. `warna_text` — the mirror's own `_text` twin.
+3. `warna` — already a name in some payloads.
+4. the colour recovered from `name`, by stripping the parts we hold as fields
+   (the `kode_barang` prefix, the `th` suffix, the ` · {p}×{l}` tail). If the
+   strip does not bite, the fuller name is kept — long but true.
+5. otherwise the code, **labelled as a code**: `Kode warna 004`.
+
+**Rule: a bare number is never rendered as if it were a product name.** Step 5 is
+not a fallback of last resort that can be skipped — it is what makes the page
+correct *before* the resolution lands as well as after, and it is what stops a
+rep reading a master-data id as a colour.
+
+This label — not the raw code — is what the `Warna` filter lists and matches on,
+what `Warna A–Z` sorts by, and what `rankOf()` ranks. The raw code stays in the
+search haystack, because PPIC and IT quote it.
 
 ---
 
@@ -385,16 +416,39 @@ negative number carries its minus sign. (§9.5.)
 
 ---
 
-## 4. Freshness, staleness, disconnection — three conditions, three looks
+## 4. Freshness, staleness, disconnection — five conditions, four looks
+
+> **Amended (this session).** This section shipped with three conditions. The
+> real Selaras connection needs five: the two that were missing are *credentials
+> rejected* and *the sync itself is failing*, and both were previously rendered
+> as one of the other three, which told the operator to do the wrong thing.
+> §4.4 and §4.5 are new; §4.1's table gains their rows.
 
 These are mutually exclusive in the UI. **Precedence, highest first:**
 
-1. `freshness.erp_connected === false` → **offline box** (§4.3). Suppresses 2.
-2. `freshness.stale === true` → **amber banner** (§4.2).
-3. otherwise → **freshness line only** (§4.1).
+1. `freshness.erp_connected === false` → **offline box** (§4.3). Suppresses all below.
+2. ERP reachable, credentials rejected → **rejected-access box** (§4.4).
+3. last sync attempt errored → **amber banner, sync-failing copy** (§4.5).
+4. `freshness.stale === true` → **amber banner, stale copy** (§4.2).
+5. otherwise → **freshness line only** (§4.1), and on `/stock` only, the
+   untrustworthy-ATP line (§4.6) when it applies.
 
-Never render two at once. The header freshness line (§4.1) renders in all three
+Never render two at once. The header freshness line (§4.1) renders in all five
 cases, with different text.
+
+**Why 2 and 3 are not "tidak terhubung".** §4.3's slate box says *this feature is
+switched off, wait for IT to turn it on*. A rejected credential is not switched
+off — the ERP is there and answering, and it is refusing us; the fix is an
+administrator replacing a secret, and telling the operator to wait is telling
+them to wait for something that will never happen. **Why 3 is not "kedaluwarsa".**
+§4.2 says only *the data is old*; §4.5 says *we know why it is old, and here is
+the message*. They are one banner apart in colour and a whole diagnosis apart in
+content.
+
+Three colour families still carry it: slate = switched off · amber = the data may
+be old · **red (`--neg-bg` / `--neg-ink`, new class `.alarmbox`, 5.30:1) = a
+person has to fix this and waiting will not**. No new token; the pair is hoisted
+from the inherited `.st-rejected`, exactly as §1.2 hoisted the others.
 
 ### 4.1 The freshness line — always visible
 
@@ -409,8 +463,16 @@ changes, so it is also the element that tells a rep the page is alive.
 | `last_ok_at` present, >24h old | `Data ERP per 10 Sep 14:05` |
 | `last_ok_at` null, `erp_connected` true | `Menunggu sinkronisasi pertama…` |
 | `erp_connected` false | `ERP tidak terhubung` |
+| credentials rejected (§4.4) | `Akses ERP ditolak` |
+| last sync attempt errored (§4.5), `last_ok_at` present | `Data ERP per 14:05 · sinkronisasi gagal` |
+| last sync attempt errored, `last_ok_at` null | `Sinkronisasi ERP gagal` |
 | initial page load, before first response | `Memuat…` (inherited) |
 | summary fetch failed, previous data still on screen | `Data ERP per 14:05 · gagal memuat ulang` |
+
+When the sync is failing, `· sinkronisasi gagal` **replaces** the relative half
+rather than being appended to it: `Data ERP per 14:05 · 2 jam lalu ·
+sinkronisasi gagal` is three clauses where the middle one is the least useful.
+Same rule as the inherited `· gagal memuat ulang`, which it sits beside.
 
 The relative half re-renders on a 30s client tick without refetching — reuse the
 inherited `.chip.age[data-age]` tick pattern.
@@ -484,6 +546,133 @@ Then, in place of the item list:
   "tidak ada yang menyinkronkan" are different sentences and users act on them
   differently.
 
+### 4.4 Credentials rejected — an admin action, not a wait
+
+Condition: the ERP is configured and reachable and is refusing our credentials.
+
+**Ratified and landed (back-end FIX D):** `freshness.erp_authorized: boolean`,
+false **only** on a recorded 401/403 — never-having-synced is not an
+authorization verdict, so a fresh deployment gets no "call IT" banner. It is on
+`Freshness`, so it arrives on `/summary`'s own 30s poll and this state does not
+depend on `/sync-status` being reachable. Per-table `last_error_kind:
+"auth" | "network" | "shape" | "erp_error" | "server" | "other"` classifies it a
+second time.
+
+Both pages read, in order, and stop at the first that answers:
+
+1. `summary.freshness.erp_authorized === false`;
+2. the same on `/sync-status`, at either level, plus the spellings the pages
+   have always tolerated (`authorized`, `erp_auth_failed`, `auth_failed`,
+   `unauthorized`);
+3. any `tables[].last_error_kind === "auth"`;
+4. **floor**, for a mirror predating those fields: a probe of
+   `tables[].last_error`, into which the ERP client writes `HTTP 401 from ERP`
+   verbatim — `/\bHTTP\s*(401|403)\b|\b(unauthorized|forbidden)\b/i`.
+
+Step 4 is a string sniff on prose nobody promised to keep stable, which is
+exactly why steps 1–3 exist and why it is last. Anything unmatched degrades to
+§4.5 — the honest answer when we cannot tell.
+
+Rendered in `.alarmbox` (red), never in `.offbox` (slate) and never in `.banner`
+(amber).
+
+```html
+<div class="alarmbox" role="status">
+  <span aria-hidden="true">🔒</span>
+  <div><b>Akses ERP ditolak.</b> …</div>
+</div>
+```
+
+| Page | Copy |
+|---|---|
+| `/stock` | `Sistem ERP menolak kredensial LeadScout, jadi angka stok berhenti diperbarui. Menunggu atau memuat ulang halaman tidak akan memperbaikinya — hubungi tim IT. Sementara itu, konfirmasi ke PPIC sebelum menjanjikan stok.` |
+| `/stock-ppic` | `Sistem ERP menolak kredensial LeadScout sejak {waktu}, jadi data stok berhenti diperbarui. Menjalankan sinkronisasi ulang tidak akan memperbaikinya — hubungi tim IT untuk memperbarui kredensial ERP.` + `Sampai itu beres, angka di bawah adalah data terakhir yang berhasil diambil.` |
+
+- **No retry affordance in this state, on either page.** Not a `Sinkron sekarang`
+  button, not a `Coba lagi`. The credential stays rejected until a human replaces
+  it, and a button that provably does nothing teaches the operator that the
+  buttons on this page do nothing.
+- The item list is **not** replaced and write controls are **not** disabled: the
+  numbers on screen are the last good mirror, and LeadScout's own overrides and
+  adjustments do not write to the ERP.
+
+### 4.5 Sync failing — we know why the data is old
+
+Condition: any table in `/api/stock/sync-status` carries a non-null `last_error`.
+The worker clears `last_error` on a successful pull, so a message that is still
+there means that table's **most recent attempt** failed. The front end does not
+time this out or re-derive it.
+
+Uses the inherited `.banner` (amber). It outranks §4.2 because it is strictly
+more informative: staleness says the data is old, this says why and where the
+message is.
+
+| Page | Copy |
+|---|---|
+| `/stock` | `Sinkronisasi ERP gagal. Angka di bawah adalah data terakhir yang berhasil diambil, per {waktu} — konfirmasi ke PPIC sebelum menjanjikan stok.` (never synced: `Sinkronisasi ERP gagal dan belum pernah berhasil. Angka stok belum bisa dipakai — konfirmasi ke PPIC sebelum menjanjikan stok.`) |
+| `/stock-ppic` | `Sinkronisasi ERP gagal sejak {waktu}. Angka di bawah adalah data terakhir yang berhasil diambil, per {waktu} — buka tab Sinkronisasi untuk pesan kesalahannya.` + right-aligned `<button class="btn mini tap ghost">Buka Sinkronisasi</button>` |
+
+Sales gets no button, for §4.2's reason: sales cannot fix this. PPIC's button
+goes to the tab that already renders `last_error` in full, untruncated and
+copyable (§6.12) — that is the action, not another sync attempt against a thing
+that just failed.
+
+**Recovery**, from §4.4 or §4.5 back to healthy or merely stale, is announced
+once and politely, the same way §4.2 announces its own: `Sinkronisasi ERP kembali
+normal.` On `/stock-ppic` entering §4.4 also announces
+`Peringatan: akses ERP ditolak. Hubungi tim IT.` to `#srlive`.
+
+### 4.6 ATP is not trustworthy — the unmatched-SKU alarm (ST-R5.3)
+
+> **Added by CONTRACTS amendment, this session.** §5.0 says `exceptions` is a
+> PPIC hygiene number and is not shown to sales. That still holds and is not
+> weakened here: what sales gets is **an instruction with no figures in it**.
+> The reasoning is that §5.0's argument is about a *count* — "31 exceptions"
+> reads to a rep as generalised breakage and gives them nothing to do — and says
+> nothing about a *sentence* that tells them what to do. The stale banner already
+> gives sales exactly that kind of sentence.
+
+The SKU join key (`CONTRACTS §1`) has never been validated against real ERP data.
+If it does not resolve, every commitment falls into `/exceptions`, nothing is
+subtracted from on-hand, **ATP silently equals Stok Fisik, and the entire
+inventory reads as promiseable on a page that looks perfectly healthy.** It is
+the one failure where the screen is not visibly degraded — stale data is visibly
+old; this is confidently wrong — and the person who acts on it is a rep in a
+customer's showroom, not PPIC.
+
+**Trigger, identical on both pages.** From `summary.totals`, no extra fetch:
+
+| Available | Ratio | Fires above |
+|---|---|---|
+| `exceptions` (SO **lines**) ÷ `skus` (**SKUs**) | inflated — several lines share one SKU | **50%** |
+| `exception_skus` (distinct unmatched `sku_key`) ÷ `skus` | a true share | **25%** |
+
+`totals.exception_skus` has **landed**; both pages prefer it whenever it is
+present and use the 25% limit, falling back to the line ratio and 50% only for a
+payload that lacks it. The 50% figure is deliberately high: a working join lands in the low tens
+of percent even with the line inflation, a broken join key lands at several
+hundred, and 50% is the empty space between them. **The copy states its own
+threshold** — an alarm that will not say what tripped it does not get believed.
+
+`/stock-ppic` — `.alarmbox`, above the tab strip so it is visible on every tab,
+**not dismissible**, with a `Buka Belum Cocok` button:
+
+> **Angka Bisa Dijual belum bisa dipercaya.**
+> `{n} baris Sales Order belum cocok dengan SKU stok. Dibandingkan jumlah SKU ({m}), itu {p}%.` *(with `exception_skus`: `{n} dari {m} SKU ({p}%) tidak punya baris stok yang cocok.`)* `Peringatan ini baru muncul di atas {limit}%, jadi ini bukan soal beberapa baris yang nyasar: pencocokan Kode SKU antara Sales Order dan stok belum jalan.`
+> `Baris yang belum cocok tidak memotong stok, jadi hampir seluruh stok terlihat bisa dijual padahal sudah dipesan. Jangan pakai angka Bisa Dijual untuk menjanjikan stok, dan beri tahu tim Sales, sampai pencocokan Kode SKU dibereskan bersama tim IT.`
+
+`/stock` — `.alarmbox`, above the list, not dismissible, **one sentence, no
+numbers, no link** (there is no sales-side action but the phone call):
+
+> `Angka Bisa Dijual sedang tidak bisa dipakai untuk menjanjikan stok — konfirmasi ke PPIC dulu.`
+
+It is **last in the §4 precedence ladder**: it renders only when the connection
+is healthy. When the ERP is disconnected, rejecting us, failing to sync or stale,
+that claim is the more urgent one and this one is suppressed — never two at once.
+The words banned on the Belum Cocok tab (§6.10 — `error`, `gagal`, `tidak valid`,
+`rusak`, `masalah`) are avoided here too, even though this box sits outside that
+tab, because it is the same subject.
+
 ---
 
 ## 5. `/stock` — the sales page (WP-5)
@@ -549,7 +738,7 @@ Desktop (≥560px) — inherited `<table>`:
 | Column | Content | Align |
 |---|---|---|
 | Kode | `kode_barang` | left |
-| Warna | `<b>{warna || name}</b>` + `.sub2` = `{th} · {p}×{l}` | left |
+| Warna | `<b>{colour label, §1.6}</b>` + `.sub2` = `{th} · {p}×{l}` | left |
 | Bisa Dijual | `.atp` block per §2.2 | right |
 | Status | state chip (short label) + `.atp-note` when `habis`/`perlu_produksi` | right |
 
@@ -686,7 +875,7 @@ Row:
 
 | Column | Content |
 |---|---|
-| SKU | `<b>{warna}</b>` + `.sub2` `{kode_barang} · {th} · {p}×{l}` |
+| SKU | `<b>{colour label, §1.6}</b>` + `.sub2` `{kode_barang} · {th} · {p}×{l}` |
 | Kekurangan | `.atp.neg` `−1.230` + `.un` unit — the headline of this tab |
 | Fisik | `.atp-sub`-sized `4.168` |
 | Dipesan | `319` |
@@ -758,7 +947,7 @@ Desktop row (one `<tr>`, 44px minimum height):
 | Column | Field | Notes |
 |---|---|---|
 | ☐ | — | bulk checkbox, ≥560px only, ETA Lewat segment only (§6.8, §8.2) |
-| SKU | `warna` bold + `.sub2` `{kode_barang} · {th} · {p}×{l}` | links to the detail sheet |
+| SKU | colour label (§1.6) bold + `.sub2` `{kode_barang} · {th} · {p}×{l}` | links to the detail sheet |
 | Customer | `customer_name_text` | truncate to 2 lines with `overflow-wrap:anywhere`; never `text-overflow:ellipsis` on a single line — Indonesian company names are long and the tail (PT / CV / cabang) is the identifying part |
 | No. SO | `so_number` | monospace-ish via `tabular-nums`; `—` when null |
 | ETA | `estimate_delivery` | `wibShort` **with year** when not this year → `27 Agu 2020`. On the Tanpa ETA segment: `<span class="chip st-habis">Tanpa ETA</span>`, never a bare `—` (an em dash reads as "missing value", and the whole point is that this is a *known* condition with a consequence) |
@@ -1732,8 +1921,13 @@ to prevent, in the order they are usually got wrong.
 - [ ] No `Math.max(0, …)`, no `Math.abs()` on an ATP headline, no `|| 0` that
       could swallow a negative.
 - [ ] Negative numbers use `−` (U+2212).
-- [ ] The four banner/box conditions render with the §4 precedence and never two
-      at once.
+- [ ] The **five** connection conditions render with the §4 precedence and never
+      two at once: disconnected ▸ rejected ▸ sync-failing ▸ stale ▸ freshness
+      line. On `/stock`, §4.6's line is last of all and yields to every one of
+      them.
+- [ ] No colour renders as a bare number anywhere (§1.6). `grep -n '\bi\.warna\b'`
+      returns hits only inside the resolver and the search haystack.
+- [ ] §4.4 offers **no** retry affordance, on either page.
 - [ ] A poll never re-renders through an open modal, a focused input, or a list
       the user is touching.
 - [ ] `#srlive` exists, is polite, and is silent on a no-change poll.
