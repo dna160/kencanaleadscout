@@ -36,6 +36,7 @@ import { getSql, type Sql } from "../db/client.js";
 import { checkCommitmentGate, checkSkuKeyMatch } from "../db/migrateErpStock.js";
 import {
   cursorParam,
+  describeColumnDiagnostic,
   redactSecrets,
   selarasClient,
   SELARAS_KEY_FIELDS,
@@ -602,6 +603,13 @@ async function syncTable(
       `${config.stock.syncLookbackMinutes} min)`,
   );
 
+  // ST-R5.3 — the column diagnostic is latched for the whole table pass, the
+  // same posture as the refusal tallies above: once per table per run, never per
+  // page and certainly never per row. The client only attaches it to page 1, so
+  // this is belt and braces — and it is what keeps the guarantee true if the
+  // client ever starts attaching one to a later page.
+  let diagnosed = false;
+
   let previousSignature = "";
   for (let page = 1; page <= MAX_PAGES_PER_TABLE; page += 1) {
     const res = await client.fetchPage(table, { since: cursorBefore, page, limit: pageSize });
@@ -616,6 +624,12 @@ async function syncTable(
     }
 
     const { rows, rawCount, dropped, ambiguousNumbers, nonFiniteNumbers, badDates, totalPages } = res.page;
+    // Observation only: it names the raw wire keys of one row and the six
+    // identity segments, and it can neither change what is mirrored nor throw.
+    if (!diagnosed && res.page.columnDiagnostic !== null) {
+      diagnosed = true;
+      log.info(describeColumnDiagnostic(res.page.columnDiagnostic));
+    }
     result.dropped += dropped;
     result.ambiguousNumbers += ambiguousNumbers.count;
     result.nonFiniteNumbers += nonFiniteNumbers.count;

@@ -60,6 +60,8 @@ const {
   readEnvelope,
   redactSecrets,
   resetShapeNotices,
+  buildColumnDiagnostic,
+  describeColumnDiagnostic,
 } = clientMod;
 const { runErpSyncOnce } = workerMod;
 const { canonicalSkuKey } = skuMod;
@@ -641,6 +643,241 @@ describe("adapters — one per table, on the verified column names", () => {
     expect(row?.estimate_delivery).toBeNull();
     expect(row?.erp_updated_at).toBeNull(); // ⇒ the cursor cannot advance on it
     expect(Number.isNaN(row?.qty_balance)).toBe(false);
+  });
+});
+
+// ── ST-R5.3 — the column diagnostic ──────────────────────────────────────────
+//
+// THE OPEN QUESTION IT EXISTS TO CLOSE. Production reports 97.4% of live
+// commitment lines matching NO stock row, and the two sides fail in mirror
+// image: every demand key ends `|-|-` (no `p`/`l`) and every stock key carries
+// `|0|0|` in the two thickness positions. Each side is missing precisely the
+// segments the other side has, which is a column-mapping failure — but THREE
+// mappings fit the evidence and the ERP is unreachable from here:
+//
+//   (a) the API returns different NAMES than the verified documentation lists;
+//   (b) it returns them NESTED inside another object;
+//   (c) it returns NULL for these rows — an ERP data problem, not a mapping one.
+//
+// These fixtures are deliberately NOT the documented column list: each one is
+// one of those three hypotheses made concrete, and the assertions are that the
+// diagnostic NAMES what is really on the wire instead of repeating what the
+// documentation claims. Guessing between (a), (b) and (c) is exactly what
+// produced the v1 key that matched nothing.
+
+/** (a) + (b): the FG table under different names, with `p`/`l` nested. */
+const DRIFTED_FG_ROW = {
+  tbl_1210_STLiveFGMX_id: "FG-DRIFT-1",
+  sn_fg: "FG-AAA-0001",
+  kode_barang: "ACP-4MM",
+  brand: "10",
+  warna: "141",
+  // NOT `th` and NOT `t` — the two segments production sees as `0`.
+  thickness_alu_skin: "0.3",
+  total_thickness: "4",
+  // NOT `p` / `l` at top level: one level down, which no adapter probe reaches.
+  dimensi: { p: 4880, l: 1220 },
+  qty: "12",
+  updated_at: "2026-09-05T00:00:00Z",
+  deleted_at: null,
+};
+
+/** (c): the documented names ARE there, and carry null for these rows. */
+const NULL_SEGMENT_FG_ROW = {
+  tbl_1210_STLiveFGMX_id: "FG-NULL-1",
+  brand: "10",
+  warna: "141",
+  th: null,
+  t: null,
+  p: 4880,
+  l: 1220,
+  qty: 3,
+  deleted_at: null,
+};
+
+/** The stock side exactly as production reports it: a REAL zero, not an absence. */
+const ZERO_SEGMENT_FG_ROW = {
+  tbl_1210_STLiveFGMX_id: "FG-ZERO-1",
+  brand: "10",
+  warna: "141",
+  th: 0,
+  t: "0",
+  p: 1000,
+  l: 500,
+  qty: 3,
+  deleted_at: null,
+};
+
+/** The demand side as production reports it: `p` and `l` simply are not there. */
+const NO_PL_SO_ROW = {
+  tbl_1203_SOSalesOrderDetailNID_id: "SOL-DRIFT-1",
+  brand: "1",
+  warna: "172",
+  th_alu_skin: "0.5",
+  total_thickness_acp: "4",
+  customer_name_text: "PT Rahasia Sekali",
+  harga_satuan: "1250000",
+  qty_balance: 7,
+};
+
+function probeOf(d: clientMod.ColumnDiagnostic, segment: string): clientMod.SegmentProbe {
+  const hit = d.segments.find((x) => x.segment === segment);
+  if (!hit) throw new Error(`no probe for ${segment}`);
+  return hit;
+}
+
+describe("column diagnostic — names the REAL wire keys, not the documented ones", () => {
+  it("lists the complete sorted key list actually present on the row", () => {
+    const d = buildColumnDiagnostic("live_fg", DRIFTED_FG_ROW);
+    expect(d).not.toBeNull();
+    // Sorted, complete, and spelled the way the WIRE spells them. `dimensi` is
+    // rendered with its child names because "returns them nested" is one of the
+    // three hypotheses and is otherwise invisible.
+    expect(d?.keys).toEqual([
+      "brand",
+      "deleted_at",
+      "dimensi{l,p}",
+      "kode_barang",
+      "qty",
+      "sn_fg",
+      "tbl_1210_STLiveFGMX_id",
+      "thickness_alu_skin",
+      "total_thickness",
+      "updated_at",
+      "warna",
+    ]);
+    expect(d?.keysTruncated).toBe(false);
+    expect(d?.erpTable).toBe("tbl_1210_STLiveFGMX");
+    expect(d?.side).toBe("live_fg");
+  });
+
+  it("reports every unmatched segment, with the probe names it actually tried", () => {
+    const d = buildColumnDiagnostic("live_fg", DRIFTED_FG_ROW);
+    expect(d?.unmatched).toEqual(["th", "th_panel", "p", "l"]);
+
+    // The probe list is READ FROM SKU_SEGMENT_SOURCES, so it cannot drift from
+    // the mapping the adapter is really running.
+    expect(probeOf(d!, "th").probes).toEqual(skuMod.SKU_SEGMENT_SOURCES.th.live_fg);
+    expect(probeOf(d!, "th").probes).toEqual(["th"]);
+    expect(probeOf(d!, "th_panel").probes).toEqual(["t"]);
+    expect(probeOf(d!, "p").probes).toEqual(["p"]);
+
+    // Absent ⇒ the segment contributes '-', which is what the key shows.
+    for (const name of ["th", "th_panel", "p", "l"]) {
+      expect(probeOf(d!, name).status, name).toBe("absent");
+      expect(probeOf(d!, name).matched, name).toBeNull();
+      expect(probeOf(d!, name).raw, name).toBeNull();
+      expect(probeOf(d!, name).normalized, name).toBe("-");
+    }
+    // …and the segments that DID match name the wire key and show both values.
+    expect(probeOf(d!, "brand")).toMatchObject({ status: "matched", matched: "brand", raw: "10", normalized: "10" });
+    expect(probeOf(d!, "warna")).toMatchObject({ status: "matched", matched: "warna", normalized: "141" });
+
+    // The adapter agrees with the diagnostic, which is the point of both.
+    expect(adaptLiveFgRow(DRIFTED_FG_ROW)?.sku_key).toBe("10|141|-|-|-|-");
+  });
+
+  it("separates 'no such key' from 'key present, value null' (hypothesis c)", () => {
+    const d = buildColumnDiagnostic("live_fg", NULL_SEGMENT_FG_ROW);
+    expect(probeOf(d!, "th").status).toBe("null");
+    expect(probeOf(d!, "th").matched).toBe("th"); // the column EXISTS
+    expect(probeOf(d!, "th").normalized).toBe("-");
+    expect(probeOf(d!, "th_panel").status).toBe("null");
+    // Same '-' in the key, completely different cause — and the log says which.
+    const text = describeColumnDiagnostic(d!);
+    expect(text).toContain("key 'th' EXISTS but its value is null");
+    expect(text).not.toContain("NO SUCH KEY on this row (under any casing) → \"-\"\n    th_panel");
+  });
+
+  it("separates a REAL zero from an absent segment (the 0-vs-'-' question)", () => {
+    // This is the FG side exactly as production reports it. A zero here is a
+    // value that was PRESENT and read as zero — NOT a column we failed to find.
+    // The two are different facts and the diagnostic must not blur them.
+    const d = buildColumnDiagnostic("live_fg", ZERO_SEGMENT_FG_ROW);
+    expect(probeOf(d!, "th")).toMatchObject({ status: "matched", matched: "th", raw: "0", normalized: "0" });
+    expect(probeOf(d!, "th_panel")).toMatchObject({ status: "matched", matched: "t", raw: "0", normalized: "0" });
+    expect(d?.unmatched).toEqual([]);
+    expect(adaptLiveFgRow(ZERO_SEGMENT_FG_ROW)?.sku_key).toBe("10|141|0|0|1000|500");
+  });
+
+  it("shows the demand side losing p and l, which is what ends every key '|-|-'", () => {
+    const d = buildColumnDiagnostic("so_line", NO_PL_SO_ROW);
+    expect(d?.side).toBe("so_line");
+    expect(d?.unmatched).toEqual(["p", "l"]);
+    expect(probeOf(d!, "th")).toMatchObject({ status: "matched", matched: "th_alu_skin", normalized: "0.5" });
+    expect(probeOf(d!, "th_panel")).toMatchObject({ status: "matched", matched: "total_thickness_acp" });
+    expect(adaptSoLineRow(NO_PL_SO_ROW)?.sku_key).toBe("1|172|0.5|4|-|-");
+  });
+
+  it("logs KEY NAMES and identity values only — never row content (§7.9)", () => {
+    const text = describeColumnDiagnostic(buildColumnDiagnostic("so_line", NO_PL_SO_ROW)!);
+    // The column NAMES are the diagnostic's whole payload and must be there…
+    expect(text).toContain("customer_name_text");
+    expect(text).toContain("harga_satuan");
+    // …but not one of their VALUES. Rows carry customers and prices.
+    expect(text).not.toContain("PT Rahasia Sekali");
+    expect(text).not.toContain("1250000");
+    // Only the six identity segments are ever sampled.
+    expect(text).toContain('raw="0.5"');
+  });
+
+  it("redacts a sampled value, and never prints a nested object's contents", () => {
+    const withSecret = { ...NULL_SEGMENT_FG_ROW, th: `x${TOKEN}x`, t: { inner: "PT Rahasia", nested: 1 } };
+    const text = describeColumnDiagnostic(buildColumnDiagnostic("live_fg", withSecret)!);
+    expect(text).not.toContain(TOKEN);
+    expect(text).not.toContain("PT Rahasia");
+    expect(text).toContain("t{inner,nested}"); // the shape, by name, and nothing else
+  });
+
+  it("caps a sampled value rather than spilling a long one into the log", () => {
+    const long = "9".repeat(500);
+    const d = buildColumnDiagnostic("live_fg", { ...ZERO_SEGMENT_FG_ROW, th: long });
+    expect((probeOf(d!, "th").raw ?? "").length).toBeLessThanOrEqual(40);
+  });
+
+  it("says plainly that warna and so_header carry no sku_key segment", () => {
+    for (const table of ["warna", "so_header"] as const) {
+      const d = buildColumnDiagnostic(table, FIXTURES[table][0]);
+      expect(d?.side).toBeNull();
+      expect(d?.segments).toEqual([]);
+      expect(d?.keys.length).toBeGreaterThan(0);
+      expect(describeColumnDiagnostic(d!)).toContain("contributes no segment to the key");
+    }
+  });
+
+  it("is total: a non-object row yields null instead of throwing", () => {
+    for (const raw of [null, undefined, 42, "a string", [1, 2, 3]]) {
+      expect(buildColumnDiagnostic("live_fg", raw)).toBeNull();
+    }
+  });
+
+  it("is attached to the FIRST page only — once per table per run, not per page", async () => {
+    // live_fg has 9 fixture rows at a page size of 2, so a real run reads five
+    // pages. Only one of them may carry a diagnostic.
+    const carried: number[] = [];
+    for (let page = 1; page <= 5; page += 1) {
+      const res = await fetchPage("live_fg", { since: null, page, limit: PAGE_SIZE });
+      expect(res.ok).toBe(true);
+      if (res.ok && res.page.columnDiagnostic !== null) carried.push(page);
+    }
+    expect(carried).toEqual([1]);
+  });
+
+  it("is off, and costs nothing, when STOCK_SYNC_DIAGNOSE_COLUMNS=false", async () => {
+    vi.resetModules();
+    process.env["STOCK_SYNC_DIAGNOSE_COLUMNS"] = "false";
+    try {
+      const isolated = await import("../src/erp/selarasClient.js");
+      const res = await isolated.fetchPage("live_fg", { since: null, page: 1, limit: PAGE_SIZE });
+      expect(res.ok).toBe(true);
+      if (res.ok) {
+        expect(res.page.columnDiagnostic).toBeNull();
+        expect(res.page.rows.length).toBeGreaterThan(0); // …and the rows still arrive
+      }
+    } finally {
+      delete process.env["STOCK_SYNC_DIAGNOSE_COLUMNS"];
+      vi.resetModules();
+    }
   });
 });
 
@@ -1524,6 +1761,80 @@ describe.skipIf(db === null)("syncWorker — against a real mirror schema", () =
     expect(report.ratio).toBe(1);
     expect(report.tripped).toBe(false);
     expect(errors).toEqual([]);
+  });
+
+  it("emits the column diagnostic exactly ONCE per table per run (ST-R5.3)", async () => {
+    await resetCursors(sql);
+    const lines: string[] = [];
+    const recorder = {
+      info: (m: string) => lines.push(m),
+      warn: (m: string) => lines.push(m),
+      error: (m: string) => lines.push(m),
+    };
+    const first = await runErpSyncOnce({ db: sql, pageSize: PAGE_SIZE, intervalMs: 60_000, log: recorder });
+    expect(first.started).toBe(true);
+
+    // live_fg alone is read over five pages at this page size — the guarantee is
+    // per TABLE per RUN, not per page and certainly not per row.
+    expect(first.tables.find((t) => t.table === "live_fg")?.pages).toBeGreaterThan(1);
+
+    const diagnostics = lines.filter((m) => m.includes("COLUMN DIAGNOSTIC"));
+    expect(diagnostics).toHaveLength(4);
+    for (const table of ["warna", "so_header", "so_line", "live_fg"] as const) {
+      expect(diagnostics.filter((m) => m.startsWith(`${table}: COLUMN DIAGNOSTIC`)), table).toHaveLength(1);
+    }
+
+    // It names the REAL wire keys of the fixture — which is the only thing that
+    // makes the next production sync answer the mapping question by itself.
+    const fg = diagnostics.find((m) => m.startsWith("live_fg:")) ?? "";
+    expect(fg).toContain("kode_barang");
+    expect(fg).toContain("tbl_1210_STLiveFGMX_id");
+    expect(fg).toContain("th (numeric): probed [th] → matched 'th'");
+    expect(fg).toContain("th_panel (numeric): probed [t] → matched 't'");
+    const so = diagnostics.find((m) => m.startsWith("so_line:")) ?? "";
+    expect(so).toContain("probed [th_alu_skin] → matched 'th_alu_skin'");
+
+    // And it leaks nothing: no row content, no credential.
+    for (const m of diagnostics) {
+      expect(m).not.toContain(TOKEN);
+      expect(m).not.toContain("PT Sinar Mandiri"); // a customer name, from so_header
+      expect(m).not.toContain("SN-0001"); // a roll serial, from live_fg
+    }
+
+    // Per RUN, not per process: the next run says it again, because the wire
+    // shape can change under us between runs.
+    await resetCursors(sql);
+    const second: string[] = [];
+    await runErpSyncOnce({
+      db: sql,
+      pageSize: PAGE_SIZE,
+      intervalMs: 60_000,
+      log: { info: (m: string) => second.push(m), warn: () => {}, error: () => {} },
+    });
+    expect(second.filter((m) => m.includes("COLUMN DIAGNOSTIC"))).toHaveLength(4);
+  });
+
+  it("the diagnostic changes nothing: same mirror, same ATP, with it and without", async () => {
+    // It is observation only. Byte-identical rows and byte-identical ATP are the
+    // acceptance criterion for the whole sync (§5), so they are the right test.
+    await resetCursors(sql);
+    await runErpSyncOnce({ db: sql, pageSize: PAGE_SIZE, intervalMs: 60_000, log: silentLog });
+    const withDiagnostic = await atpSnapshot(sql);
+    const fgWith = await sql`select erp_row_id, sku_key, qty::text from erp_live_fg order by erp_row_id`;
+
+    vi.resetModules();
+    process.env["STOCK_SYNC_DIAGNOSE_COLUMNS"] = "false";
+    try {
+      const isolated = await import("../src/erp/syncWorker.js");
+      await resetCursors(sql);
+      const off = await isolated.runErpSyncOnce({ db: sql, pageSize: PAGE_SIZE, intervalMs: 60_000, log: silentLog });
+      expect(off.started).toBe(true);
+      expect(await atpSnapshot(sql)).toEqual(withDiagnostic);
+      expect(await sql`select erp_row_id, sku_key, qty::text from erp_live_fg order by erp_row_id`).toEqual(fgWith);
+    } finally {
+      delete process.env["STOCK_SYNC_DIAGNOSE_COLUMNS"];
+      vi.resetModules();
+    }
   });
 
   it("records an auth failure as a typed kind, not as prose (FIX D)", async () => {

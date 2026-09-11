@@ -160,6 +160,14 @@ inventing a state that this spec did not design — raise it.
            font-variant-numeric:tabular-nums;line-height:1.35}
 .atp-note {font-size:11px;color:var(--ink-2);margin-top:3px;line-height:1.35}
 
+/* ── the merek inside a spec line (§5.2) ──────────────────────────────────
+      `.sub2 .mk` is not redundant: `.warna b` is (0,1,1) and would otherwise
+      give the merek the colour's 14px lead. The whole point of the class is
+      that the merek is the ANCHOR of the second line, never the first. ───── */
+.mk       {color:var(--ink-2);font-weight:700}
+.sub2 .mk {font-size:inherit}
+.sub2     {overflow-wrap:anywhere}   /* added declaration, §0 rule 1 */
+
 /* ── the offline (ERP not configured) box — deliberately NOT amber ────────── */
 .offbox{background:var(--offline-bg);border:1px solid var(--offline-line);
         color:var(--offline-ink);border-radius:12px;padding:12px 14px;
@@ -256,7 +264,10 @@ page is a defect on both.
 | shortfall / deficit | **Kekurangan** | "Minus", "Shortage" |
 | exceptions (ST-R5.3) | **Belum Cocok** | "Error", "Gagal", "Tidak valid" |
 | `sku_key` | **Kode SKU** | "Key", "ID" |
-| `kode_barang` | **Kode Barang** | "Brand", "Part no" |
+| `kode_barang` | **Kode Barang** | "Brand", "Merek", "Part no" — it is the ERP item code and `brand` is now a real field beside it (§11-A1) |
+| `brand` / `brand_text` | **Merek** | "Brand", "Merk" (KBBI spells it *merek*), "Kode Barang" |
+| `brand` when it is still a raw ID | **`Kode merek 12`** — same discipline as §1.6 | a bare `12` |
+| `brand` and `brand_text` both absent | **nothing is rendered** | "—", a blank chip, or a merek guessed out of `kode_barang` |
 | `warna` | **Warna** | |
 | `warna` when it is still a raw ID | **`Kode warna 004`** — see §1.6 | a bare `004` |
 | `qty_balance` | **Sisa Pesanan** | "Balance" |
@@ -297,6 +308,15 @@ pages read, in this order, and stop at the first that is **not** all digits:
 not a fallback of last resort that can be skipped — it is what makes the page
 correct *before* the resolution lands as well as after, and it is what stops a
 rep reading a master-data id as a colour.
+
+**`brand` has exactly this shape and takes exactly this discipline.** It is the
+product-line id the six-segment key is built from, with a `brand_text` display
+twin, and the page reads `brand_text` → `brand` → `Kode merek {code}`. It differs
+from `warna` in one way only: there is no name to recover from `name` and no
+master to fall back to, so when **both** fields are absent the page renders
+**nothing at all** — not an em dash, and never a merek split out of
+`kode_barang`, which conflates merek, lini produk and tebal panel. A guessed
+manufacturer is worse than a missing one: a rep will quote it.
 
 This label — not the raw code — is what the `Warna` filter lists and matches on,
 what `Warna A–Z` sorts by, and what `rankOf()` ranks. The raw code stays in the
@@ -713,8 +733,9 @@ up at 380px) **verbatim**. Only the option sets change, because the data changed
 
 | Control | id | 2.0 behaviour |
 |---|---|---|
-| Search | `q` | `placeholder="Cari warna / kode barang…"`. Matches `name`, `warna`, `kode_barang`, `sku_key`. Keep the inherited `rankOf()` relevance ranking verbatim — it exists because "black" used to bury BLACK under BLACK GALAXY; the same failure exists in the new data. Read `warna` and `name`; the `batch_warna` branch is dropped (no such field). |
-| Kode barang | `brand` | `<option value="">Semua kode</option>` + distinct `kode_barang`, sorted. **Label is "kode", not "brand"** — see §11-A1. |
+| Search | `q` | `placeholder="Cari merek / warna / kode…"`, label `Cari merek, warna atau kode barang`. Matches `name`, `warna`, `brand`/`brand_text`, `kode_barang`, `sku_key`. A merek match ranks with a `kode_barang` match (rank 4), below every colour match. Keep the inherited `rankOf()` relevance ranking verbatim — it exists because "black" used to bury BLACK under BLACK GALAXY; the same failure exists in the new data. Read `warna` and `name`; the `batch_warna` branch is dropped (no such field). |
+| Merek | `brand` | **ST-R8, implemented.** `<option value="">Semua merek</option>` + the distinct **merek labels present in the current `/summary` response**, sorted `id` collation. Keyed on the label (§1.6), never on the raw id, and **never a hardcoded list** — Alcopan, Maco and Tajima are values the catalogue happens to hold today, not an enum. Exact match via `eq()`, same as `Warna`. Items with no merek are simply not in the option list and are hidden whenever the filter is set. Persisted `stk_brand`; a stored merek that has left the catalogue resets to "" on the next `syncFilterOptions()` rather than emptying the table. |
+| Kode barang | `kode` | `<option value="">Semua kode barang</option>` + distinct `kode_barang`, sorted. The placeholder says "kode barang" in full because "Semua kode" beside a live `Semua merek` reads as the merek select — see §11-A1. |
 | Ukuran | `size` | distinct `p×l`, numeric sort, rendered `4.880×1.220`. Omit the whole select when no item has both `p` and `l`. |
 | Tebal | `mm` | distinct `th`, numeric sort, rendered `0,3` (no `mm` suffix — `th` is not millimetres; panel thickness lives inside `kode_barang`). Label the select `title="Tebal (th)"`. Omit when empty. |
 | Urutkan | `sort` | `Warna A–Z` (default, persisted as `stk_sort`) · `Kode barang A–Z` · `Bisa dijual terbanyak` · `Bisa dijual paling sedikit`. The 1.0 `Coating` and `Sesuai file` options are dropped (no `coating` field, no file). |
@@ -738,7 +759,7 @@ Desktop (≥560px) — inherited `<table>`:
 | Column | Content | Align |
 |---|---|---|
 | Kode | `kode_barang` | left |
-| Warna | `<b>{colour label, §1.6}</b>` + `.sub2` = `{th} · {p}×{l}` | left |
+| Warna | `<b>{colour label, §1.6}</b>` + `.sub2` = `{merek, §1.5} · {kode_barang} · {th} · {p}×{l}` | left |
 | Bisa Dijual | `.atp` block per §2.2 | right |
 | Status | state chip (short label) + `.atp-note` when `habis`/`perlu_produksi` | right |
 
@@ -751,7 +772,7 @@ Mobile (≤559px) — the `<table>` is replaced (not scrolled) by stacked cards:
   <div style="display:flex;gap:10px;justify-content:space-between;align-items:flex-start;padding:12px 14px;border-bottom:1px solid var(--line);min-height:var(--tap)">
     <div style="min-width:0">
       <b>Black Galaxy</b>
-      <div class="sub2">ACP-4MM · 0,3 · 4.880×1.220</div>
+      <div class="sub2"><b class="mk">Alcopan</b> · ACP-4MM · 0,3 · 4.880×1.220</div>
       <span class="chip st-tersedia" style="margin-top:6px;display:inline-block">Tersedia</span>
     </div>
     <div style="text-align:right;flex:0 0 auto">
@@ -763,6 +784,27 @@ Mobile (≤559px) — the `<table>` is replaced (not scrolled) by stacked cards:
 </div>
 ```
 
+**Where the merek sits, and why it is not the bold lead.** A rep identifies a
+product roughly *merek → warna → ukuran*, so the obvious move is to promote the
+merek to the `<b>`. Do not. The colour is what the list is **sorted** by
+(`Warna A–Z` is the default), what `rankOf()` ranks a search by and what the
+`tail()` tie-break chain is anchored on; a bold lead that does not match the sort
+key makes a 812-row list unscannable. The merek instead **leads the `.sub2` line
+directly beneath the colour**, in `.mk` (`--ink-2`, 700) so it is the anchor of
+that line rather than another grey token. That is where the eye goes second, and
+it is precisely the job the merek does here: telling apart two rows that share a
+colour. The two toolbar selects then read left-to-right in the same order the
+line does — `Merek`, then `Kode Barang`.
+
+A merek that is byte-identical to the `kode_barang` prints once, not twice (the
+server's own `composeName()` falls back `brand_text ?? brand ?? kode_barang`, so
+they can coincide). When there is no merek the line simply starts at the
+`kode_barang`; nothing is reserved and no separator is left dangling.
+
+`.sub2` carries `overflow-wrap:anywhere` on both pages: the line now holds two
+ERP-supplied identifiers, and an unbroken one must break rather than push the
+380px row sideways (§8.3).
+
 Row tap → detail sheet (§5.3). The whole row is the target; there is no separate
 button, because there is no second action to disambiguate from.
 
@@ -771,8 +813,14 @@ button, because there is no second action to disambiguate from.
 Inherited `.modal-bg` / `.modal` bottom sheet. Opens on row tap, `ESC` and the
 `Tutup` button close it, focus returns to the row (§9.3).
 
+The **heading** carries the full product identity — `{merek} {warna}`, space-
+joined in the server's own `composeName()` idiom — because this is the one line
+a rep reads back down the phone, and a colour alone names several products. The
+heading therefore carries the merek and the `.mp` spec line below it does
+**not** repeat it. Falls back to the colour alone, then to the `sku_key`.
+
 ```
-h3   Black Galaxy
+h3   Alcopan Black Galaxy          ← {merek} {warna}; the merek is omitted when absent
 .mp  ACP-4MM · 0,3 · 4.880×1.220 · Kode SKU ACP-4MM|004|0.3|4880|1220
 ────────────────────────────────────────────────────
 .atp  3.849 lembar      ≈ 22.921,1 m²
@@ -947,7 +995,7 @@ Desktop row (one `<tr>`, 44px minimum height):
 | Column | Field | Notes |
 |---|---|---|
 | ☐ | — | bulk checkbox, ≥560px only, ETA Lewat segment only (§6.8, §8.2) |
-| SKU | colour label (§1.6) bold + `.sub2` `{kode_barang} · {th} · {p}×{l}` | links to the detail sheet |
+| SKU | colour label (§1.6) bold + `.sub2` `{merek, §1.5} · {kode_barang} · {th} · {p}×{l}` | links to the detail sheet. `CommitLine` carries **no `kode_barang`** (AMENDMENT 19), so on this tab the line normally starts at the merek — which is exactly why the merek must be rendered and not inferred. Merek in `.mk`; the colour keeps the bold lead for the same reason as §5.2. |
 | Customer | `customer_name_text` | truncate to 2 lines with `overflow-wrap:anywhere`; never `text-overflow:ellipsis` on a single line — Indonesian company names are long and the tail (PT / CV / cabang) is the identifying part |
 | No. SO | `so_number` | monospace-ish via `tabular-nums`; `—` when null |
 | ETA | `estimate_delivery` | `wibShort` **with year** when not this year → `27 Agu 2020`. On the Tanpa ETA segment: `<span class="chip st-habis">Tanpa ETA</span>`, never a bare `—` (an em dash reads as "missing value", and the whole point is that this is a *known* condition with a consequence) |
@@ -973,13 +1021,34 @@ consequence in the row, before the button, every time.
 
 ### 6.3 Tab 2 — filters
 
+> **No `Merek` filter on this tab, and that is a decision, not an omission.**
+> The merek *renders* here (it leads the SKU cell's spec line, §6.2.2) because
+> reading it is what triage needs. Filtering by it is a different thing: this
+> queue is **server-paged** — page 1 of ~4,158 — and a client-side merek filter
+> would silently filter 50 rows out of 4,158 while looking exactly like a filter
+> over the whole queue. That is the trap §11-A11 already names for client-side
+> sorting here, and it is worse for a filter, because an empty result reads as
+> "no such merek in the queue" rather than "none on this page".
+> `/stale-commitments` takes `segment`, `q`, `status`, `only_do`,
+> `min_age_days`, `sku_key`, `page`, `limit` (AMENDMENT 8) and **no merek
+> parameter**. Until one exists the honest control is the one already there:
+> `q` searches the merek, because the server's `q` matches
+> `coalesce(brand_text, brand, '')`. **Gap raised, not worked around:** a
+> `brand=` parameter on `/stale-commitments` and `/exceptions` would make this
+> one select, built exactly like `/stock`'s.
+>
+> Tab 1 (Kekurangan) has no filters at all by §6.1 and gains none here; it is a
+> short, server-ranked list where a merek filter buys nothing.
+
+
+
 Rendered as a `.fltchips` row plus a compact form. All filter state goes in the
 query string of the request; none of it is client-side (4,158 rows are never all
 in the browser).
 
 | Control | Param | Options |
 |---|---|---|
-| Search | `q` | `placeholder="Cari SKU / customer / No. SO…"`. Debounce 350ms, min 2 chars. |
+| Search | `q` | `placeholder="Cari merek / SKU / customer / No. SO…"`. Debounce 350ms, min 2 chars. The server's `q` matches `coalesce(brand_text, brand, '')` on both `/stale-commitments` and `/exceptions`, so naming the merek here is true, not aspirational — and it is the only merek-shaped control this tab honestly has (see the note above). |
 | Umur | `min_age_days` | `.fchip` row: `Semua` (default) · `> 6 bulan` (180) · `> 1 tahun` (365) · `> 3 tahun` (1095). **ETA Lewat segment only** — hidden on Tanpa ETA, where there is no ETA to age. |
 | Status SO | `status` | select, `Semua status` + distinct values returned by the endpoint's facet list; if no facet list is available, a free-text select built from the current page's values, labelled `Status (halaman ini)` |
 | Hanya status DO | `only_do` | checkbox — the highest-confidence closable set (ST-R22) |
@@ -1839,7 +1908,7 @@ worth the field.
 
 | # | Gap | This spec's assumption | Cost if the Architect rules otherwise |
 |---|---|---|---|
-| **A1** | **The §4.1 `item` has no brand / `product_line` field, but ST-R8 requires "search/filter by brand".** `kode_barang` (`ACP-4MM`) conflates brand, product line and panel thickness. | The filter is labelled **Kode barang**, not Brand, and lists distinct `kode_barang` values. No client-side splitting of the code — a guessed prefix rule that is wrong for one product line is worse than no brand filter. | Adding `product_line` to the item is one column in the ATP aggregate; the filter then relabels to `Brand` and gains a second select. One render function. |
+| **A1** | ~~**The §4.1 `item` has no brand field, but ST-R8 requires "search/filter by brand".**~~ **RESOLVED — the premise is false.** CONTRACTS AMENDMENT 19 rekeyed the SKU on `brand \| warna \| th \| th_panel \| p \| l`, so `brand` and `brand_text` are on `SkuItem` *and* on `CommitLine`, and `CommitLine` has no `kode_barang` at all. | **ST-R8 is built** (§5.1): a second select, `Merek`, whose options are the merek labels present in the current response. The old rationale — *label it "Kode barang" because there is no brand field* — no longer holds and must not be cited; the two controls now sit side by side and each says in full what it filters. **What still holds is the ban on guessing**: `kode_barang` (`ACP-4MM`) conflates merek, lini produk and tebal panel, and no client-side prefix rule may split it. A merek is read from `brand_text`, then `brand`, and otherwise **not rendered at all**. | — |
 | **A2** | No `coating` field; 1.0 had a coating filter. **Now carried in CONTRACTS as an open product question.** | The coating select is **deleted**. | If PPIC wants it back it needs a field on `erp_live_fg` and on the item — a product answer, not a workaround. |
 | **A3** | `/stale-commitments` has no documented way to list rows already confirm-closed. Without it, the only undo path is the in-session tray, which dies on reload. | `?segment=closed` (§11.1). | Without it, delete the `Yang sudah ditutup` chip (§6.7) and say plainly in the tray footer that a reload makes a close unrecoverable from the UI. That is a materially worse product; I would not ship it. |
 | **A4** | `reason` on `close` is in the body but not marked required (it *is* marked required for adjustments). | Optional on the ETA Lewat segment (auto-composed), **mandatory** on Tanpa ETA and on bulk (§6.6, §6.8). | If made mandatory everywhere, the ETA Lewat one-tap becomes the §6.6.2 inline expander. ~15 lines, no layout change — but triage throughput drops by roughly an order of magnitude on a 4,158-row queue. |
@@ -1962,6 +2031,14 @@ to prevent, in the order they are usually got wrong.
 - [ ] The undo tray survives tab switches and tells the truth about reload.
 - [ ] Belum Cocok contains none of: `error`, `gagal`, `tidak valid`, `rusak`,
       `masalah`.
+- [ ] `Merek` renders from `brand_text` → `brand` → `Kode merek {code}`, and
+      renders **nothing** when both are absent — no em dash, no guess from
+      `kode_barang`. Both pages, row and detail sheet.
+- [ ] The `/stock` `Merek` select lists only values present in the current
+      response. **Grep for `Alcopan`, `Maco`, `Tajima` in both HTML files: zero
+      hits.** A hardcoded brand list is the defect this control exists to avoid.
+- [ ] `stk_brand` survives a reload, and a stored merek that has left the
+      catalogue resets to "" instead of emptying the table.
 - [ ] Every write is blocked without `#actor`, and disabled when
       `erp_connected === false`.
 - [ ] Adjustments: `reason` < 4 chars and `qty_delta === 0` are both blocked

@@ -54,11 +54,18 @@
   tr.itemrow{cursor:pointer}
   tr.itemrow:hover{background:#f7fafc}
   .warna b{font-size:14px}
-  .sub2{color:var(--muted);font-size:11px;margin-top:2px}
+  /* overflow-wrap: the spec line now carries a merek as well as the code, and
+     an unbroken ERP string must break rather than push the row sideways —
+     UX-SPEC §8.3 allows no horizontal scroll on the phone layout. */
+  .sub2{color:var(--muted);font-size:11px;margin-top:2px;overflow-wrap:anywhere}
   /* Merek inside a spec line: --ink-2 lifts it out of --muted so two rows that
      share a colour are told apart at a glance, without taking the 14px bold
-     lead away from the colour (UX-SPEC §1.6, §5.2). Tokens only. */
+     lead away from the colour (UX-SPEC §1.6, §5.2). Tokens only.
+     The second rule is load-bearing and its specificity is the point:
+     `.warna b` is (0,1,1) and would otherwise catch this <b> too and hand the
+     merek the colour's 14px lead — the exact inversion §5.2 forbids. */
   .mk{color:var(--ink-2);font-weight:700}
+  .sub2 .mk{font-size:inherit}
   .avail{font-weight:800;font-size:14px;white-space:nowrap}
   .avail.neg{color:var(--danger)}
   .m2{color:var(--muted);font-size:11px;font-weight:500}
@@ -402,8 +409,9 @@ function warnaLabel(i){
 
 /* ── `brand` is an ID too — the Merek label ───────────────────────────────────
    `erp_live_fg` and `erp_so_line` both carry `brand` (the product-line id the
-   SKU key is built from) and its display twin `brand_text`. Alcopan, Maco and
-   Tajima are VALUES, not an enumeration — nothing here may name one.
+   SKU key is built from) and its display twin `brand_text`. The merek values
+   are DATA, not an enumeration — no merek name may be written anywhere in this
+   file, in code or in a comment (UX-SPEC §12 greps for exactly that).
    Same precedence discipline as warnaLabel (UX-SPEC §1.6): the readable name
    wins, a bare code is labelled AS a code, and when neither field is present we
    render NOTHING — not an em dash, and never a merek guessed out of

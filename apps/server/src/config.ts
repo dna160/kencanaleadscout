@@ -259,6 +259,26 @@ export const config = {
      * reads as fully promiseable — a page that looks healthier than the truth.
      */
     unmatchedAlertRatio: ratio("STOCK_UNMATCHED_ALERT_RATIO", 0.5),
+    /**
+     * ST-R5.3 column diagnostic. Default ON, because the question it answers is
+     * currently open: production reports 97.4% of live commitment lines matching
+     * NO stock row, with every demand key ending `|-|-` (no `p`/`l` on the SO
+     * side) and every stock key carrying `|0|0|` in the two thickness positions.
+     * Each side is missing precisely the segments the other side has, which is a
+     * column-mapping failure and not dirty data.
+     *
+     * Three explanations fit that evidence and only real traffic separates them:
+     * the API returns different NAMES than the documentation lists, it returns
+     * them NESTED, or it returns NULL for these rows. Guessing between them is
+     * what produced the v1 key that matched nothing, so instead the sync prints,
+     * once per table per run, the raw wire key names of the first row and the
+     * per-segment probe result — see `buildColumnDiagnostic()` in
+     * erp/selarasClient.ts.
+     *
+     * Turn it OFF once the mapping is settled; it is pure observation and
+     * changes no sync behaviour either way.
+     */
+    diagnoseColumns: bool("STOCK_SYNC_DIAGNOSE_COLUMNS", true),
   },
 } as const;
 

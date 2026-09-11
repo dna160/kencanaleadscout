@@ -47,7 +47,16 @@
  */
 import { request, type Dispatcher } from "undici";
 import { config } from "../config.js";
-import { canonicalSkuKey, SKU_SEGMENT_SOURCES } from "./sku.js";
+import {
+  canonicalSkuKey,
+  normalizeSegment,
+  SKU_SEGMENT_KINDS,
+  SKU_SEGMENT_SEPARATOR,
+  SKU_SEGMENT_SOURCES,
+  SKU_SEGMENTS,
+  type SkuSegmentKind,
+  type SkuSegmentName,
+} from "./sku.js";
 
 // ── Logical tables ───────────────────────────────────────────────────────────
 
@@ -488,10 +497,19 @@ function successFailure(table: SelarasTable, env: SelarasEnvelope): string {
  * all answer to the same probe. Field casing is unverified (HANDOVER §2); this
  * makes the adapters indifferent to it instead of wrong about it.
  */
+/**
+ * THE fold rule, in one place. `pick()`, `foldKeys()` and the column diagnostic
+ * all call it, so what the diagnostic reports as "matched" is by construction
+ * the same name the adapter actually read.
+ */
+function foldName(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
 function foldKeys(raw: Record<string, unknown>): Map<string, unknown> {
   const out = new Map<string, unknown>();
   for (const [k, v] of Object.entries(raw)) {
-    const folded = k.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const folded = foldName(k);
     // First spelling wins, so an exact snake_case key is never shadowed later.
     if (!out.has(folded)) out.set(folded, v);
   }
@@ -500,7 +518,7 @@ function foldKeys(raw: Record<string, unknown>): Map<string, unknown> {
 
 function pick(row: Map<string, unknown>, ...names: string[]): unknown {
   for (const n of names) {
-    const v = row.get(n.toLowerCase().replace(/[^a-z0-9]/g, ""));
+    const v = row.get(foldName(n));
     if (v !== undefined && v !== null) return v;
   }
   return null;
@@ -1050,6 +1068,256 @@ const ADAPTERS: { [K in SelarasTable]: (raw: unknown) => SelarasRowByTable[K] | 
   live_fg: adaptLiveFgRow,
 };
 
+// ── Column diagnostic (ST-R5.3) ──────────────────────────────────────────────
+//
+// WHY THIS EXISTS. Production reports 97.4% of live commitment lines matching NO
+// row in `erp_live_fg`, and the two sides fail in mirror image:
+//
+//   demand keys  1|172|0.5|4|-|-      ← `p` and `l` absent on every SO line
+//   stock keys   10|141|0|0|1000|500  ← `th` and `th_panel` read ZERO on every FG row
+//
+// Each side is missing precisely the segments the other side has. That is not
+// dirty data; it is a column-mapping failure. Three explanations fit it equally
+// well and NONE can be chosen from here (selaras2.io is unreachable from the
+// build environment): the API returns different NAMES than the verified
+// documentation lists, it returns them NESTED inside another object, or it
+// returns NULL for these rows. Guessing produced the v1 key that matched nothing
+// and an inventory that read as fully promiseable, so this prints the evidence
+// instead:
+//
+//   1. the COMPLETE sorted list of raw wire key names on the first row of the
+//      first page — before folding, before aliasing, before any adapter runs.
+//      That alone separates "different name" from "nested" from "null";
+//   2. for each sku_key segment, the probe names tried (read from
+//      SKU_SEGMENT_SOURCES so they cannot drift from the real mapping), which
+//      one answered, the raw value it carried and the normalized result.
+//
+// WHAT IT MAY NEVER DO: log a row. Rows carry customer names, sales names and
+// prices (§7.9). Only KEY NAMES and the six identity segments' own values are
+// ever printed, each truncated and pushed through `redactSecrets()`; a nested
+// object contributes its child key names and nothing else.
+//
+// It is observation only — it reads a row that was fetched anyway, returns a
+// value, and never throws (`buildColumnDiagnostic` is total over `unknown`).
+
+/** Which side of the join a mirrored table sits on; null ⇒ it has no sku_key. */
+export type SkuSide = "so_line" | "live_fg";
+
+const SKU_SIDE_BY_TABLE: Record<SelarasTable, SkuSide | null> = {
+  warna: null,
+  so_header: null,
+  so_line: "so_line",
+  live_fg: "live_fg",
+};
+
+/**
+ * What a probe found. The three cases are DIFFERENT FACTS and the whole point of
+ * the diagnostic is to tell them apart:
+ *  - `matched` — the key exists and carried a value the adapter read;
+ *  - `null`    — the key EXISTS but its value is null (the ERP returns nulls for
+ *                these rows: a data problem, not a mapping problem);
+ *  - `absent`  — no such key on the row at all (a mapping problem: look at the
+ *                wire key list for what it is really called, nesting included).
+ */
+export type SegmentProbeStatus = "matched" | "null" | "absent";
+
+export interface SegmentProbe {
+  segment: SkuSegmentName;
+  kind: SkuSegmentKind;
+  /** Exactly `SKU_SEGMENT_SOURCES[segment][side]` — never re-spelled here. */
+  probes: readonly string[];
+  /** The wire key, in the ROW's own spelling, that answered. Null when none did. */
+  matched: string | null;
+  status: SegmentProbeStatus;
+  /** Redacted, truncated. Null unless `status === "matched"`. Never a whole row. */
+  raw: string | null;
+  /** What this segment contributes to the sku_key — `-` when nothing was read. */
+  normalized: string;
+}
+
+export interface ColumnDiagnostic {
+  table: SelarasTable;
+  /** The ERP table name the row actually came from. */
+  erpTable: string;
+  side: SkuSide | null;
+  /** Raw wire key names on the first row, sorted. Nested keys as `name{a,b}`. */
+  keys: readonly string[];
+  /** True when the row carried more keys than `keys` lists (see MAX_WIRE_KEYS). */
+  keysTruncated: boolean;
+  /** One entry per ACTIVE sku_key segment, in key order. Empty when side is null. */
+  segments: readonly SegmentProbe[];
+  /** Segments that matched nothing — the ones contributing `-` to every key. */
+  unmatched: readonly SkuSegmentName[];
+}
+
+/** A real ERP table is nowhere near this wide; the cap only bounds a hostile body. */
+const MAX_WIRE_KEYS = 200;
+/** Child key NAMES of a nested object, so "returns them nested" is visible. */
+const MAX_NESTED_KEYS = 16;
+/** Same budget the ambiguity samples use — a dimension, not a row. */
+const MAX_SAMPLE_CHARS = 40;
+
+/**
+ * One raw value, rendered for a log line. An object or array contributes its
+ * SHAPE and its child key names, never its contents — that is the difference
+ * between a diagnostic and a customer-data leak.
+ */
+function sampleValue(v: unknown): string {
+  let text: string;
+  if (typeof v === "string") text = v;
+  else if (typeof v === "number" || typeof v === "boolean") text = String(v);
+  else if (v === null) text = "null";
+  else if (v === undefined) text = "undefined";
+  else if (v instanceof Date) text = Number.isNaN(v.getTime()) ? "Invalid Date" : v.toISOString();
+  else if (Array.isArray(v)) text = `<array of ${v.length}>`;
+  else if (isRecord(v)) text = `<object {${Object.keys(v).sort().slice(0, MAX_NESTED_KEYS).join(",")}}>`;
+  else text = `<${typeof v}>`;
+  return redactSecrets(text).slice(0, MAX_SAMPLE_CHARS);
+}
+
+/**
+ * A wire key as it should be READ by a human: the name itself, plus — when the
+ * value is a container — the child key names, because "the API returns them
+ * nested" is one of the three live explanations and is invisible otherwise.
+ */
+function describeWireKey(key: string, value: unknown): string {
+  if (Array.isArray(value)) return `${key}[${value.length}]`;
+  if (isRecord(value)) {
+    const inner = Object.keys(value).sort();
+    const shown = inner.slice(0, MAX_NESTED_KEYS);
+    return `${key}{${shown.join(",")}${inner.length > shown.length ? ",…" : ""}}`;
+  }
+  return key;
+}
+
+/**
+ * Build the diagnostic for ONE raw row. Total over `unknown` — a non-object row
+ * yields null rather than throwing, because nothing here may ever fail a page.
+ *
+ * The probe loop mirrors `pick()` EXACTLY (same fold rule, same "first non-null
+ * name wins", same order) — a diagnostic that probed differently from the
+ * adapter would describe a mapping nobody is running.
+ */
+export function buildColumnDiagnostic(table: SelarasTable, raw: unknown): ColumnDiagnostic | null {
+  if (!isRecord(raw)) return null;
+  const entries = Object.entries(raw);
+  const keys = entries
+    .slice(0, MAX_WIRE_KEYS)
+    .map(([k, v]) => redactSecrets(describeWireKey(k, v)))
+    .sort();
+
+  const side = SKU_SIDE_BY_TABLE[table];
+  const segments: SegmentProbe[] = [];
+  const unmatched: SkuSegmentName[] = [];
+
+  if (side !== null) {
+    // Folded ONCE, first spelling winning, exactly as `foldKeys()` does — but
+    // remembering the row's own spelling so the log names the REAL wire key.
+    const folded = new Map<string, { key: string; value: unknown }>();
+    for (const [k, v] of entries) {
+      const f = foldName(k);
+      if (!folded.has(f)) folded.set(f, { key: k, value: v });
+    }
+
+    for (const segment of SKU_SEGMENTS) {
+      const probes = SKU_SEGMENT_SOURCES[segment][side];
+      const kind = SKU_SEGMENT_KINDS[segment];
+      let matched: string | null = null;
+      let status: SegmentProbeStatus = "absent";
+      let value: unknown = null;
+      for (const probe of probes) {
+        const hit = folded.get(foldName(probe));
+        if (hit === undefined) continue; // no such column, under any casing
+        if (hit.value === null || hit.value === undefined) {
+          // The column EXISTS and is null. `pick()` keeps looking, so we do too,
+          // but we remember that the name was there — that is the whole
+          // "different name" vs "null value" distinction.
+          if (status === "absent") {
+            status = "null";
+            matched = hit.key;
+          }
+          continue;
+        }
+        matched = hit.key;
+        value = hit.value;
+        status = "matched";
+        break;
+      }
+      // The adapter's own reading, reproduced: asNumber()/asText() then
+      // normalizeSegment(). parseErpNumber() is called directly rather than
+      // asNumber() so the diagnostic never adds a tick to the refusal tallies.
+      const read = kind === "numeric" ? parseErpNumber(value).value : asText(value);
+      segments.push({
+        segment,
+        kind,
+        probes,
+        matched,
+        status,
+        raw: status === "matched" ? sampleValue(value) : null,
+        normalized: normalizeSegment(read, kind),
+      });
+      if (status !== "matched") unmatched.push(segment);
+    }
+  }
+
+  return {
+    table,
+    erpTable: SELARAS_ENDPOINTS[table],
+    side,
+    keys,
+    keysTruncated: entries.length > keys.length,
+    segments,
+    unmatched,
+  };
+}
+
+function describeProbe(p: SegmentProbe): string {
+  const probes = `probed [${p.probes.join(", ")}]`;
+  if (p.status === "matched") {
+    return `    ${p.segment} (${p.kind}): ${probes} → matched '${p.matched}' raw="${p.raw}" → "${p.normalized}"`;
+  }
+  const why =
+    p.status === "null"
+      ? `key '${p.matched}' EXISTS but its value is null`
+      : "NO SUCH KEY on this row (under any casing)";
+  return `    ${p.segment} (${p.kind}): ${probes} → NO MATCH — ${why} → "${p.normalized}"`;
+}
+
+/**
+ * The diagnostic as it appears in the log: ONE multi-line message, greppable on
+ * `COLUMN DIAGNOSTIC`. Key names and six segment values only.
+ */
+export function describeColumnDiagnostic(d: ColumnDiagnostic): string {
+  const lines: string[] = [
+    `${d.table}: COLUMN DIAGNOSTIC (${d.erpTable}) — one-shot, first row of the first page. ` +
+      `Key NAMES and sku_key segment values only; no row is ever logged. ` +
+      `Turn off with STOCK_SYNC_DIAGNOSE_COLUMNS=false once the mapping is settled.`,
+    `  wire keys (${d.keys.length}${d.keysTruncated ? `, first ${MAX_WIRE_KEYS} of more` : ""}, ` +
+      `sorted, raw — name{a,b} means the value is a nested object): ${d.keys.join(", ") || "(none)"}`,
+  ];
+  if (d.side === null) {
+    lines.push(`  sku_key: none — '${d.table}' contributes no segment to the key.`);
+    return lines.join("\n");
+  }
+  lines.push(
+    `  sku_key = ${SKU_SEGMENTS.join(SKU_SEGMENT_SEPARATOR)} (side '${d.side}', ` +
+      `probe names from SKU_SEGMENT_SOURCES in erp/sku.ts):`,
+  );
+  for (const p of d.segments) lines.push(describeProbe(p));
+  if (d.unmatched.length === 0) {
+    lines.push(`  every segment matched a wire key on this row.`);
+  } else {
+    lines.push(
+      `  UNMATCHED: ${d.unmatched.join(", ")} — each contributes '-' to EVERY sku_key on the ` +
+        `'${d.side}' side, so nothing on this side can join a row that has them. Compare the ` +
+        `unmatched probe names against the wire key list above: a different spelling is a ` +
+        `SKU_SEGMENT_SOURCES fix, a nested name{...} is an adapter fix, an existing-but-null key ` +
+        `is an ERP data problem and not a mapping problem at all.`,
+    );
+  }
+  return lines.join("\n");
+}
+
 // ── Primary keys ─────────────────────────────────────────────────────────────
 
 /**
@@ -1145,6 +1413,13 @@ export interface SelarasPage<T> {
   page: number;
   /** Null when the ERP did not tell us; then paging stops on a short page. */
   totalPages: number | null;
+  /**
+   * ST-R5.3. Non-null ONLY on the first page of a table, only when
+   * `STOCK_SYNC_DIAGNOSE_COLUMNS` is on, and only when that page had a row to
+   * describe — which is what makes it once per table per run rather than per
+   * page. The worker logs it; nothing reads it to make a decision.
+   */
+  columnDiagnostic: ColumnDiagnostic | null;
 }
 
 /**
@@ -1432,6 +1707,17 @@ export async function fetchPage<K extends SelarasTable>(
       }
       noticeShape(table, env);
 
+      // ST-R5.3 — built from the row we already hold, before the adapt loop, and
+      // deliberately wrapped: a diagnostic is never allowed to fail a page.
+      let columnDiagnostic: ColumnDiagnostic | null = null;
+      if (config.stock.diagnoseColumns && opts.page === 1) {
+        try {
+          columnDiagnostic = buildColumnDiagnostic(table, env.rows[0]);
+        } catch {
+          columnDiagnostic = null;
+        }
+      }
+
       const adapt = ADAPTERS[table];
       const rows: SelarasRowByTable[K][] = [];
       let dropped = 0;
@@ -1469,6 +1755,7 @@ export async function fetchPage<K extends SelarasTable>(
           badDates: pageTally.badDates,
           page: opts.page,
           totalPages: env.totalPages,
+          columnDiagnostic,
         },
       };
     } catch (err) {
