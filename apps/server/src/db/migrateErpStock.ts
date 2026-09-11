@@ -109,7 +109,7 @@ function buildSkuKeyFunctionSql(): string {
 // cancelled-status set are interpolated when the views are (re)created at boot.
 // Everything else in this file is a static string or a driver parameter.
 
-const CANCELLED_STATUS_RE = /^[A-Za-z0-9 _-]{1,40}$/;
+const STATUS_TOKEN_RE = /^[A-Za-z0-9 _-]{1,40}$/;
 
 /** ST-R17 window. Must be a finite positive integer or we fall back to the default. */
 function safeWindowDays(raw: number): number {
@@ -118,19 +118,53 @@ function safeWindowDays(raw: number): number {
   return 60;
 }
 
-/** OQ-1 status set. Anything that is not a plain short token is dropped, not escaped. */
-function safeCancelledStatuses(raw: readonly string[]): string[] {
+/**
+ * OQ-1 status whitelist. Anything that is not a plain short token is DROPPED,
+ * never escaped — escaping is how an injection bug gets written, and a status
+ * value with a quote in it is a misconfiguration, not a thing to accommodate.
+ * The env-var name is passed in only so the rejection log names the right knob.
+ */
+function safeStatuses(raw: readonly string[], envName: string): string[] {
   const ok: string[] = [];
   for (const s of raw) {
     const v = s.trim();
-    if (CANCELLED_STATUS_RE.test(v)) ok.push(v);
-    else console.error("[migrateErpStock] ignoring malformed STOCK_CANCELLED_STATUSES entry");
+    if (STATUS_TOKEN_RE.test(v)) ok.push(v);
+    else console.error(`[migrateErpStock] ignoring malformed ${envName} entry`);
   }
   return ok;
 }
 
+/** OQ-1 cancelled set (ST-R7a). Empty is SAFE here: `<> all (array[])` excludes nothing. */
+function safeCancelledStatuses(raw: readonly string[]): string[] {
+  return safeStatuses(raw, "STOCK_CANCELLED_STATUSES");
+}
+
+/**
+ * ST-R7b approved set — the same whitelist path, with ONE deliberate asymmetry.
+ *
+ * An empty cancelled set is harmless. An empty APPROVED set is catastrophic:
+ * `approval = any(array[]::text[])` is false for every row, so v_live_commitments
+ * empties, open_commitment is 0 for every SKU, ATP equals on-hand and the whole
+ * inventory reads as promiseable. That failure looks like good news on screen,
+ * which is exactly why it must not be reachable by a typo. So a set that
+ * validates down to nothing falls back to the shipped default rather than
+ * disabling the commitment gate.
+ */
+const DEFAULT_APPROVED_STATUSES = ["Approved"] as const;
+
+function safeApprovedStatuses(raw: readonly string[]): string[] {
+  const ok = safeStatuses(raw, "STOCK_APPROVED_STATUSES");
+  if (ok.length > 0) return ok;
+  console.error(
+    "[migrateErpStock] STOCK_APPROVED_STATUSES validated down to an empty set — falling back to " +
+      `"${DEFAULT_APPROVED_STATUSES.join(",")}". An empty approved set would make EVERY SKU read as ` +
+      "fully promiseable (zero live commitments), so it is never honoured.",
+  );
+  return [...DEFAULT_APPROVED_STATUSES];
+}
+
 /** `array['Cancelled','Void','Batal']`, or a typed empty array when the set is empty. */
-function cancelledStatusArraySql(statuses: readonly string[]): string {
+function statusArraySql(statuses: readonly string[]): string {
   if (statuses.length === 0) return "array[]::text[]";
   return `array[${statuses.map((s) => `'${s}'`).join(", ")}]`;
 }
@@ -295,7 +329,10 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
   // validated above before they are spliced; nothing else in this file is.
   try {
     const windowDays = safeWindowDays(config.stock.staleWindowDays);
-    const cancelled = cancelledStatusArraySql(safeCancelledStatuses(config.stock.cancelledStatuses));
+    const cancelled = statusArraySql(safeCancelledStatuses(config.stock.cancelledStatuses));
+    // ST-R7b: the commitment gate is config, not a literal (OQ-1). Same validated
+    // whitelist path as the cancelled set — nothing unvalidated reaches SQL.
+    const approved = statusArraySql(safeApprovedStatuses(config.stock.approvedStatuses));
 
     // The shared FROM/JOIN spine. A line that is confirm-closed leaves both sets.
     // `undated` (AMENDMENT 1) lets the PPIC queue separate two populations whose
@@ -307,7 +344,7 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
       from erp_so_line l
       left join erp_so_header h on h.id = l.so_id
       left join stock_commitment_overrides o on o.so_line_id = l.id
-      where l.approval = 'Approved'
+      where l.approval = any (${approved})
         and l.qty_balance > 0
         and coalesce(l.status_order, '') <> all (${cancelled})
         and ${etaPredicate}
@@ -344,6 +381,123 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
     }
   } catch (viewsErr) {
     console.error("[migrateErpStock] commitment views step failed (non-fatal):", viewsErr);
+  }
+
+  // ── ST-R7b sanity check — the part that turns a silent catastrophe into a log ─
+  // Runs last, on every boot, and never blocks it (§7.7).
+  await checkCommitmentGate(db);
+}
+
+// ── The commitment-gate sanity check (ST-R7b) ────────────────────────────────
+
+/** Enough distinct values to diagnose a casing/enum mismatch, few enough to read. */
+const MAX_OBSERVED_APPROVALS = 10;
+
+export interface CommitmentGateReport {
+  /** False when the query could not run at all (no mirror tables yet, DB down). */
+  checked: boolean;
+  soLines: number;
+  liveCommitments: number;
+  /** Mirror has approved-shaped demand but the view is empty ⇒ the gate misses. */
+  tripped: boolean;
+  /** Distinct `approval` values actually present in the mirror, capped. */
+  observedApprovals: string[];
+  configuredApprovals: readonly string[];
+}
+
+/**
+ * WARN-ONLY. Never throws, never blocks boot (invariant §7.7).
+ *
+ * The failure this exists for: `STOCK_APPROVED_STATUSES` does not match what the
+ * ERP actually emits. Nobody in this repo has seen a real Selaras response
+ * (HANDOVER §2), so the shipped default `Approved` is a guess. If the live value
+ * is `APPROVED` or `Approve` or `1`, `v_live_commitments` returns zero rows,
+ * `open_commitment` is zero for every SKU, `ATP = on_hand`, and every screen
+ * reads *healthier* than the truth — the one failure mode nobody reports.
+ *
+ * So: mirror non-empty + live view empty ⇒ one loud line naming the configured
+ * values, the values actually in the mirror, and the env var that fixes it.
+ *
+ * Note it cannot fire on the *cancelled* set, which fails the other way (a
+ * cancelled line keeps reserving ⇒ ATP understated ⇒ somebody complains).
+ */
+export async function checkCommitmentGate(
+  db: Sql = getSql()!,
+  log: { warn(msg: string): void } = { warn: (m) => console.warn(m) },
+): Promise<CommitmentGateReport> {
+  const configuredApprovals = safeApprovedStatuses(config.stock.approvedStatuses);
+  const empty: CommitmentGateReport = {
+    checked: false,
+    soLines: 0,
+    liveCommitments: 0,
+    tripped: false,
+    observedApprovals: [],
+    configuredApprovals,
+  };
+
+  try {
+    // Two cheap existence probes, not two full counts: `limit 1` inside the
+    // subquery means neither touches more than one row on a healthy mirror.
+    const [probe] = await db<{ has_lines: boolean; has_live: boolean }[]>`
+      select exists (select 1 from erp_so_line limit 1)                as has_lines,
+             exists (select 1 from v_live_commitments limit 1)         as has_live
+    `;
+    if (!probe) return empty;
+    if (!probe.has_lines || probe.has_live) {
+      return { ...empty, checked: true, soLines: probe.has_lines ? 1 : 0, liveCommitments: probe.has_live ? 1 : 0 };
+    }
+
+    // Only now — in the bad state, once — pay for the real numbers.
+    const [counts] = await db<{ so_lines: string; open_lines: string }[]>`
+      select count(*)::text                                       as so_lines,
+             count(*) filter (where qty_balance > 0)::text         as open_lines
+      from erp_so_line
+    `;
+    const observed = await db<{ approval: string | null; n: string }[]>`
+      select approval, count(*)::text as n
+      from erp_so_line
+      where qty_balance > 0
+      group by approval
+      order by count(*) desc
+      limit ${MAX_OBSERVED_APPROVALS}
+    `;
+    const observedApprovals = observed.map((r) => `${r.approval === null ? "<null>" : r.approval} (${r.n})`);
+    const soLines = Number(counts?.so_lines ?? 0);
+    const openLines = Number(counts?.open_lines ?? 0);
+
+    // The one provably-correct empty: every mirrored line is fully delivered, so
+    // `qty_balance > 0` holds nowhere and an empty live view is the right answer
+    // regardless of the approval gate. Warning here would fire on every boot
+    // forever and train people to ignore the line — which is precisely how the
+    // real alert gets missed. Stay quiet; nothing is being over-promised.
+    if (openLines === 0) {
+      return { ...empty, checked: true, soLines, observedApprovals, liveCommitments: 0 };
+    }
+
+    log.warn(
+      `[stock] COMMITMENT GATE MATCHES NOTHING — erp_so_line holds ${soLines} mirrored line(s) ` +
+        `(${openLines} with qty_balance > 0) but v_live_commitments is EMPTY. Every SKU's ` +
+        `open_commitment is therefore 0 and ATP equals on-hand: the whole inventory currently reads ` +
+        `as promiseable. Configured approved statuses: [${configuredApprovals.join(", ")}]. ` +
+        `Distinct \`approval\` values actually in the mirror: ` +
+        `[${observedApprovals.length > 0 ? observedApprovals.join(", ") : "none"}]. ` +
+        `FIX: set STOCK_APPROVED_STATUSES to the value(s) the ERP really emits (CSV) and restart — ` +
+        `the views are rebuilt from it on every boot. ST-R7b / OQ-1.`,
+    );
+
+    return {
+      checked: true,
+      soLines,
+      liveCommitments: 0,
+      tripped: true,
+      observedApprovals,
+      configuredApprovals,
+    };
+  } catch (err) {
+    // A missing view or an unreachable DB is not this function's problem to
+    // solve, and it must never be the reason the app fails to boot (§7.7).
+    console.error("[migrateErpStock] commitment-gate sanity check skipped (non-fatal):", err);
+    return empty;
   }
 }
 

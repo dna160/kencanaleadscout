@@ -224,7 +224,7 @@
         <p class="metaline">SKU yang jumlah pesanan aktifnya melebihi Stok Fisik. Ini pemicu produksi, bukan antrean yang harus dikosongkan.</p>
       </div>
       <div id="sfBody" class="scrollx"></div>
-      <div class="foot">Diurutkan dari kekurangan terbesar, lalu ETA terdekat.</div>
+      <div class="foot">Diurutkan dari kekurangan terbesar, lalu pengiriman pesanan terdekat.</div>
     </div>
   </section>
 
@@ -711,6 +711,13 @@ function loadTab(id){
    TAB 1 · Kekurangan (ST-R11) — GET /api/stock/shortfall
    Ranked server-side by deficit desc then nearest_eta asc. The client NEVER
    re-sorts (UX-SPEC §6.1). No sortable headers, no filters, no write action.
+
+   `nearest_eta` is the nearest OUTBOUND commitment date — the soonest a Sales
+   Order takes this stock away, i.e. the deadline the shortfall must be produced
+   against. The column is labelled "Kirim Pesanan Terdekat", never "ETA
+   terdekat", because the latter reads as incoming restock and the two mean
+   opposite things. PRD §9 reserves the incoming-supply vocabulary for the
+   later "+ incoming" term; nothing on this page may pre-empt it.
    ════════════════════════════════════════════════════════════════════════════ */
 const SF={total:null,rows:[],fail:false};
 function normShortfall(r){
@@ -756,7 +763,7 @@ function renderShortfall(){
   }
   el.innerHTML=`<table class="stick1"><caption class="sr-only">Daftar SKU yang kekurangan stok</caption><thead><tr>
       <th>SKU</th><th style="text-align:right">Kekurangan</th><th class="hidesm" style="text-align:right">Fisik</th>
-      <th class="hidesm" style="text-align:right">Dipesan</th><th>ETA Terdekat</th><th></th>
+      <th class="hidesm" style="text-align:right">Dipesan</th><th>Kirim Pesanan Terdekat</th><th></th>
     </tr></thead><tbody>${SF.rows.map(r=>{
       const d=daysSince(r.nearest_eta);
       return `<tr>

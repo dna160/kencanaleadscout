@@ -69,6 +69,20 @@ function oneOf<T extends string>(name: string, allowed: readonly T[], fallback: 
   return fallback;
 }
 
+/**
+ * Fractional env var in (0, 1]. Used for the reconciliation safety ratio, where
+ * a typo must never widen the guard: anything unreadable, non-finite, <= 0 or
+ * > 1 falls back and says so rather than silently permitting a bigger purge.
+ */
+function ratio(name: string, fallback: number): number {
+  const v = process.env[name];
+  if (v === undefined || v.trim() === "") return fallback;
+  const n = Number.parseFloat(v.trim());
+  if (Number.isFinite(n) && n > 0 && n <= 1) return n;
+  console.error(`[config] ${name}="${v.trim()}" is not a fraction in (0,1] — falling back to ${fallback}`);
+  return fallback;
+}
+
 /** Comma-separated list env var; blank entries dropped, empty list => fallback. */
 function csv(name: string, fallback: readonly string[]): readonly string[] {
   const v = process.env[name];
@@ -133,6 +147,35 @@ export const config = {
     staleWindowDays: int("STOCK_STALE_WINDOW_DAYS", 60),
     /** status_order values that mean "this line is dead" (OQ-1, tune at validation). */
     cancelledStatuses: csv("STOCK_CANCELLED_STATUSES", ["Cancelled", "Void", "Batal"]),
+    /**
+     * ST-R7b / OQ-1: the `approval` values that mean "this line commits stock".
+     * Config, never a literal — and the ASYMMETRIC one of the two status sets.
+     *
+     * An unmatched CANCELLED value fails safe: a cancelled line keeps reserving,
+     * so ATP is understated and someone complains. An unmatched APPROVED value
+     * fails CATASTROPHICALLY: `v_live_commitments` returns zero rows, every SKU's
+     * open_commitment is 0, ATP collapses to on-hand, and the entire inventory
+     * reads as promiseable — a page that looks healthier than normal, so nobody
+     * complains. Nobody in this repo has seen a real Selaras response (HANDOVER
+     * §2), so `APPROVED` / `Approve` / `1` / `Y` are all live possibilities.
+     *
+     * Hence the boot/first-sync sanity check in migrateErpStock.checkCommitmentGate():
+     * lines mirrored but no live commitments ⇒ one loud warn naming this variable.
+     */
+    approvedStatuses: csv("STOCK_APPROVED_STATUSES", ["Approved"]),
+    /**
+     * Full-key reconciliation cadence. An incremental `updated_at__gte` pull can
+     * structurally never observe a DELETE (PRD §10), so a separate, slower sweep
+     * compares the ERP's full key set against the mirror and purges what is gone.
+     * Hourly by default — not on every 3-minute poll.
+     */
+    reconcileIntervalMs: int("STOCK_RECONCILE_INTERVAL_MS", 3_600_000),
+    /**
+     * Safety floor for that sweep: if the ERP hands back fewer than this fraction
+     * of the keys we already mirror, ABORT rather than purge. A truncating bug
+     * upstream must never empty our mirror.
+     */
+    reconcileMinRatio: ratio("STOCK_RECONCILE_MIN_RATIO", 0.5),
     /** ST-R7: no successful sync in N intervals => the stale banner lights up. */
     syncStaleAlertIntervals: int("STOCK_SYNC_STALE_ALERT_INTERVALS", 4),
     /** ST-R16 shadow mode: compute ATP but keep 1.0 numbers authoritative. */

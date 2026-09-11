@@ -33,9 +33,11 @@
 import postgres from "postgres";
 import { config, hasDatabase, hasErp } from "../config.js";
 import { getSql, type Sql } from "../db/client.js";
+import { checkCommitmentGate } from "../db/migrateErpStock.js";
 import {
   redactSecrets,
   selarasClient,
+  SELARAS_KEY_FIELDS,
   SYNC_TABLES,
   type SelarasClient,
   type SelarasTable,
@@ -108,6 +110,37 @@ export interface SyncRunResult {
   /** Why nothing ran: another run holds the guard, or the ERP/DB is not configured. */
   skipped?: "in_flight" | "disabled" | "locked";
   tables: SyncTableResult[];
+  durationMs: number;
+}
+
+/** Why a table's reconciliation removed nothing. Every value is a REFUSAL to purge. */
+export type ReconcileAbortReason =
+  | "fetch_failed" // the ERP never gave us a complete key set
+  | "empty_key_set" // it answered, with nothing — a truncating bug, not an empty ERP
+  | "ratio_guard" // it answered with implausibly few keys vs what we hold
+  | "page_cap"; // pagination looks broken, so the key set is incomplete
+
+export interface ReconcileTableResult {
+  table: SelarasTable;
+  ok: boolean;
+  /** Rows in the mirror before the sweep. */
+  mirrored: number;
+  /** Distinct primary keys the ERP reported as currently existing. */
+  erpKeys: number;
+  /** Mirror rows deleted because the ERP no longer lists their key. */
+  removed: number;
+  pages: number;
+  /** Present only when the sweep declined to purge. `removed` is then always 0. */
+  aborted?: ReconcileAbortReason;
+  error?: string;
+  /** False ⇒ the ERP ignored `fields=`; full rows were pulled. Correct, just costly. */
+  projected: boolean;
+}
+
+export interface ReconcileRunResult {
+  started: boolean;
+  skipped?: "in_flight" | "disabled" | "locked";
+  tables: ReconcileTableResult[];
   durationMs: number;
 }
 
@@ -297,12 +330,29 @@ async function acquireLock(db: Sql, intervalMs: number): Promise<boolean> {
            or coalesce(greatest(last_ok_at, last_error_at), to_timestamp(0))
               < now() - (${staleMs}::bigint * interval '1 millisecond')
          )
+         -- FOR UPDATE serialises two concurrent claimants on these three rows:
+         -- the second blocks here until the first commits, and then re-reads.
+         -- Without it both sessions evaluate the CTE on their own snapshot, both
+         -- see running = false, and both "acquire" the lock — which is exactly
+         -- what two connections reproduced. The UPDATE below additionally
+         -- re-tests the predicate in its OWN quals, because the EvalPlanQual
+         -- recheck under read-committed only re-applies the UPDATE's quals, not
+         -- the CTE's, so the CTE alone can never be the guard.
+         -- `order by` pins a single lock order across sessions, so two claimants
+         -- queue rather than deadlock on each other's first row.
+       order by table_name
+         for update
     )
     update erp_sync_state s
        set running = true
       from candidate c
      where s.table_name = c.table_name
        and (select count(*) from candidate) = 3
+       and (
+         s.running = false
+         or coalesce(greatest(s.last_ok_at, s.last_error_at), to_timestamp(0))
+            < now() - (${staleMs}::bigint * interval '1 millisecond')
+       )
     returning s.table_name
   `;
   return claimed.length === 3;
@@ -503,6 +553,374 @@ function reportRefusals(
   }
 }
 
+// ── Reconciliation: the only way this mirror can ever observe a DELETE ───────
+//
+// WHY THIS EXISTS. The incremental pull is `updated_at__gte` + upsert-by-PK. A
+// row that is DELETED upstream has no `updated_at` to report and appears on no
+// page, so an incremental cursor pull **structurally cannot see it** — the row
+// sits in our mirror forever. PRD §10 names the edge case ("SO line
+// cancelled/deleted → drops out of commitment automatically") and the cursor
+// design alone cannot deliver it. `tbl_1359_SOSalesOrderDetailNDeletedID` is
+// named in ST-R7b but we have never seen it, and no tombstone feed is available
+// here (HANDOVER §2), so the honest fix for a source with no deletion feed is a
+// slower **full-key sweep**: ask for the current key set, delete what is absent.
+//
+// The two consequences of not having it are not symmetric:
+//   · a deleted SO line reserves forever   ⇒ ATP understated (someone complains);
+//   · a deleted Live FG row (if the ERP DELETES a shipped row rather than zeroing
+//     `qty`) keeps its quantity on hand forever ⇒ we OVER-PROMISE physical stock,
+//     which is the exact failure this module exists to prevent. PRD §5A reasons
+//     about on-hand and qty_balance being disjoint but never asks whether a
+//     shipped row is updated or deleted. Nobody here knows. The sweep is correct
+//     under either answer, which is why it is built rather than assumed away.
+//
+// SAFETY IS THE POINT. A sweep that purges is a sweep that can empty the mirror
+// if the ERP misbehaves, so every path below is biased to REFUSE: an incomplete
+// key set, an empty one, or one implausibly smaller than what we already hold
+// aborts the table and leaves it exactly as it was. It runs on its own hourly
+// cadence, under the same `running` guard as the sync, and never overlaps one.
+
+/** Mirror table + primary key per logical table. Literal, whitelisted, never built from input. */
+const MIRROR_TABLES: Record<SelarasTable, { table: string; pk: string }> = {
+  so_header: { table: "erp_so_header", pk: "id" },
+  so_line: { table: "erp_so_line", pk: "id" },
+  live_fg: { table: "erp_live_fg", pk: "sn_fg" },
+};
+
+/** Keys per INSERT while filling the scratch table. Big enough to be few round trips. */
+const RECONCILE_KEY_CHUNK = 5_000;
+
+async function mirrorCount(db: Sql, table: SelarasTable): Promise<number> {
+  switch (table) {
+    case "so_header": {
+      const r = await db<{ n: string }[]>`select count(*)::text as n from erp_so_header`;
+      return Number(r[0]?.n ?? 0);
+    }
+    case "so_line": {
+      const r = await db<{ n: string }[]>`select count(*)::text as n from erp_so_line`;
+      return Number(r[0]?.n ?? 0);
+    }
+    case "live_fg": {
+      const r = await db<{ n: string }[]>`select count(*)::text as n from erp_live_fg`;
+      return Number(r[0]?.n ?? 0);
+    }
+  }
+}
+
+/**
+ * Delete every mirror row whose primary key is absent from the scratch key set.
+ * Three literal statements rather than one interpolated one: the table and column
+ * names are then not merely whitelisted, they are unreachable from any input.
+ */
+async function purgeAbsent(tx: AnySql, table: SelarasTable): Promise<number> {
+  switch (table) {
+    case "so_header": {
+      const r = await tx`
+        delete from erp_so_header t
+         where not exists (select 1 from _erp_recon_keys k where k.k = t.id)
+      `;
+      return r.count ?? 0;
+    }
+    case "so_line": {
+      const r = await tx`
+        delete from erp_so_line t
+         where not exists (select 1 from _erp_recon_keys k where k.k = t.id)
+      `;
+      return r.count ?? 0;
+    }
+    case "live_fg": {
+      const r = await tx`
+        delete from erp_live_fg t
+         where not exists (select 1 from _erp_recon_keys k where k.k = t.sn_fg)
+      `;
+      return r.count ?? 0;
+    }
+  }
+}
+
+/** Bookkeeping for a sweep that actually removed rows (§4.2 reuses these columns). */
+async function markReconcileRemoved(db: Sql, table: SelarasTable, removed: number): Promise<void> {
+  // `rows_synced` is the mirror-write counter and a purge is a mirror write, so
+  // removals accumulate there — no migration, and the number stays meaningful.
+  //
+  // `last_ok_at` is deliberately NOT touched. It is the freshness clock the stale
+  // alert and the page banner read; a successful sweep stamping it would mask a
+  // dead incremental sync for as long as the sweep kept working, which is the one
+  // thing ST-R7 exists to catch.
+  await db`
+    update erp_sync_state
+       set rows_synced = rows_synced + ${removed}
+     where table_name = ${table}
+  `;
+}
+
+async function fetchErpKeySet(
+  client: SelarasClient,
+  table: SelarasTable,
+  pageSize: number,
+  log: SyncLogger,
+): Promise<
+  | { ok: true; keys: Set<string>; pages: number; dropped: number; projected: boolean; capped: boolean }
+  | { ok: false; error: string }
+> {
+  const keys = new Set<string>();
+  let pages = 0;
+  let dropped = 0;
+  let projected = true;
+  let sawAnyRow = false;
+  let previousSignature = "";
+
+  for (let page = 1; page <= MAX_PAGES_PER_TABLE; page += 1) {
+    const res = await client.fetchKeyPage(table, { page, limit: pageSize });
+    if (!res.ok) return { ok: false, error: res.error };
+
+    const { keys: pageKeys, rawCount, dropped: pageDropped, totalPages, projected: pageProjected } = res.page;
+    dropped += pageDropped;
+    if (rawCount > 0) {
+      sawAnyRow = true;
+      if (!pageProjected) projected = false;
+    }
+    if (rawCount === 0) break;
+
+    // Same defence as the incremental pull: an ERP that ignores `page` returns
+    // page 1 forever. Here it is worse than a wasted loop — a key set that keeps
+    // repeating page 1 is INCOMPLETE, and purging against it would delete most
+    // of the mirror. So this is a hard abort, not a break.
+    const signature = `${pageKeys.length}:${pageKeys.join(",")}`;
+    if (pageKeys.length > 0 && signature === previousSignature) {
+      return {
+        ok: false,
+        error:
+          `page ${page} repeated page ${page - 1} verbatim — the 'page' query param looks ignored ` +
+          `(assumption A2), so the key set is incomplete and nothing may be purged from it`,
+      };
+    }
+    previousSignature = signature;
+
+    for (const k of pageKeys) keys.add(k);
+    pages += 1;
+
+    if (totalPages !== null && page >= totalPages) break;
+    if (rawCount < pageSize) break;
+    if (page === MAX_PAGES_PER_TABLE) {
+      return {
+        ok: false,
+        error: `hit the ${MAX_PAGES_PER_TABLE}-page cap before the key set ended — it is incomplete, so nothing may be purged`,
+      };
+    }
+  }
+
+  if (dropped > 0) {
+    log.warn(
+      `reconcile ${table}: ${dropped} ERP row(s) carried no readable '${SELARAS_KEY_FIELDS[table]}' and were ` +
+        `ignored. They cannot be matched against the mirror, so nothing is purged on their account.`,
+    );
+  }
+  return { ok: true, keys, pages, dropped, projected: sawAnyRow ? projected : true, capped: false };
+}
+
+async function reconcileTable(
+  db: Sql,
+  client: SelarasClient,
+  table: SelarasTable,
+  pageSize: number,
+  minRatio: number,
+  log: SyncLogger,
+): Promise<ReconcileTableResult> {
+  const mirrored = await mirrorCount(db, table);
+  const base: ReconcileTableResult = {
+    table,
+    ok: true,
+    mirrored,
+    erpKeys: 0,
+    removed: 0,
+    pages: 0,
+    projected: true,
+  };
+
+  const fetched = await fetchErpKeySet(client, table, pageSize, log);
+  if (!fetched.ok) {
+    await markReconcileError(db, table, `reconcile aborted — ${fetched.error}`);
+    log.error(
+      `reconcile ${table}: ABORTED, mirror untouched (${mirrored} row(s) kept) — ${fetched.error}`,
+    );
+    return { ...base, ok: false, aborted: "fetch_failed", error: fetched.error };
+  }
+
+  const erpKeys = fetched.keys.size;
+  const result: ReconcileTableResult = { ...base, erpKeys, pages: fetched.pages, projected: fetched.projected };
+
+  if (!fetched.projected) {
+    // Item 5 of the brief: where the ERP gives us no key-only listing, say so
+    // rather than pretending we asked cheaply.
+    log.warn(
+      `reconcile ${table}: the ERP ignored 'fields=${SELARAS_KEY_FIELDS[table]}' and returned whole rows — ` +
+        `there is no key-only listing endpoint we know of (assumption A31), so the sweep pays full page cost. ` +
+        `Correctness is unaffected; only the hourly cadence keeps it cheap.`,
+    );
+  }
+
+  if (mirrored === 0) {
+    log.info(`reconcile ${table}: mirror empty, ${erpKeys} ERP key(s) seen — nothing to purge`);
+    return result;
+  }
+
+  // ── The two refusals. Both leave the mirror EXACTLY as it was. ──────────────
+  if (erpKeys === 0) {
+    const why =
+      `the ERP reported ZERO keys while the mirror holds ${mirrored} row(s). A source that has genuinely ` +
+      `emptied and a source with a truncating bug look identical from here, so the mirror is kept`;
+    await markReconcileError(db, table, `reconcile aborted — ${why}`);
+    log.error(`reconcile ${table}: ABORTED — ${why}.`);
+    return { ...result, ok: false, aborted: "empty_key_set", error: why };
+  }
+
+  const floor = mirrored * minRatio;
+  if (erpKeys < floor) {
+    const why =
+      `the ERP reported ${erpKeys} key(s) against ${mirrored} mirrored row(s) — below the ` +
+      `STOCK_RECONCILE_MIN_RATIO floor of ${minRatio} (${Math.ceil(floor)} key(s)). Purging would remove ` +
+      `${mirrored - erpKeys} row(s) on the word of a page set that looks truncated`;
+    await markReconcileError(db, table, `reconcile aborted — ${why}`);
+    log.error(`reconcile ${table}: ABORTED — ${why}. Raise the ratio deliberately if the drop is real.`);
+    return { ...result, ok: false, aborted: "ratio_guard", error: why };
+  }
+
+  // ── The purge. One transaction: scratch keys in, absent rows out. ───────────
+  const allKeys = [...fetched.keys];
+  const removed = (await db.begin(async (tx) => {
+    // `on commit drop` ties the scratch table's life to this transaction, so a
+    // crash mid-sweep cannot leave one behind to poison the next run.
+    await tx`create temp table _erp_recon_keys (k text primary key) on commit drop`;
+    for (let i = 0; i < allKeys.length; i += RECONCILE_KEY_CHUNK) {
+      const chunk = allKeys.slice(i, i + RECONCILE_KEY_CHUNK).map((k) => ({ k }));
+      await tx`insert into _erp_recon_keys ${tx(chunk, "k")} on conflict (k) do nothing`;
+    }
+    return purgeAbsent(tx, table);
+  })) as number;
+
+  if (removed > 0) await markReconcileRemoved(db, table, removed);
+  log.info(
+    `reconcile ${table}: ${erpKeys} ERP key(s) vs ${mirrored} mirrored — removed ${removed} row(s) the ERP ` +
+      `no longer lists${fetched.projected ? "" : " (full rows pulled; no key projection)"}`,
+  );
+  return { ...result, removed };
+}
+
+/** Failure path for the sweep. Prefixed so sync-status never mistakes it for a pull error. */
+async function markReconcileError(db: Sql, table: SelarasTable, error: string): Promise<void> {
+  await db`
+    update erp_sync_state
+       set last_error = ${redactSecrets(error).slice(0, 500)}, last_error_at = now()
+     where table_name = ${table}
+  `;
+}
+
+// ── ST-R7 stale alert ────────────────────────────────────────────────────────
+//
+// `freshness.stale` already existed in a JSON body and as an amber banner —
+// visible only to somebody who already has /stock open. ST-R7 asked for an
+// ALERT: "alerts if a sync hasn't succeeded in N intervals". A sync that dies at
+// 18:00 on a Friday is otherwise discovered by whoever opens the page on Monday.
+//
+// Emitted ONCE per transition into the stale state and once again on recovery.
+// Not every tick: an alert that repeats every three minutes is an alert people
+// filter out, which is the same as not having one.
+
+let staleAlertActive = false;
+
+/** Test seam: forget whether the stale alert is currently latched. */
+export function resetStaleAlert(): void {
+  staleAlertActive = false;
+}
+
+interface FreshnessRow {
+  table_name: string;
+  last_ok_at: Date | null;
+  last_error: string | null;
+  last_error_at: Date | null;
+}
+
+function describeTable(r: FreshnessRow): string {
+  const ok = r.last_ok_at ? r.last_ok_at.toISOString() : "never";
+  const err = r.last_error ? ` last_error="${r.last_error}"` : "";
+  const errAt = r.last_error_at ? ` at ${r.last_error_at.toISOString()}` : "";
+  return `${r.table_name}: last success ${ok};${err || " no error recorded"}${err ? errAt : ""}`;
+}
+
+/**
+ * Compare the newest success across the mirrored tables against
+ * `interval × STOCK_SYNC_STALE_ALERT_INTERVALS` and fire (or clear) the alert.
+ * Never throws — it is called from the run's tail and a dead DB must not turn a
+ * degraded sync into a dead process.
+ */
+export async function evaluateStaleAlert(db: Sql, intervalMs: number, log: SyncLogger): Promise<boolean> {
+  const thresholdMs = Math.max(1, intervalMs) * Math.max(1, config.stock.syncStaleAlertIntervals);
+  const rows = await db<FreshnessRow[]>`
+    select table_name, last_ok_at, last_error, last_error_at
+    from erp_sync_state
+    where table_name in ('so_header', 'so_line', 'live_fg')
+    order by table_name
+  `;
+
+  let newest: number | null = null;
+  for (const r of rows) {
+    const t = r.last_ok_at ? r.last_ok_at.getTime() : null;
+    if (t !== null && Number.isFinite(t) && (newest === null || t > newest)) newest = t;
+  }
+  const stale = newest === null || Date.now() - newest > thresholdMs;
+
+  if (stale && !staleAlertActive) {
+    staleAlertActive = true;
+    const minutes = Math.round(thresholdMs / 60_000);
+    log.error(
+      `ALERT ST-R7: the ERP sync has not succeeded for any table in ${config.stock.syncStaleAlertIntervals} ` +
+        `interval(s) (~${minutes} min). Newest success across all tables: ` +
+        `${newest === null ? "NEVER" : new Date(newest).toISOString()}. Per table — ` +
+        `${rows.map(describeTable).join(" | ")}. Stock figures are being served from a mirror that is no ` +
+        `longer refreshing; ATP will drift from the ERP until this is fixed.`,
+    );
+  } else if (!stale && staleAlertActive) {
+    staleAlertActive = false;
+    log.info(
+      `RECOVERED ST-R7: the ERP sync is succeeding again — newest success ` +
+        `${newest === null ? "unknown" : new Date(newest).toISOString()}. Per table — ` +
+        `${rows.map(describeTable).join(" | ")}.`,
+    );
+  }
+  return stale;
+}
+
+// ── ST-R7b commitment-gate check, on the first sync that mirrors demand ──────
+//
+// The boot check in migrateErpStock runs before any sync has populated the
+// mirror, so on a fresh deployment it can only ever see an empty table. This is
+// the call that actually catches a mis-set STOCK_APPROVED_STATUSES: the first
+// run that writes SO lines. Latched the same way as the stale alert so a
+// permanently mis-set gate does not warn every three minutes.
+
+let commitmentGateWarned = false;
+
+/** Test seam: forget whether the commitment-gate warning has already fired. */
+export function resetCommitmentGateWarning(): void {
+  commitmentGateWarned = false;
+}
+
+async function checkCommitmentGateAfterSync(db: Sql, log: SyncLogger): Promise<void> {
+  // Still EVALUATED every run (that is how recovery is noticed), but only
+  // allowed to speak the first time — hence the silent logger once latched.
+  const sink = commitmentGateWarned ? { warn: () => {} } : { warn: (m: string) => log.warn(m) };
+  const report = await checkCommitmentGate(db, sink);
+  if (report.tripped) commitmentGateWarned = true;
+  else if (commitmentGateWarned) {
+    commitmentGateWarned = false;
+    log.info(
+      `RECOVERED ST-R7b: the commitment gate matches again — configured approved statuses ` +
+        `[${report.configuredApprovals.join(", ")}] now select live commitments.`,
+    );
+  }
+}
+
 // ── Public surface ───────────────────────────────────────────────────────────
 
 export interface ErpSyncDeps {
@@ -518,15 +936,24 @@ export interface ErpSyncDeps {
  * one guards the common case (the interval tick firing while the manual-kick
  * route is mid-run) without a round trip, and makes `runErpSyncOnce()` return
  * immediately as §4.2 requires of `POST /api/stock/sync`.
+ *
+ * The RECONCILIATION sweep shares this exact variable, and the DB lock below,
+ * on purpose: a purge deciding "this key is absent" while a pull is mid-flight
+ * writing that same key is the one interleaving that could delete a live row.
+ * The two jobs are therefore mutually exclusive, not merely self-exclusive.
  */
-let inFlight: Promise<SyncRunResult> | null = null;
+let inFlight: Promise<unknown> | null = null;
 
-/** True while a sync run is in progress — for the manual-kick route's response. */
+/** True while a sync OR a reconciliation run is in progress (they share the guard). */
 export function isErpSyncRunning(): boolean {
   return inFlight !== null;
 }
 
 function idleResult(skipped: SyncRunResult["skipped"]): SyncRunResult {
+  return { started: false, skipped, tables: [], durationMs: 0 };
+}
+
+function idleReconcileResult(skipped: ReconcileRunResult["skipped"]): ReconcileRunResult {
   return { started: false, skipped, tables: [], durationMs: 0 };
 }
 
@@ -559,6 +986,102 @@ export async function runErpSyncOnce(overrides: Partial<ErpSyncDeps> = {}): Prom
   });
   inFlight = run;
   return run;
+}
+
+/**
+ * Run one full-key reconciliation sweep. NEVER REJECTS, and never purges when
+ * anything about the ERP's answer looks wrong (see the block comment above).
+ *
+ * Shares `inFlight` and the `erp_sync_state.running` lock with `runErpSyncOnce()`,
+ * so a sweep can never overlap a pull in either direction.
+ */
+export async function reconcileErpMirror(overrides: Partial<ErpSyncDeps> = {}): Promise<ReconcileRunResult> {
+  if (inFlight) return idleReconcileResult("in_flight");
+
+  const db = overrides.db ?? getSql();
+  const erpEnabled = overrides.client !== undefined || hasErp;
+  if (!db || !erpEnabled) return idleReconcileResult("disabled");
+
+  const deps: ErpSyncDeps = {
+    db,
+    client: overrides.client ?? selarasClient,
+    pageSize: overrides.pageSize ?? config.stock.syncPageSize,
+    intervalMs: overrides.intervalMs ?? config.stock.syncIntervalMs,
+    log: overrides.log ?? defaultSyncLogger,
+  };
+
+  const run = executeReconcile(deps).finally(() => {
+    inFlight = null;
+  });
+  inFlight = run;
+  return run;
+}
+
+async function executeReconcile(deps: ErpSyncDeps): Promise<ReconcileRunResult> {
+  const { db, client, pageSize, intervalMs, log } = deps;
+  const startedAt = Date.now();
+  const tables: ReconcileTableResult[] = [];
+  const minRatio = config.stock.reconcileMinRatio;
+
+  let locked = false;
+  try {
+    locked = await acquireLock(db, intervalMs);
+  } catch (err) {
+    log.error(`reconcile: could not read the run guard — ${redactSecrets(err)}`);
+    return idleReconcileResult("locked");
+  }
+  if (!locked) {
+    log.info("reconcile: a sync run holds the guard — skipping this sweep");
+    return idleReconcileResult("locked");
+  }
+
+  try {
+    for (const table of SYNC_TABLES) {
+      try {
+        tables.push(await reconcileTable(db, client, table, pageSize, minRatio, log));
+      } catch (err) {
+        // Anything the sweep itself threw. The purge is one transaction, so it
+        // rolled back whole: the mirror is untouched, which is the safe outcome.
+        const message = redactSecrets(err);
+        tables.push({
+          table,
+          ok: false,
+          mirrored: 0,
+          erpKeys: 0,
+          removed: 0,
+          pages: 0,
+          aborted: "fetch_failed",
+          error: message,
+          projected: true,
+        });
+        try {
+          await markReconcileError(db, table, `reconcile aborted — ${message}`);
+        } catch {
+          /* the DB is the thing that is broken; nothing more to do here */
+        }
+        log.error(`reconcile ${table}: aborted, mirror untouched — ${message}`);
+      }
+    }
+  } finally {
+    try {
+      await releaseLock(db);
+    } catch (err) {
+      log.error(`reconcile: could not release the run guard — ${redactSecrets(err)}`);
+    }
+  }
+
+  const durationMs = Date.now() - startedAt;
+  const removed = tables.reduce((n, t) => n + t.removed, 0);
+  const aborted = tables.filter((t) => !t.ok).map((t) => `${t.table} (${t.aborted ?? "error"})`);
+  if (aborted.length === 0) {
+    log.info(`reconcile ok — removed ${removed} stale mirror row(s) across ${tables.length} tables in ${durationMs}ms`);
+  } else {
+    log.warn(
+      `reconcile finished with ${aborted.length} table(s) left untouched: ${aborted.join(", ")} — ` +
+        `removed ${removed} row(s) elsewhere in ${durationMs}ms`,
+    );
+  }
+  return { started: true, tables, durationMs };
 }
 
 async function executeRun(deps: ErpSyncDeps): Promise<SyncRunResult> {
@@ -626,6 +1149,20 @@ async function executeRun(deps: ErpSyncDeps): Promise<SyncRunResult> {
   } else {
     log.warn(`run finished with errors on ${failed.join(", ")} — ${rows} rows in ${durationMs}ms`);
   }
+
+  // ── The two post-run checks. Both are WARN-ONLY and both are wrapped: a
+  // diagnostic that can abort a sync run is worse than no diagnostic (§7.7).
+  try {
+    await evaluateStaleAlert(db, intervalMs, log);
+  } catch (err) {
+    log.error(`stale-alert check failed (non-fatal) — ${redactSecrets(err)}`);
+  }
+  try {
+    await checkCommitmentGateAfterSync(db, log);
+  } catch (err) {
+    log.error(`commitment-gate check failed (non-fatal) — ${redactSecrets(err)}`);
+  }
+
   return { started: true, tables, durationMs };
 }
 
@@ -660,4 +1197,22 @@ export function startErpSync(): void {
   tick();
   setInterval(tick, intervalMs);
   console.info(`[erp-sync] started — every ${Math.round(intervalMs / 1000)}s, page size ${config.stock.syncPageSize}`);
+
+  // The reconciliation sweep rides the same boot hook so `index.ts` stays a
+  // one-line registration. Its own, much slower cadence — it pulls a FULL key
+  // set per table, which has no business happening every three minutes — and
+  // deliberately NOT run immediately at boot: the first incremental pull should
+  // land before anything is allowed to decide a row is absent.
+  const reconcileMs = config.stock.reconcileIntervalMs;
+  const reconcileTick = (): void => {
+    void reconcileErpMirror().catch((err) => {
+      console.error(`[erp-sync] reconcile tick error: ${redactSecrets(err)}`);
+    });
+  };
+  setInterval(reconcileTick, reconcileMs);
+  console.info(
+    `[erp-sync] mirror reconciliation started — every ${Math.round(reconcileMs / 60_000)} min, ` +
+      `abort floor ${config.stock.reconcileMinRatio} of mirrored rows (STOCK_RECONCILE_MIN_RATIO). ` +
+      "An incremental updated_at cursor cannot observe a DELETE; this sweep is how one is noticed.",
+  );
 }

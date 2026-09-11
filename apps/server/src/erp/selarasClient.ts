@@ -689,6 +689,38 @@ const ADAPTERS: { [K in SelarasTable]: (raw: unknown) => SelarasRowByTable[K] | 
   live_fg: adaptLiveFgRow,
 };
 
+// ── Primary keys, for the reconciliation sweep (PRD §10, deleted-line handling) ─
+
+/**
+ * The ERP field the sweep asks for as a projection, per table. This is the
+ * column `migrateErpStock.ts` made the mirror's primary key, so a key set pulled
+ * with it is directly comparable to `select <pk> from <mirror table>`.
+ */
+export const SELARAS_KEY_FIELDS: Record<SelarasTable, string> = {
+  so_header: "id",
+  so_line: "id",
+  live_fg: "sn_fg",
+};
+
+/**
+ * The primary key of a RAW row, read through exactly the same tolerant `pick()`
+ * name lists the adapters use — because a key set that spelled `snFg` differently
+ * from `adaptLiveFgRow()` would mark live rows as deleted and purge them. The
+ * two must agree by construction, so they share the probe list literally.
+ */
+export function extractRowKey(table: SelarasTable, raw: unknown): string | null {
+  const row = rowMap(raw);
+  if (!row) return null;
+  switch (table) {
+    case "so_header":
+      return asText(pick(row, "id", "so_id", "nid", "id_so", "soid"));
+    case "so_line":
+      return asText(pick(row, "id", "detail_id", "nid", "id_detail", "so_detail_id"));
+    case "live_fg":
+      return asText(pick(row, "sn_fg", "snFg", "serial", "serial_number", "id"));
+  }
+}
+
 // ── HTTP ─────────────────────────────────────────────────────────────────────
 
 const MAX_BODY_BYTES = 64 * 1024 * 1024; // a 1,000-row page of wide rows, with room
@@ -745,6 +777,26 @@ export function buildPageUrl(table: SelarasTable, opts: { since?: Date | null; p
   const url = new URL(`${base}/${SELARAS_ENDPOINTS[table]}`);
   if (opts.since) url.searchParams.set("updated_at__gte", opts.since.toISOString());
   url.searchParams.set("order_by", "updated_at");
+  url.searchParams.set("order_dir", "asc");
+  url.searchParams.set("limit", String(opts.limit));
+  url.searchParams.set("page", String(opts.page));
+  return url.toString();
+}
+
+/**
+ * The reconciliation sweep's URL: the FULL current key set, so no cursor, and a
+ * `fields=<pk>` projection hint so the ERP can answer cheaply.
+ *
+ * **We do not know whether Selaras honours `fields`** (HANDOVER §2 — no recorded
+ * response body exists). It is the most common convention, it is a harmless
+ * unknown query param if unsupported, and `fetchKeyPage()` reports which of the
+ * two actually happened so the log says it plainly rather than pretending.
+ */
+export function buildKeyPageUrl(table: SelarasTable, opts: { page: number; limit: number }): string {
+  const base = config.selarasBaseUrl.replace(/\/+$/, "");
+  const url = new URL(`${base}/${SELARAS_ENDPOINTS[table]}`);
+  url.searchParams.set("fields", SELARAS_KEY_FIELDS[table]);
+  url.searchParams.set("order_by", SELARAS_KEY_FIELDS[table]);
   url.searchParams.set("order_dir", "asc");
   url.searchParams.set("limit", String(opts.limit));
   url.searchParams.set("page", String(opts.page));
@@ -910,9 +962,93 @@ export async function fetchPage<K extends SelarasTable>(
   return { ok: false, ...last };
 }
 
+// ── Key listing, for the reconciliation sweep ────────────────────────────────
+
+export interface SelarasKeyPage {
+  /** Primary keys on this page, in ERP order, unkeyable rows already dropped. */
+  keys: string[];
+  /** Rows the ERP returned before key extraction — `keys.length` may be smaller. */
+  rawCount: number;
+  /** Rows that carried no readable primary key. Counted, never guessed at. */
+  dropped: number;
+  page: number;
+  totalPages: number | null;
+  /**
+   * True when every returned row carried ONLY the requested key field — i.e. the
+   * `fields=` projection was actually honoured. False means the ERP ignored it
+   * and sent whole rows: still correct, just expensive, and the worker says so.
+   */
+  projected: boolean;
+}
+
+export type SelarasKeyResult =
+  | { ok: true; page: SelarasKeyPage }
+  | { ok: false; error: string; status: number | null; retryable: boolean };
+
+/**
+ * One page of the FULL current key set for a table. Same transport posture as
+ * `fetchPage()` (one retry on 5xx/network, none on 4xx, redaction at the
+ * boundary, resolves rather than rejects) — it is deliberately the same code
+ * path with a different projection, not a second HTTP client.
+ */
+export async function fetchKeyPage(
+  table: SelarasTable,
+  opts: { page: number; limit: number; dispatcher?: Dispatcher; retryDelayMs?: number },
+): Promise<SelarasKeyResult> {
+  const url = buildKeyPageUrl(table, opts);
+  const retryDelayMs = opts.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
+  let last: { error: string; status: number | null; retryable: boolean } = {
+    error: "no attempt made",
+    status: null,
+    retryable: false,
+  };
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (attempt > 0) await sleep(retryDelayMs * attempt);
+    try {
+      const res = await requestOnce(url, config.selarasTimeoutMs, opts.dispatcher);
+      if (res.status >= 500) {
+        last = { error: `HTTP ${res.status} from ERP`, status: res.status, retryable: true };
+        continue;
+      }
+      if (res.status >= 400) {
+        return { ok: false, error: `HTTP ${res.status} from ERP`, status: res.status, retryable: false };
+      }
+
+      const env = readEnvelope(res.body, opts.limit);
+      const keys: string[] = [];
+      let dropped = 0;
+      let projected = env.rows.length > 0;
+      for (const raw of env.rows) {
+        // A projected row carries one field; anything wider means `fields=` was
+        // ignored. Checked before extraction so a dropped row still counts.
+        if (!isRecord(raw) || Object.keys(raw).length !== 1) projected = false;
+        const key = extractRowKey(table, raw);
+        if (key === null) dropped += 1;
+        else keys.push(key);
+      }
+      return {
+        ok: true,
+        page: { keys, rawCount: env.rows.length, dropped, page: opts.page, totalPages: env.totalPages, projected },
+      };
+    } catch (err) {
+      const message = redactSecrets(err);
+      const retryable = !(err instanceof BodyNotJsonError);
+      last = { error: message, status: null, retryable };
+      if (!retryable) break;
+    }
+  }
+
+  return { ok: false, ...last };
+}
+
 /** The surface the sync worker depends on — lets a test inject a fake client. */
 export interface SelarasClient {
   fetchPage<K extends SelarasTable>(table: K, opts: FetchPageOptions): Promise<SelarasResult<SelarasRowByTable[K]>>;
+  fetchKeyPage(
+    table: SelarasTable,
+    opts: { page: number; limit: number; dispatcher?: Dispatcher; retryDelayMs?: number },
+  ): Promise<SelarasKeyResult>;
 }
 
-export const selarasClient: SelarasClient = { fetchPage };
+export const selarasClient: SelarasClient = { fetchPage, fetchKeyPage };

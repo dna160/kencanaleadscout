@@ -21,11 +21,12 @@
 | G7 | Sync idempotency + cursor discipline (ST-R6/R7) | `test/erpSync.test.ts` (WP-2) | ✅ |
 | G8 | Route-level behaviour (§4, AMENDMENTS 3–9) | **no test file exists** — see §7 X3 | ⛔ **gap** |
 | G9 | ST-R5.2 fill/overlap validation against live ERP | §3 runbook — **cannot run yet** | ⛔ blocked on credentials |
-| G10 | ST-R16 shadow cycle reconciled and signed off | §2 | ⛔ not started |
-| G11 | Cold-start calibration pass with PPIC | §4 | ⛔ not started |
+| G10 | ~~ST-R16 shadow cycle reconciled and signed off~~ | §2 | 🚫 **NOT BUILT — cannot be run as specified.** Booking writes are retired and `STOCK_ATP_SHADOW` is inert, so there is no parallel path to run alongside. **Replaced by G9 + G11 (§2.0.2), which are now the go-live gate.** Costed in §2.6; recommendation is not to build it. |
+| G11 | Cold-start calibration pass with PPIC | §4, procedure in §2.0.2 | ⛔ not started — **now gate-blocking**, since it absorbs G10's role |
 
-**G9–G11 are sequencing, not defects: they need credentials and a business cycle.
-G8 is a real hole and the only one that can be closed today** — see §7 X3.
+**G9 and G11 are sequencing, not defects: they need credentials and a business
+cycle. G10 is a defect in the plan, not in the sequencing — see §2.0.1. G8 is a
+real hole and the only one that can be closed today** — see §7 X3.
 
 ---
 
@@ -59,13 +60,123 @@ the code implements it.** Every amendment needs a test that fails before it land
 
 ---
 
-## 2. ST-R16 — the shadow cycle
+## 2. ST-R16 — the shadow cycle was NOT BUILT, and cannot be run as specified
 
-`STOCK_ATP_SHADOW` exists so 1.0 and 2.0 can be read side by side for one full
-business cycle before `/stock` flips. Shadow mode computes ATP and records it;
-**1.0 booking numbers stay authoritative on the sales page** for the duration.
+> **Status: not implemented. Not a scheduling slip — the design is unbuildable
+> against the code that shipped.** Do not plan the go-live around it. The gate
+> that replaces it is §2.0.2, and it is a real gate, not a downgrade dressed up
+> as one.
 
-### 2.1 What is compared
+### 2.0.1 Why the side-by-side cycle cannot be run
+
+ST-R16 specifies running 1.0 and 2.0 **in parallel** for one business cycle:
+compute ATP from SO **while bookings still run**, compare the two numbers daily,
+reconcile, then flip. That requires two live systems. Only one exists.
+
+1. **The booking write path is retired, not gated.** `POST /api/stock/bookings`
+   and its four siblings answer **410 Gone** unconditionally (`routes/stock.ts`,
+   CONTRACTS §4.3); `POST /api/stock/uploads` likewise. No flag re-opens them —
+   the handlers contain no branch, only the tombstone.
+2. **`stock.html` has no booking affordance left in the DOM** — no rep picker,
+   no qty field, no book modal (§8 checks this deliberately). There is no surface
+   on which a 1.0 number could be authoritative, and no way for a rep to create
+   the booking that would make a 1.0 number move.
+3. **`STOCK_ATP_SHADOW` is inert** — defined in `config.ts`, read by nothing
+   (§5.1.1). The one lever the plan named does not exist in executable form.
+
+So the 1.0 side of the comparison would be a **frozen Excel snapshot with a
+frozen booking ledger**, aging by one day per day of the cycle. Comparing 2.0
+against it does not measure 2.0; after five business days it mostly measures how
+stale the snapshot has become. §2.4 already conceded the two numbers "are not
+expected to be equal" — with writes retired, the gap is *guaranteed* to widen
+monotonically for reasons that have nothing to do with ATP correctness. That is
+not a reconciliation. It is a decaying baseline wearing one.
+
+**The §2.1–2.5 material below is retained as a historical record of the intended
+design and as the starting point if shadow mode is ever built for real (§2.6).
+It is not a runbook. Nothing in it is executable today.**
+
+### 2.0.2 What replaces it as the go-live gate
+
+Two things that **do** exist and **can** be run, and they must both be signed off
+before `/stock` is trusted:
+
+| # | Gate | Where | What it proves |
+|---|---|---|---|
+| **A** | **ST-R5.2 validation runbook** — Q1 fill rate, Q2 unmatched tail, Q3 exceptions-tray volume, Q4 segment ablation, Q5 key-drift sanity | **§3** | That commitments actually *find* their stock. A wrong SKU key is the failure mode that produces confidently wrong ATP, and Q1/Q3 are its detector. Run it against a **fully backfilled** mirror, not a partial pull. Q1 or Q3 red ⇒ do not ship. |
+| **B** | **Cold-start calibration pass against PPIC's expectations** — §4 step 3, widened | **§4** | That the numbers are *plausible to the people who know the stock*. This is the only check of ATP against reality that does not require a second system. |
+
+**Gate B, stated precisely** (the §4 wording was one line; it is now load-bearing,
+so it gets a procedure):
+
+1. Take the **top 30 SKUs by on-hand** and the **top 30 by live commitment** —
+   two lists, because the failure modes differ: the first catches a broken
+   `erp_live_fg` pull, the second a broken commitment join.
+2. For each, PPIC states **from their own knowledge, before seeing the screen**,
+   roughly how much of it they believe is free to sell. Then read them the ATP.
+   Asking first is the whole method — a number shown first anchors the answer and
+   the pass measures nothing.
+3. Record `plausible` / `not plausible` **per SKU, in writing, with PPIC's name
+   against it**. Anything `not plausible` is root-caused before go-live; there is
+   no accept-and-log class here, because unlike §2.4 there is no second system to
+   attribute the gap to.
+4. Sanity-check the two headline aggregates against PRD §5A's verified figures:
+   the Black Galaxy worked example (4,168 − 319 = 3,849, 1,810 quarantined) and
+   the ~95% stale rate across the open set. A wildly different stale proportion
+   means the liveness window or the approval enum (OQ-1) is mis-tuned, not that
+   the ERP changed.
+5. **Tune `STOCK_STALE_WINDOW_DAYS` once**, per §4 step 4, and record the value
+   and the reason. Repeated tuning destroys the trust the stale queue depends on.
+
+**What this gate does NOT prove, and you must say so out loud when you sign it:**
+it is a plausibility check by one team against their own recollection, not a
+measured reconciliation against an independent system. It catches
+order-of-magnitude errors, a dead join, a mis-tuned window, a truncated mirror.
+It will **not** catch a systematic few-percent bias. ST-R16 was specified
+precisely to catch that class, and with it unbuilt, **that class of error ships
+undetected.** Run §6.4 (negative-ATP breadth) and §6.3 (exceptions volume) from
+day one with a tight baseline; they are the production substitute, and they are
+lagging indicators, not a gate.
+
+The closest thing to a true A/B remains available at **zero build cost** and
+should be used on day one: the §3 Q1 `qty_fill_pct` and §6.2 `key_drift` queries
+run against production and answer "is the join sound?" — which is the question
+the shadow cycle was mostly going to answer anyway.
+
+### 2.6 What we would have to build to get real shadow mode
+
+Costed, so the option is a decision rather than a thing nobody wrote down. Only
+worth it if a stakeholder needs a *measured* pre-flip reconciliation rather than
+gate B's plausibility pass.
+
+| # | Work | Rough size | Note |
+|---|---|---|---|
+| 1 | Un-retire the 1.0 write path behind the flag: `POST /bookings` ×5 and `POST /uploads` serve their 1.0 handlers when `config.stock.atpShadow`, and the 410 otherwise. | ~1 day | The handlers were **gutted, not deleted** — §5.2, the git history has them. This is the smallest piece, and the only one that is mostly recovery rather than new code. |
+| 2 | Restore the booking UI in `stock.html` behind the same flag: rep picker, qty field, book modal, and the 1.0 `available` column rendered **alongside** ATP. | ~2–3 days | The largest and most objectionable piece: it re-introduces, into a page that is now cleanly read-only, the exact affordances §8 exists to confirm are gone. It also needs `/summary` to serve both numbers, which means the 1.0 shape back in a contract that deliberately replaced it (ST-R15). |
+| 3 | Actually read the flag: branch in `routes/stock-atp.ts` (or ahead of it) on which number is authoritative, and surface "mode bayangan" on both pages so nobody mistakes a shadow number for a real one. | ~0.5 day | Cheap in code, but it puts a mode switch into the one path CONTRACTS §0 insists has exactly one behaviour. Every route test then needs both modes. |
+| 4 | The `shadow_sku_map` ops artifact and the daily reconciliation job (§2.2–2.3), plus PPIC's hand-mapping of the top 100 SKUs. | ~1 day build + **~1 week of PPIC's time** | The PPIC week is the real cost and it is not ours to spend. §2.2 already flags there is no automatic join between 1.0 `stock_items` and 2.0 `kode_barang`. |
+| 5 | Run it: five consecutive business days, daily reconciliation, PPIC review of the top 20 (§2.4). | **≥ 1 business week, wall clock** | Cannot be compressed — §2.4 is right that one day cannot distinguish "the ERP is right" from "the ERP was mid-posting". |
+
+**Total: roughly one engineer-week of build, a week of PPIC's time, and a further
+week of elapsed cycle before anything can flip — to buy a reconciliation against
+a snapshot that is itself aging.** The recommendation is **do not build it.**
+Take gate §2.0.2, ship behind a fast L0 revert (§5.1) with the re-upload cost
+understood in advance, and spend the week on the G8 route-test gap instead, which
+is a real uncovered risk (§7 X3) rather than a hedge against a known-stale
+baseline.
+
+**If it is built anyway, item 3 is non-negotiable and must land first:** a flag
+that nothing reads is how this section came to be wrong in the first place.
+
+---
+
+## 2.1–2.5 · HISTORICAL — the intended shadow design (not executable)
+
+> Retained per §2.0.1. These sections describe a comparison that cannot be run
+> against the shipped code. Do not follow them as a runbook; use them as the
+> starting design if §2.6 is ever funded.
+
+### 2.1 What was to be compared
 
 Per SKU, once a day at 17:00 local (after the day's SO entry has settled):
 
@@ -187,9 +298,14 @@ distinguish "the ERP is right" from "the ERP was mid-posting".
 
 ### 2.5 Flipping
 
-`STOCK_ATP_SHADOW=false`, redeploy, `/stock` serves ATP. Drop `shadow_sku_map`
-and the temporary views. Keep the reconciliation output — it is the audit trail
-for the decision.
+> **Historical.** As shipped there is nothing to flip: `/stock` serves ATP from
+> the moment 2.0 deploys, and `STOCK_ATP_SHADOW` is inert (§5.1.1). The go-live
+> decision is the §2.0.2 sign-off, and the deploy itself is the flip. Reversing
+> it is §5.1 L0 — a code revert, not a flag.
+
+*As designed:* `STOCK_ATP_SHADOW=false`, redeploy, `/stock` serves ATP. Drop
+`shadow_sku_map` and the temporary views. Keep the reconciliation output — it is
+the audit trail for the decision.
 
 ---
 
@@ -372,10 +488,15 @@ system has no history to reconstruct.
    ~1.5k FG rows and ~137k SO lines. Confirm `erp_sync_state.rows_synced` and
    `last_ok_at` for all three tables.
 2. **Run §3 Q1–Q5.** Do not proceed past a Q1/Q3 red.
-3. **One calibration pass.** Take the top 30 SKUs by on-hand and by live
-   commitment. PPIC reads the ATP figure and says *plausible / not plausible* from
-   their own knowledge. This is a gut check, not an audit — it is looking for an
-   order-of-magnitude error, not a unit discrepancy.
+3. **One calibration pass — now a release gate, not a gut check.** Take the top
+   30 SKUs by on-hand and the top 30 by live commitment. PPIC states their own
+   expectation **first**, then reads the ATP figure, and says *plausible / not
+   plausible*. **Follow the full procedure in §2.0.2 gate B and record the result
+   per SKU with PPIC's name against it** — with ST-R16 unbuilt (§2.0.1), this is
+   the only check of ATP against reality before go-live, so it carries weight it
+   was not originally given. It still will not catch a systematic few-percent
+   bias; §2.0.2 says so explicitly and names §6.3/§6.4 as the production
+   substitute.
 4. **Tune the window, once.** If calibration shows systematic over-quarantining
    (PPIC insists lines older than 60 days are real), widen
    `STOCK_STALE_WINDOW_DAYS` and re-check. Views rebuild on boot; no migration.
@@ -391,19 +512,56 @@ system has no history to reconstruct.
 
 Two independent axes. **Roll back code freely; do not roll back schema.**
 
-### 5.1 The ladder — cheapest first
+### 5.1 The ladder
 
-| Level | Action | Time | Reverses |
+> **Read the "Actually reverses" column before picking a rung.** The rungs are
+> **not** ordered cheapest-first, because the cheapest lever does not reverse the
+> flip. Pick by symptom, not by price.
+
+| Level | Action | Time to a working system | Actually reverses |
 |---|---|---|---|
-| **L0** | `STOCK_ATP_SHADOW=true`, redeploy | ~1 min | The flip. 1.0 numbers authoritative again, 2.0 keeps computing silently. |
-| **L0b** | Unset `SELARAS_BASE_URL`, redeploy | ~1 min | The ERP link. `hasErp=false` ⇒ worker never starts, every surface renders "ERP tidak terhubung", **the app still boots and serves** (§7.7). Mirror data is retained and readable. |
-| **L1** | Revert the deploy to the previous commit/image | ~5 min | All 2.0 code: routes, pages, worker. Restores 1.0 bookings. |
+| ~~**L−1**~~ | ~~`STOCK_ATP_SHADOW=true`, redeploy~~ | — | **NOT IMPLEMENTED — the flag is inert. Nothing happens. Do not reach for this.** See §5.1.1. |
+| **L0** | Revert the deploy to the previous commit/image | **~5 min to deploy, but not usable until PPIC re-uploads the Excel — realistically the rest of the working day** | All 2.0 code: routes, pages, worker. Restores 1.0 bookings. §5.2. |
+| **L1** | Unset `SELARAS_BASE_URL`, redeploy | ~1 min | **Containment, not a rollback.** `hasErp=false` ⇒ the worker never starts and every surface renders "ERP tidak terhubung"; **the app still boots and serves** (§7.7). The mirror is retained, readable and **frozen** — `/stock` keeps serving ATP off the last-synced numbers behind the stale banner. Use it when the *sync* or the *ERP* is the problem. It does **not** bring 1.0 back and it does **not** help when ATP itself is wrong. |
 | **L2** | Drop the 2.0 schema | ~10 min + data loss | Last resort. See §5.3. |
 
-**L0/L0b are the answer in almost every incident.** Reach for L1 only for a
-crash-looping or data-corrupting defect. L2 should essentially never happen.
+**There is no one-minute rung that reverses the flip.** That is the single most
+important operational fact on this page, and the previous version of this table
+said the opposite. L0 (code revert) is the real first rung for any defect in the
+numbers, and it carries a real cost — see §5.2. L1 is the right first move only
+when the symptom is a failing sync, a hammered ERP, or bad mirror data, because
+it stops the bleeding in a minute without touching the deploy. L2 should
+essentially never happen.
 
-### 5.2 Code rollback (L1)
+#### 5.1.1 Why `STOCK_ATP_SHADOW` is not a rollback lever
+
+`STOCK_ATP_SHADOW` is **defined and never read.** It exists at
+`apps/server/src/config.ts` (`config.stock.atpShadow`) and **no other file in the
+repository consults it** — verifiable in one command:
+
+```bash
+grep -rn "atpShadow\|STOCK_ATP_SHADOW" apps/server/src packages
+# → exactly one hit: the definition in config.ts
+```
+
+Setting it to `true` and redeploying changes **nothing**:
+
+- `/stock` still serves ATP — `routes/stock-atp.ts` has no branch on the flag.
+- The booking write endpoints still answer **410 Gone** (`routes/stock.ts`);
+  there is no code path left that accepts a booking.
+- `stock.html` has **no booking UI in the DOM at all** — no rep picker, no qty
+  field, no book modal. There is nothing for 1.0 numbers to be displayed in.
+
+So the flag cannot make "1.0 numbers authoritative again", because 1.0's write
+path and 1.0's UI are both gone. An incident runbook whose first step is a no-op
+is worse than no runbook: it costs you the minutes you spend believing it worked,
+and it costs them at the exact moment they are most expensive.
+
+**Decision for whoever owns this next:** either delete the config entry so it
+cannot mislead, or build shadow mode for real (§2.6 costs it). Leaving a defined
+flag that nothing reads is the one option that should not survive review.
+
+### 5.2 Code rollback (L0)
 
 Reverting to the pre-Stock-2.0 commit restores `routes/stock.ts` in full, and
 with it the 1.0 booking and upload write paths.
@@ -417,7 +575,11 @@ with it the 1.0 booking and upload write paths.
   no gap to reconcile and no reverse migration.
 - **The Excel snapshot will be stale** by however long 2.0 ran. Before
   re-enabling sales bookings, PPIC must re-upload a current sheet. **This is the
-  real cost of L1 and the reason L0 exists.**
+  real cost of L0, and it dominates its time profile: the deploy takes five
+  minutes, the re-upload takes as long as it takes PPIC to produce a current
+  sheet.** The previous version of this document said a one-minute flag flip
+  existed to avoid this cost. It does not (§5.1.1). Plan the rollback around the
+  re-upload, and tell PPIC first, not after.
 - **2.0 data written during the window is retained, not lost:**
   `stock_adjustments` and `stock_commitment_overrides` keep every row with its
   actor and timestamp. The reverted binary simply does not read them. Rolling
@@ -486,8 +648,12 @@ join in both directions.
 ## 6. Monitoring
 
 Everything here reads `erp_sync_state` or the mirror. Baseline each threshold
-during the shadow cycle (§2) — an absolute number chosen before seeing real data
-is a guess.
+during the **cold-start calibration pass (§4 / §2.0.2 gate B)** — an absolute
+number chosen before seeing real data is a guess. (The original text said "during
+the shadow cycle"; there is no shadow cycle — §2.0.1. With ST-R16 unbuilt these
+thresholds are load-bearing rather than supplementary: §6.3 and §6.4 are the only
+things watching for the systematic bias the shadow cycle was meant to catch, so
+baseline them on day one and treat a drift as a real signal.)
 
 ### 6.1 Sync liveness (ST-R7) — page
 
@@ -629,3 +795,4 @@ Things no automated test in this repo can cover.
 |---|---|---|
 | 2026-09-11 | First draft: shadow plan, ST-R5.2 runbook, cold start, rollback, monitoring, exclusions. Release blocker raised against WP-1 (AMENDMENT 1 unimplemented). | WP-7 |
 | 2026-09-11 | WP-1 landed the AMENDMENT 1 fix; §1 rewritten as a resolved finding. `erpSync.test.ts` landed, closing X4. AMENDMENTS 3–9 folded into X3 and the §8 checklist. Suite green at 196 tests. | WP-7 |
+| 2026-09-11 | **Traceability audit — two rollback/shadow claims in this document were false and are corrected.** (1) `STOCK_ATP_SHADOW` is defined in `config.ts` and read by no code: §5.1's L0 rung was a **no-op sold as the answer in almost every incident**. L0 is now the code revert with its real time profile (deploy is minutes; usability waits on PPIC's Excel re-upload), `SELARAS_BASE_URL` is demoted to L1 and relabelled containment-not-rollback, and §5.1.1 documents the inert flag with the `grep` that proves it. (2) ST-R16's side-by-side cycle **was never built and cannot be run as specified** — booking writes answer 410 unconditionally and the booking UI is out of the DOM, so there is no parallel path; §2 now says so, §2.0.2 promotes the ST-R5.2 runbook + a hardened PPIC calibration pass to the go-live gate, §2.6 costs real shadow mode (~1 engineer-week + ~1 PPIC-week + ≥1 week elapsed; recommendation: do not build), and G10 is marked NOT BUILT. §2.1–2.5 retained as historical design. | Traceability audit |

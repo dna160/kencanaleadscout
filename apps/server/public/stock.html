@@ -124,13 +124,17 @@
           color:var(--offline-ink);border-radius:12px;padding:12px 14px;
           font-size:13px;line-height:1.45;display:flex;gap:10px;
           align-items:flex-start;margin-bottom:12px}
-  /* filter chip row + totals strip — same class names on both pages */
+  /* ── filter chip row + totals strip — CANONICAL, byte-identical on both pages
+        (UX-SPEC §1.3; closes the CONTRACTS "Open" divergence note). The
+        aria-selected arm is inert here — this page's chips are aria-pressed
+        toggles — but it is carried so the two blocks cannot drift again. ─── */
   .fltchips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
   .fchip{border:1px solid var(--line);background:var(--card);color:var(--ink-2);
          border-radius:999px;padding:0 12px;min-height:var(--tap);font:inherit;
          font-size:12px;font-weight:700;cursor:pointer;display:inline-flex;
          align-items:center;gap:6px}
-  .fchip[aria-pressed="true"]{background:var(--ink);color:var(--card);border-color:var(--ink)}
+  .fchip[aria-pressed="true"],
+  .fchip[aria-selected="true"]{background:var(--ink);color:var(--card);border-color:var(--ink)}
   .fchip:disabled{opacity:.55;cursor:default}
   .fchip .n{font-variant-numeric:tabular-nums;font-weight:800}
   /* skeleton */
@@ -215,7 +219,9 @@
         <option value="kode">Urut: Kode Barang</option>
         <option value="atp_desc">Urut: Bisa dijual terbanyak</option>
         <option value="atp_asc">Urut: Bisa dijual paling sedikit</option>
-        <option value="eta">Urut: ETA terdekat</option>
+        <!-- nearest_eta is the nearest OUTBOUND commitment date, never incoming
+             supply — the label must not read as a restock date on any row. -->
+        <option value="eta">Urut: Pengiriman pesanan terdekat</option>
       </select>
       <label class="chkline"><input type="checkbox" id="hz" /> Sembunyikan yang kosong</label>
     </div>
@@ -619,7 +625,16 @@ function atpBlock(i,flash){
   // states; tersedia and kosong are noise there and the chip already says it.
   let note="";
   if(i.state==="habis"||i.state==="perlu_produksi"){
-    const eta=(i.state==="habis"&&i.nearest_eta)?` ETA terdekat ${esc(wibShort(i.nearest_eta))}.`:"";
+    // `nearest_eta` is the nearest OUTBOUND commitment date — the soonest a
+    // Sales Order takes this stock AWAY. On a `habis` row ("stock exists, all
+    // of it promised") the old label "ETA terdekat" read as incoming restock,
+    // which is the opposite, and a rep would quote it as a restock date.
+    // CONTRACTS "Accepted limits" flagged exactly this. The wording says
+    // "pengiriman pesanan" (an order going out) and spells out "stok keluar";
+    // PRD §9 reserves the incoming-supply vocabulary ("+ incoming") for later,
+    // so nothing here may hint at stock arriving.
+    const eta=(i.state==="habis"&&i.nearest_eta)
+      ? ` Pengiriman pesanan terdekat ${esc(wibShort(i.nearest_eta))} (stok keluar).`:"";
     note=`<div class="atp-note">${esc(stateNote(i))}${eta}</div>`;
   }
   const m2=i.atp_m2!=null?`<div class="atp-m2">≈ ${num(i.atp_m2)} m²</div>`:"";
@@ -705,10 +720,27 @@ async function openDetail(skuKey){
   $("#dtClose").addEventListener("click",closeDetail);
 }
 
+// Identity is deliberately NOT rendered on this page. CONTRACTS "Accepted
+// limits": *customer names are PPIC-only; withholding is the reversible
+// default*. We shipped the irreversible one, so this restores the stated
+// default. It matters because there is **no authentication anywhere in this
+// app** — the split between /stock and /stock-ppic is URL-only and the actor is
+// a name the user types into localStorage — so anything rendered here is
+// readable by anyone who loads the URL, not just by a rep.
+//
+// `so_number` is withheld for the same reason and not merely the names: it is a
+// direct cross-reference back into the ERP to the customer this column exists to
+// hide, so printing it would leave the withholding as theatre. What a rep needs
+// to quote — how much is committed, when it ships, whether it is unscheduled —
+// is all still here.
+//
+// This is a COMMERCIAL decision, not a UI one. To reverse it the product owner
+// restores the three cells in this one function; /stock-ppic already renders
+// customer and rep and is untouched (PPIC needs them to triage).
 function commitTable(list,emptyMsg,withAge){
   if(list.length===0) return `<div class="empty">${esc(emptyMsg)}</div>`;
   return `<div style="overflow-x:auto"><table>
-    <thead><tr><th>SO</th><th>Customer</th><th>Sales</th><th>ETA</th><th style="text-align:right">Sisa Pesanan</th></tr></thead>
+    <thead><tr><th>Pesanan</th><th>Kirim ke Pelanggan</th><th style="text-align:right">Sisa Pesanan</th></tr></thead>
     <tbody>${list.map(r=>{
       const eta=pick(r,"estimate_delivery","eta");
       const d=toDate(eta);
@@ -720,11 +752,16 @@ function commitTable(list,emptyMsg,withAge){
           age=` <span class="chip umur${tier}">${num(days)} hari</span>`;
         }
       }
+      // AMENDMENT 1: an undated line is LIVE and reserving. Saying so is the
+      // rep-facing half of that ruling — a bare em dash reads as "no date yet,
+      // probably soon", which is the opposite of the truth.
+      const undated = r.undated===true || !eta;
+      const etaCell = undated
+        ? `<span class="chip st-habis">Belum dijadwalkan</span>`
+        : `${esc(wibShort(eta))}${age}`;
       return `<tr>
-        <td>${esc(pick(r,"so_number","no_so")||"—")}</td>
-        <td>${esc(pick(r,"customer_name_text","customer_name","customer")||"—")}</td>
-        <td>${esc(pick(r,"sales_name_text","sales_name")||"—")}</td>
-        <td>${esc(wibShort(eta))}${age}</td>
+        <td>Pesanan pelanggan</td>
+        <td>${etaCell}</td>
         <td class="sisa">${num(pick(r,"qty_balance","qty"))}</td>
       </tr>`;
     }).join("")}</tbody></table></div>`;
