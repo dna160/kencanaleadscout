@@ -108,6 +108,13 @@ function pageParams(q: { page?: string; limit?: string; offset?: string }): {
   return { page, limit, offset };
 }
 
+/** Query-string booleans arrive as text — `only_do=true` from the PPIC page. */
+function isTruthy(v: unknown): boolean {
+  if (v === true) return true;
+  const s = str(v).toLowerCase();
+  return s === "true" || s === "1" || s === "yes" || s === "on";
+}
+
 /** Free-text `?q=` → an ILIKE needle. Wildcards in user input are escaped. */
 function likeNeedle(raw: string): string {
   return `%${raw.replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
@@ -227,12 +234,24 @@ export interface SkuDetailResponse {
   on_hand_rows: OnHandRow[];
 }
 
+/**
+ * The list envelope, AMENDMENT 8. `rows` is the ratified key; `items` is emitted
+ * beside it as a byte-identical alias because both shipped front-end packages
+ * read it and the duplicate costs one property. New clients read `rows`.
+ *
+ * `total` is the count matching the operator's filters (it drives the pager);
+ * `grand_total` is the same list with the filters removed, so the UI can say
+ * "filtered from 4,158" instead of falling back to a vaguer count line.
+ */
 export interface PagedResponse<T> {
+  rows: T[];
+  /** @deprecated alias of `rows` — kept for the shipped pages. */
+  items: T[];
   total: number;
+  grand_total: number;
   page: number;
   limit: number;
   has_more: boolean;
-  items: T[];
 }
 
 /** Response of POST /stale-commitments/:id/close and /reinstate. */
@@ -338,11 +357,18 @@ function composeName(
  * already ordered against. Only a SKU with neither stock nor demand is `kosong`.
  */
 function deriveState(onHand: number, adjustment: number, atp: number): SkuState {
+  const effectiveOnHand = onHand + adjustment;
   if (atp < 0) return "perlu_produksi";
-  if (onHand + adjustment <= 0) return "kosong";
-  if (atp <= 0 && onHand > 0) return "habis";
-  if (atp > 0) return "tersedia";
-  return "habis";
+  if (effectiveOnHand <= 0) return "kosong";
+  // `habis` tests EFFECTIVE on-hand, not the raw mirror figure. An opname
+  // adjustment is a correction to physical truth — it says the stock really is
+  // there — so `on_hand 0, adjustment +5, committed 5` is stock that exists and
+  // is entirely promised, which is precisely what habis means. Testing raw
+  // `on_hand > 0` here left that case matching no row of the ladder at all.
+  if (atp <= 0) return "habis";
+  // Total by construction: past the two guards above, effective stock is
+  // positive and atp is not negative, so atp is either 0 (habis) or positive.
+  return "tersedia";
 }
 
 /**
@@ -665,31 +691,67 @@ interface CommitQueryOpts {
   q?: string | null;
   minAgeDays?: number | null;
   statusOrder?: string | null;
+  onlyDo?: boolean;
   unmatchedOnly?: boolean;
   sort?: string | null;
   limit?: number;
   offset?: number;
+  /** Skip the unfiltered counts — only the four list endpoints need them. */
+  withTotals?: boolean;
+}
+
+/** Stitch a list of predicates into `where a and b and c`, or nothing at all. */
+function andWhere(db: Sql, parts: readonly ReturnType<Sql>[]) {
+  let out = db``;
+  for (const [i, frag] of parts.entries()) {
+    out = i === 0 ? db`where ${frag}` : db`${out} and ${frag}`;
+  }
+  return out;
 }
 
 /**
  * One paged read of SO lines. `count(*) over ()` rides along so the pager gets a
- * total without a second round trip.
+ * `total` without a second round trip; `grand_total` and `status_facets` need one
+ * more, because AMENDMENT 8 defines them as the UNFILTERED figures ("filtered
+ * from 4,158") and a windowed count cannot produce them.
+ *
+ * Predicates split in two, and the split is the whole point:
+ *   - DEFINITIONAL — what this endpoint *is* (the segment, `unmatchedOnly` for
+ *     /exceptions, a pinned sku or line). These bound `grand_total` too.
+ *   - USER FILTERS — what the operator typed (q, age tier, status, only_do).
+ *     `grand_total` deliberately ignores these, so the UI can say how much the
+ *     operator's own filtering removed.
  */
-async function loadCommitments(db: Sql, o: CommitQueryOpts): Promise<{ rows: CommitLine[]; total: number }> {
-  const where: ReturnType<Sql>[] = [];
-  if (o.skuKey) where.push(db`c.sku_key = ${o.skuKey}`);
-  if (o.soLineId) where.push(db`c.id = ${o.soLineId}`);
-  if (o.statusOrder) where.push(db`c.status_order = ${o.statusOrder}`);
+async function loadCommitments(
+  db: Sql,
+  o: CommitQueryOpts,
+): Promise<{ rows: CommitLine[]; total: number; grandTotal: number; statusFacets: string[] }> {
+  const scope: ReturnType<Sql>[] = [];
+  if (o.skuKey) scope.push(db`c.sku_key = ${o.skuKey}`);
+  if (o.soLineId) scope.push(db`c.id = ${o.soLineId}`);
+  if (o.unmatchedOnly) scope.push(db`fg.sku_key is null`);
+
+  const filters: ReturnType<Sql>[] = [];
+  // AMENDMENT 8 ratified `status`; `statusOrder` is the value either spelling
+  // lands in. ST-R22's `only_do` is the narrower, safety-critical one: the
+  // "delivered but never closed" phantoms, which is what a bulk close is for.
+  if (o.statusOrder) filters.push(db`c.status_order = ${o.statusOrder}`);
+  if (o.onlyDo) filters.push(db`(c.status_order = 'DO' and c.qty_balance > 0)`);
   if (o.minAgeDays != null && o.minAgeDays > 0) {
     // NOT the liveness window (§7.3) — that already ran, inside the view, to
     // decide which rows exist here at all. This is the operator's "only show me
     // lines older than N days" slider on top of the result.
-    where.push(db`c.estimate_delivery <= current_date - ${o.minAgeDays}`);
+    //
+    // The `::int` cast is load-bearing. Without it postgres.js sends the value
+    // untyped, Postgres resolves `current_date - $1` as `date - date -> integer`
+    // rather than `date - integer -> date`, and the comparison blows up with
+    // `operator does not exist: date <= integer` (42883) — a 500, not a
+    // degraded filter. Do not remove it.
+    filters.push(db`c.estimate_delivery <= current_date - ${o.minAgeDays}::int`);
   }
-  if (o.unmatchedOnly) where.push(db`fg.sku_key is null`);
   if (o.q) {
     const needle = likeNeedle(o.q);
-    where.push(db`(
+    filters.push(db`(
       c.sku_key ilike ${needle} escape '\\'
       or coalesce(c.kode_barang, '') ilike ${needle} escape '\\'
       or coalesce(c.warna, '') ilike ${needle} escape '\\'
@@ -699,10 +761,8 @@ async function loadCommitments(db: Sql, o: CommitQueryOpts): Promise<{ rows: Com
     )`);
   }
 
-  let whereSql = db``;
-  for (const [i, frag] of where.entries()) {
-    whereSql = i === 0 ? db`where ${frag}` : db`${whereSql} and ${frag}`;
-  }
+  const whereSql = andWhere(db, [...scope, ...filters]);
+  const scopeSql = andWhere(db, scope);
 
   // Whitelisted sorts only — the value arrives from a query string.
   const sort = str(o.sort) || "eta_asc";
@@ -741,7 +801,30 @@ async function loadCommitments(db: Sql, o: CommitQueryOpts): Promise<{ rows: Com
 
   const first = rows[0];
   const total = first ? numOf(first.total_count) : 0;
-  return { rows: rows.map(shapeCommit), total };
+  const shaped = rows.map(shapeCommit);
+
+  // The unfiltered figures (AMENDMENT 8). Same source and same definitional
+  // scope, none of the operator's filters. Only the list endpoints render them,
+  // so a detail read or a single-line re-read does not pay for the extra query.
+  if (!o.withTotals) return { rows: shaped, total, grandTotal: total, statusFacets: [] };
+
+  const [grand] = await db<{ grand_total: string; status_facets: string[] | null }[]>`
+    select count(*) as grand_total,
+           coalesce(
+             array_agg(distinct c.status_order) filter (where c.status_order is not null),
+             '{}'::text[]
+           ) as status_facets
+    from (${commitSource(db, o.segment)}) c
+    left join (select distinct sku_key from erp_live_fg) fg on fg.sku_key = c.sku_key
+    ${scopeSql}
+  `;
+
+  return {
+    rows: shaped,
+    total,
+    grandTotal: grand ? numOf(grand.grand_total) : 0,
+    statusFacets: (grand?.status_facets ?? []).slice().sort(),
+  };
 }
 
 function shapeCommit(r: CommitRow): CommitLine {
@@ -926,7 +1009,8 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
       const q = str(request.query.q).toLowerCase();
 
       const items = await loadItems(db);
-      let short = items.filter((it) => it.committed > it.on_hand + it.adjustment);
+      const all = items.filter((it) => it.committed > it.on_hand + it.adjustment);
+      let short = all;
       if (q) {
         short = short.filter((it) =>
           [it.sku_key, it.name, it.kode_barang, it.warna]
@@ -946,31 +1030,35 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
         return a.sku_key < b.sku_key ? -1 : 1;
       });
 
-      const slice = short.slice(offset, offset + limit);
+      const slice = short.slice(offset, offset + limit).map((it) => ({
+        ...toWire(it),
+        // Always positive here by construction; the ATP itself stays signed.
+        deficit: round2(it.committed - (it.on_hand + it.adjustment)),
+        lines: it.live_lines,
+      }));
       const body: PagedResponse<SkuItem & { deficit: number; lines: number }> = {
+        rows: slice,
+        items: slice,
         total: short.length,
+        grand_total: all.length,
         page,
         limit,
         has_more: offset + slice.length < short.length,
-        items: slice.map((it) => ({
-          ...toWire(it),
-          // Always positive here by construction; the ATP itself stays signed.
-          deficit: round2(it.committed - (it.on_hand + it.adjustment)),
-          lines: it.live_lines,
-        })),
       };
       return body;
     },
   );
 
   // ── 4 · GET /api/stock/stale-commitments — ST-R18 review queue (§4.2) ───────
-  // segment: 'stale' (default) · 'undated' (AMENDMENT 1 live lines with no ETA,
-  // triaged here alongside them) · 'all' (both) · state='closed' for the undo
-  // view. Filters: q, min_age_days, status_order, sku_key, sort, page, limit.
+  // segment (AMENDMENT 8): 'stale' (default) · 'undated' (AMENDMENT 1 live lines
+  // with no ETA, triaged here alongside them) · 'closed' (the undo view) · 'all'.
+  // Filters: q, min_age_days, status (alias status_order), only_do, sku_key,
+  // sort, page, limit.
   app.get<{
     Querystring: {
       page?: string; limit?: string; offset?: string; q?: string;
-      min_age_days?: string; status_order?: string; sort?: string;
+      min_age_days?: string; status?: string; status_order?: string;
+      only_do?: string; sort?: string;
       state?: string; segment?: string; filter?: string; sku_key?: string;
     };
   }>("/api/stock/stale-commitments", async (request, reply) => {
@@ -990,24 +1078,37 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
       : asked === "all" ? "all"
       : "stale";
 
-    const { rows, total } = await loadCommitments(db, {
+    const { rows, total, grandTotal, statusFacets } = await loadCommitments(db, {
       segment,
+      withTotals: true,
       skuKey: optStr(qs.sku_key),
       q: optStr(qs.q),
       minAgeDays: numOrNull(qs.min_age_days),
-      statusOrder: optStr(qs.status_order),
+      // `status` is the AMENDMENT 8 name and what the shipped page sends;
+      // `status_order` stays accepted so an older caller keeps working.
+      statusOrder: optStr(qs.status) ?? optStr(qs.status_order),
+      onlyDo: isTruthy(qs.only_do),
       sort: optStr(qs.sort),
       limit,
       offset,
     });
 
-    const body: PagedResponse<CommitLine> & { segment: CommitSegment } = {
+    const body: PagedResponse<CommitLine> & {
+      segment: CommitSegment;
+      status_facets: string[];
+    } = {
+      rows,
+      items: rows,
       total,
+      grand_total: grandTotal,
       page,
       limit,
       has_more: offset + rows.length < total,
       segment,
-      items: rows,
+      // Every status present in this segment before the operator's filters, so
+      // the dropdown does not collapse to whatever the current page happens to
+      // contain (OQ-1: the enum is not frozen, so it is discovered, not listed).
+      status_facets: statusFacets,
     };
     return body;
   });
@@ -1023,8 +1124,9 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
       if (!db) return dbErr(reply);
 
       const { page, limit, offset } = pageParams(request.query);
-      const { rows, total } = await loadCommitments(db, {
+      const { rows, total, grandTotal } = await loadCommitments(db, {
         segment: "exceptions",
+        withTotals: true,
         q: optStr(request.query.q),
         unmatchedOnly: true,
         sort: optStr(request.query.sort) ?? "qty_desc",
@@ -1032,14 +1134,18 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
         offset,
       });
 
+      // One reason exists in v1: the SKU key resolves to no finished-goods row.
+      // UoM mismatch (ST-R5.4) has no column to detect it on yet — see the
+      // "Known gap" note in CONTRACTS.
+      const shaped = rows.map((r) => ({ ...r, reason: "sku_tidak_cocok" }));
       const body: PagedResponse<CommitLine & { reason: string }> = {
+        rows: shaped,
+        items: shaped,
         total,
+        grand_total: grandTotal,
         page,
         limit,
         has_more: offset + rows.length < total,
-        // One reason exists in v1: the SKU key resolves to no finished-goods row.
-        // UoM mismatch (ST-R5.4) has no column to detect it on yet — see report.
-        items: rows.map((r) => ({ ...r, reason: "sku_tidak_cocok" })),
       };
       return body;
     },
@@ -1092,10 +1198,7 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
           or a.reason ilike ${needle} escape '\\'
         )`);
       }
-      let whereSql = db``;
-      for (const [i, frag] of filters.entries()) {
-        whereSql = i === 0 ? db`where ${frag}` : db`${whereSql} and ${frag}`;
-      }
+      const whereSql = andWhere(db, filters);
 
       const rows = await db<{
         id: string; sku_key: string; qty_delta: string; reason: string; actor: string;
@@ -1115,22 +1218,31 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
         limit ${limit} offset ${offset}
       `;
 
+      // Unfiltered count (AMENDMENT 8): the whole audit log, so the UI can say
+      // how much the operator's own search narrowed it.
+      const [grand] = await db<{ grand_total: string }[]>`
+        select count(*) as grand_total from stock_adjustments
+      `;
+
       const first = rows[0];
       const total = first ? numOf(first.total_count) : 0;
+      const shaped: AdjustmentRow[] = rows.map((r) => ({
+        id: String(r.id),
+        sku_key: r.sku_key,
+        name: composeName(r.kode_barang, r.warna, numOrNull(r.th), numOrNull(r.p), numOrNull(r.l), r.sku_key),
+        qty_delta: round2(numOf(r.qty_delta)),
+        reason: r.reason,
+        actor: r.actor,
+        created_at: iso(r.created_at),
+      }));
       const body: PagedResponse<AdjustmentRow> = {
+        rows: shaped,
+        items: shaped,
         total,
+        grand_total: grand ? numOf(grand.grand_total) : 0,
         page,
         limit,
         has_more: offset + rows.length < total,
-        items: rows.map((r) => ({
-          id: String(r.id),
-          sku_key: r.sku_key,
-          name: composeName(r.kode_barang, r.warna, numOrNull(r.th), numOrNull(r.p), numOrNull(r.l), r.sku_key),
-          qty_delta: round2(numOf(r.qty_delta)),
-          reason: r.reason,
-          actor: r.actor,
-          created_at: iso(r.created_at),
-        })),
       };
       return body;
     },
@@ -1239,16 +1351,31 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
       const expected = numOrNull(b.expected_count);
 
       if (!rawIds) return reply.code(400).send({ error: "Daftar baris SO wajib diisi." });
-      const ids = [...new Set(rawIds.map((v) => str(v)).filter((v) => v !== ""))];
+      const cleaned = rawIds.map((v) => str(v)).filter((v) => v !== "");
+      const ids = [...new Set(cleaned)];
       if (ids.length === 0) return reply.code(400).send({ error: "Daftar baris SO wajib diisi." });
+      // A duplicate id is refused outright rather than quietly collapsed. The
+      // whole job of `expected_count` is to keep the number the operator was
+      // shown and the number of commitments actually released in agreement;
+      // silently deduplicating [A, A] with expected_count 2 closes one row while
+      // the guard reports success, which breaks exactly that property.
+      if (ids.length !== cleaned.length) {
+        return reply.code(409).send({
+          error: "Daftar baris SO memuat duplikat. Muat ulang antrean.",
+          expected_count: expected,
+          received_count: rawIds.length,
+          unique_count: ids.length,
+        });
+      }
       if (ids.length > MAX_BATCH_CLOSE) {
         return reply.code(400).send({ error: `Maksimum ${MAX_BATCH_CLOSE} baris sekali tutup.` });
       }
       if (reason.length < 4) return reply.code(400).send({ error: "Alasan wajib diisi." });
       if (!actor) return reply.code(400).send({ error: "Nama petugas wajib diisi." });
       if (expected === null) return reply.code(400).send({ error: "Jumlah baris wajib disertakan." });
-      // Deduplication above can legitimately shrink the list — compare against
-      // what the client actually sent, then refuse on a real mismatch.
+      // Compared against what the client actually sent. Duplicates were already
+      // refused above, so `rawIds.length`, `ids.length` and the number of rows
+      // this batch can close are now the same number by construction.
       if (rawIds.length !== expected) {
         return reply.code(409).send({
           error: "Jumlah baris tidak cocok — daftar berubah. Muat ulang antrean.",
@@ -1410,7 +1537,15 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
 
     const rows = await loadSyncState(db);
     if (rows.some((r) => r.running)) {
-      return { started: false, running: true, freshness: freshnessOf(rows) };
+      // AMENDMENT 8: one signal, not three. A refused kick is a 409, so a client
+      // that only reads the status code cannot mistake it for one that started.
+      // The body still carries started/running for the shipped page's toast.
+      return reply.code(409).send({
+        error: "Sinkronisasi sedang berjalan.",
+        started: false,
+        running: true,
+        freshness: freshnessOf(rows),
+      });
     }
 
     const actor = optStr(request.body?.actor);

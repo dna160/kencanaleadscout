@@ -710,3 +710,71 @@ request or a dash on screen:
   sends no `sort` for the review queue (AMENDMENT 9 applies here too).
 - **`skipped` in the `close-batch` response** is an array of
   `{ so_line_id, reason }` objects, never bare ids.
+
+
+## AMENDMENT 13 — the state ladder is now total
+
+**Raised by the route-test package.** AMENDMENT 10 fixed the *order* but left the
+ladder **incomplete**: `on_hand 0`, `adjustment +5`, `committed 5` gives `atp 0`
+and matched **none** of the four rows — not `perlu_produksi` (atp ≥ 0), not
+`kosong` (effective stock is +5), not `habis` (which required `on_hand > 0`), not
+`tersedia` (atp ≤ 0). The implementation fell through to a default that appeared
+nowhere in this document, and a re-implementation could legitimately have chosen
+`kosong` instead and broken the page with nothing to stop it. Reachable the
+moment PPIC books a positive opname against a fully-committed SKU with no mirror
+row.
+
+`habis` now tests **effective** on-hand. An opname adjustment is physical truth —
+it says the stock is really there — so it belongs on the same side of the ladder
+as the mirror's own quantity:
+
+| order | state | condition |
+|---|---|---|
+| 1 | `perlu_produksi` | `atp < 0` |
+| 2 | `kosong` | `on_hand + adjustment <= 0` |
+| 3 | `habis` | `atp <= 0` |
+| 4 | `tersedia` | otherwise |
+
+Total by construction: past rows 1 and 2, effective stock is positive and ATP is
+non-negative, so ATP is either zero (`habis` — stock exists, all of it promised)
+or positive (`tersedia`). No fallthrough, and nothing undocumented.
+
+## AMENDMENT 14 — `/shortfall` compares against effective on-hand
+
+§4.2 said `committed > on_hand`. The implementation uses
+`committed > on_hand + adjustment`, which is the correct reading of the ATP
+formula — a shortfall computed against a quantity the adjustment has already
+corrected would contradict the headline number on the same row. The contract
+wording catches up to the implementation.
+
+## AMENDMENT 15 — `atp_delta` is measured, and the *preview* is exact
+
+The route package asked whether the ATP before/after snapshots should move inside
+the write transaction, since the UI now states the delta to the operator as fact.
+**Ruling: no.** Reasons, because the answer is not obvious:
+
+- Wrapping in `BEGIN` alone changes nothing — under `read committed` each
+  statement takes a fresh snapshot, so before/write/after inside a transaction is
+  exactly as exposed as outside one. The real ask is `repeatable read`.
+- That buys a serialization-failure retry loop on a screen where several PPIC
+  users work the same large SKUs at once, widens the engine's type signature
+  through its most-tested function, and holds two full-mirror aggregates plus up
+  to 200 upserts inside one isolated transaction — on the single endpoint
+  designed to be fired in bulk.
+- It would also be **unpinnable**: the route harness runs every request inside an
+  outer rollback transaction, so a nested `begin` is a savepoint, and an
+  isolation level cannot be set on a savepoint. The guarantee would silently not
+  apply under test.
+
+What is actually at risk is **narration, not correctness**. The set of lines
+closed can never drift — that is pinned by the explicit id list and
+`expected_count`, neither of which reads a snapshot. `atp_after` is a fresh
+derived read and is true when taken, and ATP is derived, so the next poll
+self-corrects.
+
+And the operator's real question is asked **before** the click — *"will closing
+this release stock?"* — where the answer needs no transaction at all: a stale
+line releases `0`, a live or undated line releases its own `qty_balance`. Both
+are already on every `CommitLine`. **That preview is exact and free**, and it is
+the number that changes the decision. `atp_delta` is a post-hoc confirmation;
+`atp_after` is the authoritative figure.

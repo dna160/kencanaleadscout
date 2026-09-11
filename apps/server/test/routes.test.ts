@@ -584,24 +584,23 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
       });
     });
 
-    it("FINDING (documented, not fixed): expected_count is compared before de-duplication", async () => {
-      // `close-batch` de-duplicates the id list and then compares `expected_count`
-      // against the RAW length. A client that sends the same id twice therefore
-      // passes the guard while closing one row — the count it stated and the
-      // number of commitments released disagree. The source comment shows this is
-      // deliberate, so it is recorded here rather than asserted as a bug.
-      // Owning file: apps/server/src/routes/stock-atp.ts (close-batch handler).
+    it("REGRESSION (D5 fixed): a duplicated id is refused outright, and nothing is written", async () => {
+      // A repeated id used to pass the guard and close one row, so the count the
+      // client declared and the number of commitments actually released could
+      // disagree — the single property this guard exists to keep true. The raw
+      // length is still what `expected_count` is compared against; the duplicate
+      // check now runs first, so the declared count, the unique count and the
+      // number of closable rows are the same number by construction.
       await inRollback(async (tx) => {
         await seedBatch(tx);
-        const { status, body } = await POST<BatchCloseResponse>("/api/stock/stale-commitments/close-batch", {
+        const { status } = await POST<BatchCloseResponse>("/api/stock/stale-commitments/close-batch", {
           so_line_ids: [`${P}-bat-u1`, `${P}-bat-u1`],
           reason: "phantom lama",
           actor: ACTOR,
           expected_count: 2,
         });
-        expect(status).toBe(200);
-        expect(body.closed).toBe(1); // not 2, though the client declared 2
-        expect((await overrideRows(tx)).length).toBe(1);
+        expect(status).toBe(409);
+        expect((await overrideRows(tx)).length).toBe(0);
       });
     });
 
@@ -784,7 +783,7 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
       });
     });
 
-    it("FINDING (documented, not fixed): the ratified `status` and `only_do` params are silent no-ops", async () => {
+    it("REGRESSION (D2 fixed): `status` and `only_do` actually filter", async () => {
       // AMENDMENT 8 ratifies `status` (status_order filter) and `only_do`
       // (ST-R22: status_order='DO' with a balance) as final names on
       // /stale-commitments. The handler declares neither — its querystring type
@@ -805,14 +804,18 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
           "/api/stock/stale-commitments?segment=stale&status=DO&only_do=true&limit=500",
         );
         expect(asShipped.status).toBe(200);
-        const mine = asShipped.body.items.filter((r) => r.so_line_id.startsWith(`${P}-do-`));
-        // Both rows come back — the non-DO line was not filtered out.
-        expect(mine.map((r) => r.so_line_id).sort()).toEqual([`${P}-do-1`, `${P}-do-2`]);
-        expect(mine.some((r) => r.status_order === "Waiting")).toBe(true);
+        const rows = asShipped.body.rows ?? asShipped.body.items;
+        const mine = rows.filter((r) => r.so_line_id.startsWith(`${P}-do-`));
+        // Only the DO line survives. A no-op filter here is worse than no filter:
+        // it sits directly upstream of the bulk close, and `close-batch` faithfully
+        // closes exactly the ids it is handed — including live ones the operator
+        // believed had been filtered away.
+        expect(mine.map((r) => r.so_line_id)).toEqual([`${P}-do-1`]);
+        expect(mine.some((r) => r.status_order === "Waiting")).toBe(false);
       });
     });
 
-    it("FINDING (documented, not fixed): `min_age_days` is a hard 500", async () => {
+    it("REGRESSION (D1 fixed): `min_age_days` filters instead of 500-ing", async () => {
       // `loadCommitments` builds `c.estimate_delivery <= current_date - ${N}`.
       // postgres.js sends N as an untyped parameter, so Postgres resolves
       // `current_date - $1` against `date - date -> integer` rather than
@@ -848,18 +851,25 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
         }
       });
 
-      // The failing call gets its own transaction: a Postgres error aborts the
-      // enclosing transaction, and in this harness the route shares the test's.
-      // In production each request holds its own connection, so the blast radius
-      // is one request — but it is still a 500.
+      // The clause needs an explicit ::int cast. Without it postgres.js sends the
+      // parameter untyped, Postgres resolves `current_date - $1` as date - date ->
+      // integer, and the comparison becomes `date <= integer` (42883) — a blank
+      // 500 on the busiest queue in the module. Assert it FILTERS, not merely
+      // that it stopped erroring.
       await inRollback(async (tx) => {
         await seedFg(tx, [{ sn_fg: `${P}-age-fg`, qty: 10, parts: parts("SEG-AGE") }]);
-        await seedLines(tx, [{ id: `${P}-age-old`, qty_balance: 5, eta: 900, parts: parts("SEG-AGE") }]);
+        await seedLines(tx, [
+          { id: `${P}-age-old`, qty_balance: 5, eta: 900, parts: parts("SEG-AGE") },
+          { id: `${P}-age-mid`, qty_balance: 5, eta: 100, parts: parts("SEG-AGE") },
+        ]);
         const res = await app.inject({
           method: "GET",
           url: "/api/stock/stale-commitments?min_age_days=365&limit=500",
         });
-        expect(res.statusCode).toBe(500);
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.payload) as PagedResponse<CommitLine>;
+        const mine = (body.rows ?? body.items).filter((r) => r.so_line_id.startsWith(`${P}-age-`));
+        expect(mine.map((r) => r.so_line_id)).toEqual([`${P}-age-old`]);
       });
     });
   });
@@ -1329,7 +1339,7 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
       });
     });
 
-    it("FINDING (documented, not fixed): the envelope is `items`, and grand_total / status_facets are absent", async () => {
+    it("REGRESSION (D4 fixed): the ratified envelope ships `rows` and `grand_total`", async () => {
       // AMENDMENT 8 ratified `{ rows, total, grand_total, status_facets }` as
       // final, precisely because two front-end packages had each invented their
       // own spelling. The routes ship `items` and omit both extra counts, so the
@@ -1342,12 +1352,14 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
       await inRollback(async () => {
         for (const url of LISTS) {
           const { body } = await GET<Record<string, unknown>>(`${url}?limit=5`);
-          expect(Object.keys(body), url).toContain("items");
-          expect(Object.keys(body), url).not.toContain("rows");
-          expect(Object.keys(body), url).not.toContain("grand_total");
+          expect(Object.keys(body), url).toContain("rows");
+          expect(Object.keys(body), url).toContain("grand_total");
+          // `items` is kept as a byte-identical duplicate so both shipped pages
+          // and the existing assertions keep working.
+          expect(body.items, url).toEqual(body.rows);
         }
         const { body } = await GET<Record<string, unknown>>("/api/stock/stale-commitments?limit=5");
-        expect(Object.keys(body)).not.toContain("status_facets");
+        expect(Object.keys(body)).toContain("status_facets");
       });
     });
 
@@ -1602,7 +1614,7 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
       });
     });
 
-    it("FINDING (documented, not fixed): an in-flight run answers 200, not the ratified 409", async () => {
+    it("REGRESSION (D3 fixed): an in-flight run answers the ratified 409", async () => {
       // AMENDMENT 8, last line: "`POST /sync` returns 409 when a run is in flight.
       // One signal, not three." The handler instead returns 200 with
       // `{ started: false, running: true }` — the three-signal shape the amendment
@@ -1617,9 +1629,10 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
           const { status, body } = await POST<{ started: boolean; running: boolean }>("/api/stock/sync", {
             actor: ACTOR,
           });
-          expect(status).toBe(200); // contract says 409
+          // One signal, not three: the status code alone now distinguishes a kick
+          // that started from one that was refused.
+          expect(status).toBe(409);
           expect(body.started).toBe(false);
-          expect(body.running).toBe(true);
 
           // The guard itself does hold: no run was kicked off.
           const [row] = await tx`select running from erp_sync_state where table_name = 'so_line'`;
