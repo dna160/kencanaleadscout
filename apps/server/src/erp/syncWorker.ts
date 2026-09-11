@@ -602,7 +602,7 @@ async function syncTable(
     if (rows.length > 0 && signature === previousSignature) {
       log.warn(
         `${table}: page ${page} repeated page ${page - 1} verbatim — the 'page' query param ` +
-          `looks ignored (assumption A2). Stopping this table; rows already committed are intact.`,
+          `looks ignored. Stopping this table; rows already committed are intact.`,
       );
       break;
     }

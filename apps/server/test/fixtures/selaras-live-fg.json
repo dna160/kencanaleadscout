@@ -3,6 +3,8 @@
     "WP-2 fixture — RAW Selaras live-FG rows on the VERIFIED column list (tbl_1210,",
     "2026-09-11): `kode_barang` (display only — the SO side has no such column),",
     "`brand`, `warna` (an ID: 4 = BLACK GALAXY), `th` (aluminium skin), `t` (total",
+    "The PRIMARY KEY is `tbl_1210_STLiveFGMX_id`; `sn_fg` is the ROLL SERIAL and is",
+    "kept as its own column — a row id is not what PPIC reads off a physical panel.",
     "panel), `p`, `l`, `m2`, plus `deleted_at`. The two ACP Black Galaxy rolls sum",
     "to 4,168 lembar, matching PRD §5A. Row 4 has an unreadable qty and row 5 has no",
     "primary key: both must degrade, never abort the page. Row 6 carries SEPARATOR-",
@@ -15,6 +17,7 @@
   "rows": [
     {
       "tbl_1210_STLiveFGMX_id": "FG-0001",
+      "sn_fg": "SN-0001",
       "kode_barang": "ACP-4MM",
       "brand": "ACP",
       "brand_text": "ACP Kencana",
@@ -38,6 +41,7 @@
     },
     {
       "tbl_1210_STLiveFGMX_id": "FG-0002",
+      "sn_fg": "SN-0002",
       "kode_barang": "ACP-4MM",
       "brand": "acp",
       "warna": "4",
@@ -56,6 +60,7 @@
     },
     {
       "tbl_1210_STLiveFGMX_id": "FG-0003",
+      "sn_fg": "SN-0003",
       "kode_barang": "ACP-3MM",
       "brand": "ACP",
       "warna": 118,
@@ -73,6 +78,7 @@
     },
     {
       "tbl_1210_STLiveFGMX_id": "FG-0004",
+      "sn_fg": "SN-0004",
       "kode_barang": "ACP-3MM",
       "brand": "ACP",
       "warna": 118,
@@ -96,6 +102,7 @@
     },
     {
       "tbl_1210_STLiveFGMX_id": "FG-0005",
+      "sn_fg": "SN-0005",
       "kode_barang": "ACP-3MM",
       "brand": "ACP",
       "warna": 118,
@@ -112,6 +119,7 @@
     },
     {
       "tbl_1210_STLiveFGMX_id": "FG-0006",
+      "sn_fg": "SN-0006",
       "kode_barang": "ACP-3MM",
       "brand": "ACP",
       "warna": 118,
@@ -129,6 +137,7 @@
     null,
     {
       "tbl_1210_STLiveFGMX_id": "FG-0007",
+      "sn_fg": "SN-0007",
       "kode_barang": "ACP-4MM",
       "brand": "ACP",
       "warna": 4,

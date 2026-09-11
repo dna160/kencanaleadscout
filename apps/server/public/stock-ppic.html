@@ -977,7 +977,7 @@ function normShortfall(r){
   const deficit=r.deficit!=null?n(r.deficit):Math.max(0,committed-(on_hand+adjustment));
   return {
     sku_key:String(pick(r,"sku_key")||""), name:pick(r,"name"),
-    kode_barang:pick(r,"kode_barang"), warna:pick(r,"warna"),
+    kode_barang:pick(r,"kode_barang")||pick(r,"brand_text")||pick(r,"brand"), brand:pick(r,"brand"), brand_text:pick(r,"brand_text"), warna:pick(r,"warna"),
     warna_name:pick(r,"warna_name"), warna_text:pick(r,"warna_text"),
     th:nOrNull(r.th), p:nOrNull(r.p), l:nOrNull(r.l), unit:pick(r,"unit")||"lembar",
     on_hand, committed, adjustment, atp, deficit,
@@ -1064,7 +1064,7 @@ function normStale(r){
   return {
     so_line_id:String(pick(r,"so_line_id","id")||""),
     sku_key:String(pick(r,"sku_key")||""), name:pick(r,"name"),
-    kode_barang:pick(r,"kode_barang"), warna:pick(r,"warna"),
+    kode_barang:pick(r,"kode_barang")||pick(r,"brand_text")||pick(r,"brand"), brand:pick(r,"brand"), brand_text:pick(r,"brand_text"), warna:pick(r,"warna"),
     warna_name:pick(r,"warna_name"), warna_text:pick(r,"warna_text"),
     th:nOrNull(r.th), p:nOrNull(r.p), l:nOrNull(r.l),
     so_number:pick(r,"so_number"),
@@ -1711,7 +1711,7 @@ function normException(r){
   return {
     so_line_id:String(pick(r,"so_line_id","id")||""),
     sku_key:String(pick(r,"sku_key")||""), name:pick(r,"name"),
-    kode_barang:pick(r,"kode_barang"), warna:pick(r,"warna"),
+    kode_barang:pick(r,"kode_barang")||pick(r,"brand_text")||pick(r,"brand"), brand:pick(r,"brand"), brand_text:pick(r,"brand_text"), warna:pick(r,"warna"),
     warna_name:pick(r,"warna_name"), warna_text:pick(r,"warna_text"),
     th:nOrNull(r.th), p:nOrNull(r.p), l:nOrNull(r.l),
     so_number:pick(r,"so_number"),

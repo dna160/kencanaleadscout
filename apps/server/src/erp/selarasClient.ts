@@ -397,10 +397,11 @@ function noticeShape(table: SelarasTable, env: SelarasEnvelope): void {
   if (noticedShapes.has(key)) return;
   noticedShapes.add(key);
   console.warn(
-    `[selaras] response envelope for '${table}' is NOT the assumed A1 shape ` +
-      `{ data: [...], meta: { page, total_pages } } — observed: ${env.shape}. ` +
-      `Parsing continued with the tolerated alternative. Fix A1 in ` +
-      `erp/selarasClient.ts (readEnvelope) if this is the real shape.`,
+    `[selaras] response envelope for '${table}' is NOT the verified shape ` +
+      `{ success, table, meta: { total_pages, ... }, data: [...] } — observed: ${env.shape}. ` +
+      `Parsing continued with a tolerated alternative, so rows were still read. If this is what ` +
+      `the API really sends now, correct readEnvelope() in erp/selarasClient.ts. ` +
+      `(An ERP-reported failure is NOT this: success:false has its own message.)`,
   );
 }
 
@@ -1167,8 +1168,8 @@ export function applyQueryAuth(url: URL): void {
  * The reconciliation sweep's URL: the FULL current key set, so no cursor, and a
  * `fields=<pk>` projection hint so the ERP can answer cheaply.
  *
- * **We do not know whether Selaras honours `fields`** (HANDOVER §2 — no recorded
- * response body exists). It is the most common convention, it is a harmless
+ * `fields` is documented as a query parameter but we have never seen it honoured
+ * on real data (selaras2.io is unreachable from here). It is a harmless
  * unknown query param if unsupported, and `fetchKeyPage()` reports which of the
  * two actually happened so the log says it plainly rather than pretending.
  */

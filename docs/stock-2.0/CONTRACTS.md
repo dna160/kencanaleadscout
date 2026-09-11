@@ -884,3 +884,63 @@ On (4): `--passWithNoTests` combined with `describe.skipIf(!hasDb)` means a gree
 run proves little without `DATABASE_URL`. The standing rule is therefore **"green
 is not the check — not-skipped is the check."** A deploy gate that accepts a
 suite which silently skipped its own database tests is measuring nothing.
+
+
+## AMENDMENT 19 — §1 and §2 are superseded by the verified ERP schema
+
+§1's key (`kode_barang|warna|th|p|l`) and §2's `erp_so_line` / `erp_live_fg`
+column lists were written before anyone had seen the real Selaras schema. They
+are now wrong in a way that matters, and this amendment supersedes them.
+
+**The key is `brand | warna | th | th_panel | p | l`**, six segments, computed
+identically on both sides — because `tbl_1203` carries **no `kode_barang` and no
+`th`**. Under the old composition an SO line keyed as `-|4|-|4880|1220` against a
+stock row keyed `ACP-4MM|4|0.3|4880|1220`: nothing would ever have matched, every
+commitment would have fallen to the exceptions tray, and **ATP would have equalled
+on-hand for the entire catalogue**. Worked example, now passing end to end:
+
+```
+SO line  brand ACP · warna 4 · th_alu_skin 0.3 · total_thickness_acp 4 · 4880×1220
+FG roll  brand ACP · warna 4 · th          0.3 · t                   4 · 4880×1220
+both  ->  ACP|4|0.3|4|4880|1220
+```
+
+`th_alu_skin ↔ th` and `total_thickness_acp ↔ t` are **confirmed by the product
+owner (2026-09-11)**, not inferred.
+
+**Schema changes:** `erp_so_line` drops `kode_barang` and gains
+`brand`/`brand_text`/`warna_text`/`th_panel`. `erp_live_fg` keeps `kode_barang`
+for display, gains the same four, and is keyed on **`erp_row_id`**
+(`tbl_1210_STLiveFGMX_id`) with **`sn_fg` restored to being the roll serial** — a
+serial is a business identifier the ERP never promises to be unique or non-null,
+so keying on it risked merging two physical rolls into one mirror row and
+understating on-hand. A new `erp_warna` mirrors the colour master, because
+`warna` is an id and users must not be shown a bare number as a product.
+
+**The 5-argument `erp_sku_key` overload is explicitly dropped**, not replaced:
+`create or replace function` would otherwise leave a working-looking v1 twin in
+the database. The key-composition change also resets every sync cursor, because a
+new key only reaches rows that are re-fetched — rows older than the cursor would
+otherwise keep a retired key forever.
+
+**Also landed:** the WIB cursor grammar with a 12-hour lookback (§ FIX A —
+guarding against an ERP that parses our timestamp and discards the offset, which
+would skip rows permanently and silently); `deleted_at` soft-delete handling;
+`freshness.erp_authorized`; `tables[].last_error_kind`; `totals.exception_skus`;
+and `item.warna_name`. `CommitLine` **loses `kode_barang`** and gains
+`brand`/`brand_text`/`warna_name`/`th_panel`.
+
+## Residual unknowns — carried into the first live sync
+
+- **`warna` is normalized as text, not numeric.** A zero-padded `"004"` on one
+  side would not match `4` on the other. The doc says numeric on both sides, so
+  this bites only if the ERP renders it per-table. One-word fix; the
+  unmatched-ratio alarm is exactly what would surface it.
+- **The colour master's link column is ambiguous** — `warna_code` versus the row
+  id. All three readings are tried.
+- **`fields=` projection** is documented but never observed; the sweep reports
+  which happened.
+- **ST-R5.2 is still unrun.** The key is now *coherent* — both sides derive from
+  columns that exist — but whether it *resolves* across 137k SO lines and 1,464
+  stock rows is answerable only from production. That is what the unmatched-rate
+  alarm and `GO-LIVE.md` §4 exist for.

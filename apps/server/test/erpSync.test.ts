@@ -242,11 +242,41 @@ describe("selarasClient — URL contract (VERIFIED 2026-09-11)", () => {
   it("builds the documented query string, with __gte so no boundary row is skipped", () => {
     const url = new URL(buildPageUrl("so_line", { since: new Date("2026-09-01T02:00:00Z"), page: 3, limit: 500 }));
     expect(url.pathname).toBe("/api/table/tbl_1203_SOSalesOrderDetailNID");
-    expect(url.searchParams.get("updated_at__gte")).toBe("2026-09-01T02:00:00.000Z");
+    // FIX A — the documented grammar is `YYYY-MM-DD HH:mm:ss` in WIB (UTC+7),
+    // and the request carries the cursor minus STOCK_SYNC_LOOKBACK_MINUTES.
+    // 02:00Z − 12h = 14:00Z the previous day = 21:00 WIB.
+    expect(url.searchParams.get("updated_at__gte")).toBe("2026-08-31 21:00:00");
     expect(url.searchParams.get("order_by")).toBe("updated_at");
     expect(url.searchParams.get("order_dir")).toBe("asc");
     expect(url.searchParams.get("limit")).toBe("500");
     expect(url.searchParams.get("page")).toBe("3");
+  });
+
+  it("sends the cursor in the documented WIB grammar, never ISO-8601 (FIX A)", () => {
+    // The silent failure this prevents: the spec documents WIB datetimes and says
+    // nothing about ISO-8601. An ERP that parsed `...T03:00:00.000Z` and then
+    // DISCARDED the offset would read it as 03:00 WIB, leaving the cursor SEVEN
+    // HOURS ahead. Every row updated in that window is skipped, and a cursor only
+    // moves forward, so no later run ever revisits them. Nothing logs.
+    const url = new URL(buildPageUrl("so_line", { since: new Date("2026-09-01T02:00:00Z"), page: 1, limit: 10 }));
+    const cursor = url.searchParams.get("updated_at__gte") ?? "";
+    expect(cursor).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+    expect(cursor).not.toContain("T");
+    expect(cursor).not.toContain("Z");
+    // And it denotes the instant we meant, read as WIB.
+    expect(Date.parse(`${cursor.replace(" ", "T")}+07:00`)).toBe(
+      new Date("2026-09-01T02:00:00Z").getTime() - 720 * 60_000,
+    );
+  });
+
+  it("subtracts a lookback wide enough to absorb a misread timezone (FIX A)", async () => {
+    const { config } = await import("../src/config.js");
+    // 12 hours by default, and the size is the point: it must comfortably exceed
+    // the 7-hour WIB offset, which is the specific failure it exists to absorb.
+    expect(config.stock.syncLookbackMinutes).toBe(720);
+    expect(config.stock.syncLookbackMinutes).toBeGreaterThan(7 * 60);
+    // Re-fetching is free: every write is an idempotent upsert keyed on the PK,
+    // which the idempotency test below proves over a whole replayed window.
   });
 
   it("omits the cursor entirely on a first, full pull", () => {
@@ -396,7 +426,8 @@ describe("adapters — one per table, on the verified column names", () => {
   it("reads the documented {table}_id primary key first (FIX 4)", () => {
     expect(adaptSoHeaderRow(FIXTURES.so_header[0])?.id).toBe("SOH-1001");
     expect(adaptSoLineRow(FIXTURES.so_line[0])?.id).toBe("SOL-2001");
-    expect(adaptLiveFgRow(FIXTURES.live_fg[0])?.sn_fg).toBe("FG-0001");
+    // FIX B: the PRIMARY KEY is the ERP row id; `sn_fg` keeps the roll serial.
+    expect(adaptLiveFgRow(FIXTURES.live_fg[0])?.erp_row_id).toBe("FG-0001");
     expect(adaptWarnaRow(FIXTURES.warna[0])?.id).toBe("4");
     // The table-qualified name wins over a bare `id` carrying something else.
     const both = adaptSoLineRow({ tbl_1203_SOSalesOrderDetailNID_id: "REAL", id: "LEGACY" });
@@ -815,7 +846,7 @@ type AtpRow = { sku_key: string; on_hand: string; committed: string; atp: string
 async function mirrorSnapshot(sql: postgres.Sql<{}>): Promise<Record<string, unknown[]>> {
   const header = await sql<JsonRow[]>`select to_jsonb(t) - 'synced_at' as row from erp_so_header t order by id`;
   const line = await sql<JsonRow[]>`select to_jsonb(t) - 'synced_at' as row from erp_so_line t order by id`;
-  const fg = await sql<JsonRow[]>`select to_jsonb(t) - 'synced_at' as row from erp_live_fg t order by sn_fg`;
+  const fg = await sql<JsonRow[]>`select to_jsonb(t) - 'synced_at' as row from erp_live_fg t order by erp_row_id`;
   return {
     erp_so_header: header.map((r) => r.row),
     erp_so_line: line.map((r) => r.row),
@@ -851,8 +882,17 @@ async function resetCursors(sql: postgres.Sql<{}>): Promise<void> {
 }
 
 async function syncStateRows(sql: postgres.Sql<{}>) {
-  return sql<{ table_name: string; cursor_value: Date | null; last_error: string | null; running: boolean }[]>`
-    select table_name, cursor_value, last_error, running from erp_sync_state order by table_name
+  return sql<
+    {
+      table_name: string;
+      cursor_value: Date | null;
+      last_error: string | null;
+      last_error_kind: string | null;
+      running: boolean;
+    }[]
+  >`
+    select table_name, cursor_value, last_error, last_error_kind, running
+    from erp_sync_state order by table_name
   `;
 }
 
@@ -889,10 +929,13 @@ describe.skipIf(db === null)("syncWorker — against a real mirror schema", () =
     await resetCursors(sql);
   });
 
-  it("mirrors the fixture window, paging through all three tables in order", async () => {
+  it("mirrors the fixture window, paging through every table in order", async () => {
     const result = await run(sql);
     expect(result.started).toBe(true);
-    expect(result.tables.map((t) => t.table)).toEqual(["so_header", "so_line", "live_fg"]);
+    // The colour master first (small, and everything displays through it), then
+    // headers before lines because lines reference them, and live_fg LAST so
+    // on-hand is the freshest half of the ATP subtraction.
+    expect(result.tables.map((t) => t.table)).toEqual(["warna", "so_header", "so_line", "live_fg"]);
     expect(result.tables.every((t) => t.ok)).toBe(true);
 
     const counts = await sql<{ h: number; l: number; f: number }[]>`
@@ -907,6 +950,14 @@ describe.skipIf(db === null)("syncWorker — against a real mirror schema", () =
       select sum(qty)::text as qty from erp_live_fg where kode_barang = 'ACP-4MM'
     `;
     expect(onHand[0]?.qty).toBe("4168");
+
+    // FIX B: the primary key is the ERP row id, and the ROLL SERIAL is kept in
+    // its own column — `/api/stock/sku/:sku_key` shows it to an operator who is
+    // matching it against a physical panel.
+    const roll = await sql<{ erp_row_id: string; sn_fg: string | null }[]>`
+      select erp_row_id, sn_fg from erp_live_fg where erp_row_id = 'FG-0001'
+    `;
+    expect(roll[0]).toEqual({ erp_row_id: "FG-0001", sn_fg: "SN-0001" });
 
     // AMENDMENT 1: the undated approved line is mirrored with a NULL ETA — it is
     // real, undated demand, not a row to be dropped on the floor.
@@ -946,7 +997,7 @@ describe.skipIf(db === null)("syncWorker — against a real mirror schema", () =
     try {
       const result = await run(sql);
       expect(result.tables.find((t) => t.table === "live_fg")?.ok).toBe(true);
-      const rows = await sql<{ n: number }[]>`select count(*)::int as n from erp_live_fg where sn_fg = 'FG-0001'`;
+      const rows = await sql<{ n: number }[]>`select count(*)::int as n from erp_live_fg where erp_row_id = 'FG-0001'`;
       expect(rows[0]?.n).toBe(1);
     } finally {
       FIXTURES.live_fg = original;
@@ -1029,7 +1080,9 @@ describe.skipIf(db === null)("syncWorker — against a real mirror schema", () =
     await run(sql);
     const mirrorBefore = await mirrorSnapshot(sql);
 
-    faults = { status: { "so_header:1": 500, "so_line:1": 500, "live_fg:1": 500 } };
+    faults = {
+      status: { "warna:1": 500, "so_header:1": 500, "so_line:1": 500, "live_fg:1": 500 },
+    };
     const result = await run(sql);
 
     expect(result.started).toBe(true); // resolved, did not reject
@@ -1039,6 +1092,145 @@ describe.skipIf(db === null)("syncWorker — against a real mirror schema", () =
     const states = await syncStateRows(sql);
     expect(states.every((s) => s.running === false)).toBe(true);
     expect(states.every((s) => (s.last_error ?? "").length > 0)).toBe(true);
+    // FIX D: a 5xx is classified `server`, not `auth` — the page must not tell
+    // an operator to call IT when the ERP is merely down.
+    expect(states.every((s) => s.last_error_kind === "server")).toBe(true);
+  });
+
+  // ── FIX 6 · soft deletes ───────────────────────────────────────────────────
+
+  it("never mirrors a row that arrives already carrying deleted_at", async () => {
+    await run(sql);
+
+    const gone = await sql<{ n: number }[]>`
+      select (
+        (select count(*) from erp_so_line   where id         = 'SOL-2009')
+      + (select count(*) from erp_live_fg   where erp_row_id = 'FG-0007')
+      + (select count(*) from erp_so_header where id         = 'SOH-1004')
+      )::int as n
+    `;
+    // FG-0007 alone carries 5,000 lembar and SOL-2009 reserves 900. Mirroring a
+    // deleted FG row over-promises stock that does not physically exist — the
+    // direction this module exists to prevent.
+    expect(gone[0]?.n).toBe(0);
+  });
+
+  it("REMOVES a row from the mirror once the ERP marks it deleted (FIX 6)", async () => {
+    await run(sql);
+    const before = await sql<{ n: number }[]>`select count(*)::int as n from erp_so_line where id = 'SOL-2001'`;
+    expect(before[0]?.n).toBe(1);
+
+    // The ERP soft-deletes it. `deleted_at` is the routine deletion signal; the
+    // hourly reconciliation sweep is only the backstop for a hard delete.
+    const original = FIXTURES.so_line;
+    const live = original[0] as Record<string, unknown>;
+    FIXTURES.so_line = [{ ...live, deleted_at: "2026-09-08T10:00:00Z" }, ...original.slice(1)];
+    try {
+      await resetCursors(sql);
+      const result = await run(sql);
+      const soLine = result.tables.find((t) => t.table === "so_line");
+      expect(soLine?.ok).toBe(true);
+      expect(soLine?.deleted).toBeGreaterThan(0);
+
+      const after = await sql<{ n: number }[]>`select count(*)::int as n from erp_so_line where id = 'SOL-2001'`;
+      expect(after[0]?.n).toBe(0);
+      // …and it stops reserving, which is the only reason any of this matters.
+      const live_rows = await sql<{ n: number }[]>`
+        select count(*)::int as n from v_live_commitments where id = 'SOL-2001'
+      `;
+      expect(live_rows[0]?.n).toBe(0);
+    } finally {
+      FIXTURES.so_line = original;
+    }
+  });
+
+  // ── FIX 7 · the colour master ──────────────────────────────────────────────
+
+  it("mirrors the colour master so a page can read BLACK GALAXY, not 4", async () => {
+    await run(sql);
+    const rows = await sql<{ id: string; code: string | null; code_num: string | null; rm_warna: string | null }[]>`
+      select id, code, code_num::text as code_num, rm_warna from erp_warna order by id
+    `;
+    expect(rows.map((r) => r.id)).toEqual(["118", "4"]); // 999 is soft-deleted
+    const black = rows.find((r) => r.id === "4");
+    expect(black?.rm_warna).toBe("BLACK GALAXY");
+    expect(black?.code_num).toBe("4"); // so a mirrored '004' still resolves
+  });
+
+  // ── FIX 1 · the ST-R5.2 safety net ─────────────────────────────────────────
+
+  it("shouts, ONCE and loudly, when most live commitments match no stock at all", async () => {
+    // The alarm that stands in for ST-R5.2, which could not be run against live
+    // data. A few unmatched keys are normal (that is the exceptions tray); a
+    // MAJORITY unmatched is what a broken key composition looks like, and it
+    // fails toward over-promising: those commitments reserve nothing, so ATP
+    // equals on-hand and the whole inventory reads as promiseable.
+    await run(sql);
+    // Break the join the way a wrong segment list would: move the stock rows to
+    // a different key, leaving the demand keyed where it was.
+    await sql`update erp_live_fg set sku_key = sku_key || '|X'`;
+
+    const errors: string[] = [];
+    const report = await migrateMod.checkSkuKeyMatch(sql, { error: (m: string) => errors.push(m) });
+
+    expect(report.checked).toBe(true);
+    expect(report.liveLines).toBeGreaterThan(0);
+    expect(report.ratio).toBe(1);
+    expect(report.tripped).toBe(true);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("SKU KEY MATCHES ALMOST NOTHING");
+    expect(errors[0]).toContain("100%");
+    expect(errors[0]).toContain("STOCK_SKU_KEY_SEGMENTS"); // the knob, named
+    expect(errors[0]).toContain("SKU_SEGMENT_SOURCES"); // …and the mapping
+    // Example keys from BOTH sides, so the mismatch is diagnosable by eye.
+    expect(report.soSamples.length).toBeGreaterThan(0);
+    expect(report.fgSamples.length).toBeGreaterThan(0);
+    expect(errors[0]).toContain(report.soSamples[0]!);
+    expect(errors[0]).toContain(report.fgSamples[0]!);
+  });
+
+  it("stays quiet when the key matches, and when there is no demand at all", async () => {
+    await run(sql);
+    const errors: string[] = [];
+    const matched = await migrateMod.checkSkuKeyMatch(sql, { error: (m: string) => errors.push(m) });
+    expect(matched.tripped).toBe(false);
+    expect(matched.liveLines).toBeGreaterThan(0);
+
+    // An empty mirror is not evidence of a broken key. Warning here would fire on
+    // every fresh deployment forever, which is how a real alert gets ignored.
+    await sql`truncate erp_so_line`;
+    const empty = await migrateMod.checkSkuKeyMatch(sql, { error: (m: string) => errors.push(m) });
+    expect(empty.liveLines).toBe(0);
+    expect(empty.tripped).toBe(false);
+    expect(errors).toEqual([]);
+  });
+
+  it("honours STOCK_UNMATCHED_ALERT_RATIO as the threshold", async () => {
+    await run(sql);
+    await sql`update erp_live_fg set sku_key = sku_key || '|X'`;
+    const errors: string[] = [];
+    // A threshold of 1 means "only complain above 100% unmatched", which nothing
+    // can exceed — the knob genuinely gates the alarm.
+    const report = await migrateMod.checkSkuKeyMatch(sql, { error: (m: string) => errors.push(m) }, 1);
+    expect(report.ratio).toBe(1);
+    expect(report.tripped).toBe(false);
+    expect(errors).toEqual([]);
+  });
+
+  it("records an auth failure as a typed kind, not as prose (FIX D)", async () => {
+    const { resetAuthNotices } = await import("../src/erp/selarasClient.js");
+    resetAuthNotices();
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      faults = { status: { "so_line:1": 401 } };
+      await run(sql);
+      const state = (await syncStateRows(sql)).find((r) => r.table_name === "so_line");
+      expect(state?.last_error_kind).toBe("auth");
+      expect(state?.last_error).toBeTruthy();
+      expect(state?.last_error).not.toContain(TOKEN);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("refuses to start a second run while one is in flight (§4.2 manual kick)", async () => {
@@ -1079,7 +1271,7 @@ describe.skipIf(db === null)("syncWorker — against a real mirror schema", () =
 
     // FG-0005 carries Qty "1.234" and QtyM2 "2,500".
     const fg = await sql<{ qty: string; qty_m2: string | null }[]>`
-      select qty::text, qty_m2::text from erp_live_fg where sn_fg = 'FG-0005'
+      select qty::text, qty_m2::text from erp_live_fg where erp_row_id = 'FG-0005'
     `;
     expect(fg[0]?.qty).toBe("0");
     expect(fg[0]?.qty_m2).toBeNull();
@@ -1115,7 +1307,7 @@ describe.skipIf(db === null)("syncWorker — against a real mirror schema", () =
     // FG-0006 is mirrored — it has a serial, so it is a real row — but every one
     // of its numerics was refused at the adapter.
     const fg = await sql<{ th: string | null; p: string | null; l: string | null; qty: string; qty_m2: string | null }[]>`
-      select th::text, p::text, l::text, qty::text, qty_m2::text from erp_live_fg where sn_fg = 'FG-0006'
+      select th::text, p::text, l::text, qty::text, qty_m2::text from erp_live_fg where erp_row_id = 'FG-0006'
     `;
     expect(fg[0]).toEqual({ th: null, p: null, l: null, qty: "0", qty_m2: null });
 
@@ -1138,8 +1330,8 @@ describe.skipIf(db === null)("syncWorker — against a real mirror schema", () =
     // And the TS key for that row agrees with the SQL key — which is the whole
     // point of X11. A stored NaN would make these two differ silently.
     const parity = await sql<{ stored: string; computed: string }[]>`
-      select sku_key as stored, erp_sku_key(kode_barang, warna, th, p, l) as computed
-        from erp_live_fg where sn_fg = 'FG-0006'
+      select sku_key as stored, erp_sku_key(brand, warna, th, th_panel, p, l) as computed
+        from erp_live_fg where erp_row_id = 'FG-0006'
     `;
     expect(parity[0]?.stored).toBe(parity[0]?.computed);
   });

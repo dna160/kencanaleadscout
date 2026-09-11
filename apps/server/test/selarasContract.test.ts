@@ -1026,7 +1026,14 @@ describe("primary key — rows are keyed by `{table}_id`", () => {
 
     // …and the adapter mirrors the row under exactly that key.
     expect(adaptSoLineRow(SO_LINE_ROWS[0])?.id).toBe(extractRowKey("so_line", SO_LINE_ROWS[0]));
-    expect(adaptLiveFgRow(LIVE_FG_ROWS[0])?.sn_fg).toBe(extractRowKey("live_fg", LIVE_FG_ROWS[0]));
+    // `erp_row_id`, not `sn_fg`. This line asserted `sn_fg` while the serial WAS
+    // the primary key — the very thing that was wrong: `sn_fg` is a business
+    // identifier the ERP never promises to be unique or non-null, so two rolls
+    // sharing one would merge into a single mirror row and understate on-hand.
+    // The serial now has its own column and the ERP's own key does the keying.
+    expect(adaptLiveFgRow(LIVE_FG_ROWS[0])?.erp_row_id).toBe(extractRowKey("live_fg", LIVE_FG_ROWS[0]));
+    // …and the serial is still mirrored, under its own name.
+    expect(adaptLiveFgRow(LIVE_FG_ROWS[0])?.sn_fg).toBe("FG-AAA-0001");
   });
 
   it("keys a row that carries ONLY the documented `{table}_id` (no legacy id)", () => {

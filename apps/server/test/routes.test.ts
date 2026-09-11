@@ -1685,6 +1685,66 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
       });
     });
 
+    it("counts unmatched demand in LINES and in SKUS — only the second is a share (FIX E)", async () => {
+      await inRollback(async (tx) => {
+        // One unmatched SKU with THREE lines against it, plus one healthy SKU.
+        // `exceptions` counts lines and `exception_skus` counts SKUs, and the
+        // PPIC alarm divides by `skus` — so comparing the line count against a
+        // SKU count overstates the problem (a realistic population measured
+        // 512%, which cannot be a share of anything).
+        const ghost = parts("EXSK-GHOST");
+        const held = parts("EXSK-HELD");
+        await seedFg(tx, [{ sn_fg: `${P}-exsk-fg`, qty: 50, parts: held }]);
+        await seedLines(tx, [
+          { id: `${P}-exsk-g1`, qty_balance: 4, eta: 5, parts: ghost },
+          { id: `${P}-exsk-g2`, qty_balance: 4, eta: 6, parts: ghost },
+          { id: `${P}-exsk-g3`, qty_balance: 4, eta: 7, parts: ghost },
+          { id: `${P}-exsk-h1`, qty_balance: 4, eta: 5, parts: held },
+        ]);
+
+        const before = await GET<SummaryResponse>("/api/stock/summary");
+        const ghostKey = canonicalSkuKey(ghost);
+        const mine = before.body.items.filter((i) => i.sku_key === ghostKey);
+        expect(mine).toHaveLength(1);
+
+        // The three lines contribute 3 to `exceptions` and 1 to `exception_skus`.
+        const { body } = await GET<SummaryResponse>("/api/stock/summary");
+        expect(body.totals.exceptions).toBeGreaterThanOrEqual(3);
+        expect(body.totals.exception_skus).toBeGreaterThanOrEqual(1);
+        expect(body.totals.exceptions).toBeGreaterThan(body.totals.exception_skus);
+        // A count of SKUs can never exceed the number of SKUs — which is exactly
+        // the property the line count does not have.
+        expect(body.totals.exception_skus).toBeLessThanOrEqual(body.totals.skus);
+      });
+    });
+
+    it("says the ERP rejected our credentials as a VALUE, not a message to grep (FIX D)", async () => {
+      await inRollback(async (tx) => {
+        // Healthy first: never having synced is not an authorization verdict, so
+        // a fresh deployment must not wear a "call IT" banner.
+        const healthy = await GET<SyncStatusResponse>("/api/stock/sync-status");
+        expect(healthy.body.freshness.erp_authorized).toBe(true);
+
+        await tx`
+          update erp_sync_state
+             set last_error = 'HTTP 401 from ERP', last_error_kind = 'auth', last_error_at = now()
+           where table_name = 'so_line'
+        `;
+        const denied = await GET<SyncStatusResponse>("/api/stock/sync-status");
+        expect(denied.body.freshness.erp_authorized).toBe(false);
+        expect(denied.body.tables.find((t) => t.table_name === "so_line")?.last_error_kind).toBe("auth");
+        // …and /summary carries the same flag, since that is the page sales sees.
+        const summary = await GET<SummaryResponse>("/api/stock/summary");
+        expect(summary.body.freshness.erp_authorized).toBe(false);
+
+        // A network failure is NOT an authorization failure: "wait" is the right
+        // advice there, and "call IT" is not.
+        await tx`update erp_sync_state set last_error_kind = 'network' where table_name = 'so_line'`;
+        const down = await GET<SyncStatusResponse>("/api/stock/sync-status");
+        expect(down.body.freshness.erp_authorized).toBe(true);
+      });
+    });
+
     it("GET /sync-status carries freshness, the cursors and every mirrored table", async () => {
       await inRollback(async () => {
         const { status, body } = await GET<SyncStatusResponse>("/api/stock/sync-status");
