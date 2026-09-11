@@ -786,3 +786,64 @@ line releases `0`, a live or undated line releases its own `qty_balance`. Both
 are already on every `CommitLine`. **That preview is exact and free**, and it is
 the number that changes the decision. `atp_delta` is a post-hoc confirmation;
 `atp_after` is the authoritative figure.
+
+
+## AMENDMENT 16 — the unmatched-SKU warning belongs on the SALES page too
+
+**Raised by the front-end package, against my own scoping.** I scoped the
+unmatched-SKU alarm to `/stock-ppic` on the strength of §5.0, which keeps
+exception counts away from sales. That was wrong, and the reasoning against it is
+better than the reasoning for it.
+
+Trace the failure. The SKU join breaks, every commitment lands in the exceptions
+tray, `open_commitment` is zero, ATP equals on-hand for every SKU — and the
+damage is then done by **a rep in a customer's showroom quoting a number
+`/stock` presents as perfectly healthy**. PPIC seeing an alarm does not stop that
+sale, because PPIC is not in the room. I had put the warning on the screen that
+is safe and left the screen that does the harm untouched.
+
+The distinction that resolves it: §5.0 withholds a **count** from sales because
+"31 exceptions" reads as generalised breakage and gives a rep nothing to act on.
+That argument is about a number in a totals strip. It says nothing about **a
+sentence that tells them what to do** — which is precisely what the stale banner
+already gives sales, in a state that is *less* dangerous than this one. Stale
+data is visibly old; this is confidently wrong.
+
+**Ruling:** `/stock` carries one line above the list, at the same threshold, with
+**no numbers and no hygiene count** — §5.0 stays intact:
+
+> *Angka Bisa Dijual sedang tidak bisa dipakai untuk menjanjikan stok —
+> konfirmasi ke PPIC dulu.*
+
+It obeys the standing precedence (`off` ▸ `auth` ▸ `failing` ▸ `stale` ▸ this):
+never two claims on screen at once. `/stock-ppic` keeps the fuller alarm with the
+count and the link to the exceptions tab.
+
+## AMENDMENT 17 — two typed fields the pages should not have to infer
+
+**17a — `freshness.erp_authorized: boolean`** on `/summary` and `/sync-status`.
+Nothing distinguished "the ERP rejected our credentials" from "the sync failed",
+so the page was **string-sniffing `last_error`** for `HTTP 401`. That works only
+while `selarasClient` happens to compose that exact text; one reword upstream and
+the page silently downgrades to "sync failing" — telling an operator to wait for
+something that will never fix itself, because the fix is an admin action. An auth
+failure is the likeliest first-run outcome and the one where "wait" versus "call
+IT" is the entire message. (`tables[].last_error_kind` is an acceptable
+alternative shape.)
+
+**17b — `totals.exception_skus`** on `/summary`: the count of **distinct**
+`sku_key` with no matching `erp_live_fg` row. The alarm compared
+`totals.exceptions` (SO **lines**) against `totals.skus` (**SKUs**); several lines
+share a SKU, so the ratio ran several times high and measured 512% on a realistic
+population. With a true share the threshold drops from 50% to 25% — at a quarter
+of SKUs unmatched the join is already catastrophic, and the inflation headroom is
+no longer needed.
+
+## Known gap — `brand` / `th_panel` make §11-A1 obsolete
+
+§11-A1 records "the item has no brand field", which was true when the SKU key was
+`kode_barang|warna|th|p|l`. The verified ERP schema moved the key onto `brand` and
+the panel thickness, so `brand`/`brand_text` are now on the wire. Both pages still
+label the filter "Kode barang". That is a **spec change, not a bug** — ST-R8 asked
+for a brand filter and the field now exists to build one. Left unimplemented
+deliberately; spec it before building it.
