@@ -22,8 +22,12 @@
  * "BLACK GALAXY" instead of "4". See `erp/sku.ts` for why the key changed.
  *
  * No table here has an `atp` column and none ever will (§7.1). The liveness
- * predicate (ST-R17) is spelled exactly once, in v_live_commitments (§7.3), and
- * the canonical SKU key exactly twice — erp/sku.ts and erp_sku_key() below (§7.4).
+ * predicate (ST-R17) is spelled exactly once, in the shared view spine below —
+ * v_live_commitments, v_stale_commitments and v_autoclosed_commitments are three
+ * mutually exclusive slices of ONE predicate string, not three predicates (§7.3);
+ * the ST-R22 auto-close rule is likewise one string, sliced the same way. The
+ * canonical SKU key is spelled exactly twice — erp/sku.ts and erp_sku_key()
+ * below (§7.4).
  */
 import type { Sql } from "./client.js";
 import { getSql } from "./client.js";
@@ -185,6 +189,26 @@ function safeApprovedStatuses(raw: readonly string[]): string[] {
       "fully promiseable (zero live commitments), so it is never honoured.",
   );
   return [...DEFAULT_APPROVED_STATUSES];
+}
+
+/**
+ * ST-R22 auto-close set. The SAME whitelist path as the cancelled set, and with
+ * the cancelled set's symmetry rather than the approved set's: an empty auto-close
+ * set closes nothing, which leaves every line in the review queue for a human.
+ * Nothing is released by a typo, so no default is forced back in.
+ */
+function safeAutocloseStatuses(raw: readonly string[]): string[] {
+  return safeStatuses(raw, "STOCK_AUTOCLOSE_STATUSES");
+}
+
+/**
+ * ST-R22 auto-close age. Positive integer or the shipped default — a zero or
+ * negative threshold would auto-close every dated line in the mirror.
+ */
+function safeAutocloseAfterDays(raw: number): number {
+  if (Number.isSafeInteger(raw) && raw > 0) return raw;
+  console.error("[migrateErpStock] STOCK_AUTOCLOSE_AFTER_DAYS invalid — falling back to 180");
+  return 180;
 }
 
 /** `array['Cancelled','Void','Batal']`, or a typed empty array when the set is empty. */
@@ -504,8 +528,68 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
     // ST-R7b: the commitment gate is config, not a literal (OQ-1). Same validated
     // whitelist path as the cancelled set — nothing unvalidated reaches SQL.
     const approved = statusArraySql(safeApprovedStatuses(config.stock.approvedStatuses));
+    // ST-R22 auto-close, same validated whitelist path again (§2.3: this block is
+    // the ONLY place any config value is spliced into SQL in this repo).
+    const autocloseStatuses = statusArraySql(
+      safeAutocloseStatuses(config.stock.autocloseStatuses),
+    );
+    const autocloseDays = safeAutocloseAfterDays(config.stock.autocloseAfterDays);
 
-    // The shared FROM/JOIN spine. A line that is confirm-closed leaves both sets.
+    /**
+     * ST-R22 — "delivered but never closed", spelled ONCE.
+     *
+     * A line whose `status_order` says a delivery order was issued, and whose
+     * DELIVERY DATE is more than `autocloseDays` old, is treated as fully
+     * delivered: the goods went out, the ERP just never zeroed `qty_balance`.
+     *
+     * THE AGE BASIS IS `estimate_delivery` AND NOTHING ELSE (product-owner
+     * ruling, 2026-09-11). An earlier draft aged an undated line off its header's
+     * `po_date`; that was withdrawn deliberately and must not be "restored".
+     * The difference is the entire risk profile of this feature:
+     *
+     *   - a DO line with an OLD ETA is already outside the 60-day liveness
+     *     window, so it is already excluded from `open_commitment`. Auto-closing
+     *     it moves ATP by exactly ZERO — it only stops demanding a human
+     *     decision. Pure queue hygiene.
+     *   - a DO line with NO ETA is LIVE and reserving right now (AMENDMENT 1).
+     *     Auto-closing it would have RAISED ATP by its whole balance — a machine
+     *     silently releasing stock that is already owed to a customer, which is
+     *     the exact over-promising failure this module exists to prevent.
+     *
+     * So an undated line has no age for this purpose and is never a candidate,
+     * at any `po_date`. It stays live, keeps reserving, and stays in the
+     * `undated` review segment as an audit item for PPIC to resolve with the
+     * order's owner — a human decision, which is where releasing stock belongs.
+     *
+     * NULL-proofed on purpose: `status_order` may be NULL, and `NULL = any(...)`
+     * is NULL, not false. An un-coalesced NULL here would propagate through the
+     * `not (...)` arm below and drop the line out of EVERY view — a silent
+     * inflation of ATP and a breach of §7.6. `coalesce(…, false)` makes the whole
+     * thing a two-valued boolean, so the three sets stay a true partition.
+     *
+     * ST-R21 reversibility rides on the last clause: a machine decision must be
+     * undoable exactly like a human one, so a `reinstated` override lifts the
+     * auto-close and hands the line straight back to the liveness rule.
+     */
+    const autoclosed = `coalesce(
+          coalesce(l.status_order, '') = any (${autocloseStatuses})
+          and l.estimate_delivery < current_date - ${autocloseDays}
+        , false)
+        and coalesce(o.state, '') <> 'reinstated'`;
+
+    // The ordering that keeps auto-close a zero-ATP operation. Below the liveness
+    // window it would start closing lines that are still LIVE, i.e. releasing
+    // reservations a customer is owed. Config can do it; config should not.
+    if (autocloseDays <= windowDays) {
+      console.warn(
+        `[migrateErpStock] STOCK_AUTOCLOSE_AFTER_DAYS (${autocloseDays}) is not above ` +
+          `STOCK_STALE_WINDOW_DAYS (${windowDays}). Auto-close is only ATP-neutral while it ` +
+          "is the slower of the two: at this setting it can close LIVE commitments and RAISE " +
+          "ATP, releasing stock that is already promised to a customer.",
+      );
+    }
+
+    // The shared FROM/JOIN spine. A line that is confirm-closed leaves all sets.
     // `undated` (AMENDMENT 1) lets the PPIC queue separate two populations whose
     // close consequences are opposite: closing a stale line moves ATP by zero,
     // closing an undated one raises it by the whole balance (AMENDMENT 6).
@@ -513,9 +597,15 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
     // line has no ETA to age from, so the order date is the only way to show how
     // old it is, on exactly the population that reserves stock. It lives on the
     // header, so the views are the only place it can be picked up once.
-    const spine = (etaPredicate: string) => `
+    const spine = (etaPredicate: string, autoclosePredicate: string) => `
       select l.*, h.customer_name_text, h.sales_name_text, h.so_number, h.po_date,
-             (l.estimate_delivery is null) as undated
+             (l.estimate_delivery is null) as undated,
+             (${autoclosed}) as autoclosed,
+             -- WHY this line qualified, carried on the row rather than inferred by
+             -- a reader: which date the age was measured from. Constant today
+             -- because the ruling admits exactly one basis; it is a column so that
+             -- a future basis change cannot leave the UI narrating the old one.
+             case when (${autoclosed}) then 'estimate_delivery'::text end as autoclose_basis
       from erp_so_line l
       left join erp_so_header h on h.id = l.so_id
       left join stock_commitment_overrides o on o.so_line_id = l.id
@@ -523,6 +613,7 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
         and l.qty_balance > 0
         and coalesce(l.status_order, '') <> all (${cancelled})
         and ${etaPredicate}
+        and ${autoclosePredicate}
         and coalesce(o.state, '') <> 'closed'
     `;
 
@@ -536,11 +627,29 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
     // prevent and a breach of invariant §7.6. An undated line is real demand that
     // is merely unscheduled — an absent date is not evidence of abandonment the
     // way a 2020 ETA is — so it reserves, and `undated` flags it for PPIC review.
+    //
+    // ST-R22 adds a THIRD set rather than a deletion. An auto-closed line leaves
+    // live and stale — it stops asking a human for a decision — but it must not
+    // vanish (§7.6), and a MACHINE decision deserves more visibility than a human
+    // one, not less: nobody typed it, so nobody remembers making it. Hence its own
+    // view, its own `/stale-commitments?segment=autoclosed`, and the same
+    // reinstate path a confirm-close has (ST-R21).
+    //
+    // The three predicates below still partition the universe: the ETA arms cover
+    // every line between them (`>=`, `<`, `is null`), and `autoclosed` then splits
+    // each arm in two with `not (…)` / `(…)`. The auto-closed view takes no ETA
+    // arm of its own precisely so it is the union of both — otherwise a config
+    // with a short threshold would leave a line in no set at all.
     const views: ReadonlyArray<readonly [string, string]> = [
       ["v_live_commitments", spine(
         `(l.estimate_delivery >= current_date - ${windowDays} or l.estimate_delivery is null)`,
+        `not (${autoclosed})`,
       )],
-      ["v_stale_commitments", spine(`l.estimate_delivery < current_date - ${windowDays}`)],
+      ["v_stale_commitments", spine(
+        `l.estimate_delivery < current_date - ${windowDays}`,
+        `not (${autoclosed})`,
+      )],
+      ["v_autoclosed_commitments", spine("true", `(${autoclosed})`)],
     ];
 
     for (const [name, body] of views) {

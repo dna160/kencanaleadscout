@@ -958,3 +958,52 @@ and `item.warna_name`. `CommitLine` **loses `kode_barang`** and gains
   columns that exist — but whether it *resolves* across 137k SO lines and 1,464
   stock rows is answerable only from production. That is what the unmatched-rate
   alarm and `GO-LIVE.md` §4 exist for.
+
+
+## AMENDMENT 20 — aged delivery orders auto-close; undated ones never do (ST-R22)
+
+**Ruled by the product owner, 2026-09-11.** ST-R7a assumed *"`Done` lines have
+`qty_balance = 0` so they fall out naturally."* They do not — and §5A of the same
+PRD contradicts it, noting phantoms *"already at `status_order = 'DO'`"* with
+balances still attached. That assumption is why ~2,000 lines sat in the review
+queue demanding a human decision.
+
+**The rule:**
+
+| population | treatment | ATP delta |
+|---|---|---|
+| `status_order = 'DO'`, `estimate_delivery` older than **180 days** | auto-closed — treated as delivered | **exactly 0** |
+| `estimate_delivery IS NULL`, at any age | **never** auto-closed — stays live, stays reserving, stays a PPIC audit item | **exactly 0** |
+
+**This change releases no promiseable stock, and that is the point.** An
+aged-ETA line is *already* outside `open_commitment`, because 180 days is well
+past the 60-day liveness window — so closing it moves nothing and only removes
+review work. An undated line is never a candidate.
+
+**The withdrawn fallback.** The first draft aged undated lines from `po_date`.
+That was rejected by the owner, correctly: undated lines are **live and
+reserving** (AMENDMENT 1), so auto-closing one would have released its whole
+balance into the promiseable number — the over-promising direction, and the only
+real risk in the change. Narrowing the rule converted that population into a
+no-op. **Do not restore a `po_date` fallback**; the age basis is
+`estimate_delivery` and nothing else.
+
+**Consequences:**
+
+- The threshold and the status list are config (`STOCK_AUTOCLOSE_AFTER_DAYS`
+  default 180, `STOCK_AUTOCLOSE_STATUSES` default `DO`), whitelisted through the
+  same path as the cancelled set. Extending this to `Done` is a variable change.
+- Boot warns loudly if the auto-close threshold is not greater than the stale
+  window — **that ordering is what makes the ATP delta zero**, so it must be
+  impossible to break silently.
+- Auto-closed lines are never dropped: they occupy a third set alongside live and
+  stale, carrying `autoclosed` and `autoclose_basis` so a row states its own
+  grounds. Invariant §7.6's partition now covers three sets, not two.
+- They are **reinstatable through the existing ST-R21 override**, with no second
+  mechanism — a machine decision deserves more auditability than a human one,
+  not less.
+- `segment=all` deliberately excludes them, because `all` is `close-batch`'s
+  default write scope.
+- `totals.autoclosed_commitments` measures **review work removed, never stock
+  released** — and the undated count that would have been the alarming number is
+  structurally always zero, pinned by a test.
