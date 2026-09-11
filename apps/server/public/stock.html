@@ -54,7 +54,18 @@
   tr.itemrow{cursor:pointer}
   tr.itemrow:hover{background:#f7fafc}
   .warna b{font-size:14px}
-  .sub2{color:var(--muted);font-size:11px;margin-top:2px}
+  /* overflow-wrap: the spec line now carries a merek as well as the code, and
+     an unbroken ERP string must break rather than push the row sideways —
+     UX-SPEC §8.3 allows no horizontal scroll on the phone layout. */
+  .sub2{color:var(--muted);font-size:11px;margin-top:2px;overflow-wrap:anywhere}
+  /* Merek inside a spec line: --ink-2 lifts it out of --muted so two rows that
+     share a colour are told apart at a glance, without taking the 14px bold
+     lead away from the colour (UX-SPEC §1.6, §5.2). Tokens only.
+     The second rule is load-bearing and its specificity is the point:
+     `.warna b` is (0,1,1) and would otherwise catch this <b> too and hand the
+     merek the colour's 14px lead — the exact inversion §5.2 forbids. */
+  .mk{color:var(--ink-2);font-weight:700}
+  .sub2 .mk{font-size:inherit}
   .avail{font-weight:800;font-size:14px;white-space:nowrap}
   .avail.neg{color:var(--danger)}
   .m2{color:var(--muted);font-size:11px;font-weight:500}
@@ -236,10 +247,16 @@
   <div id="listArea" style="display:none">
     <div class="fltchips" id="totals"></div>
     <div class="toolbar">
-      <label class="sr-only" for="q">Cari warna atau kode barang</label>
-      <input type="text" id="q" placeholder="Cari warna / kode barang…" />
+      <label class="sr-only" for="q">Cari merek, warna atau kode barang</label>
+      <input type="text" id="q" placeholder="Cari merek / warna / kode…" />
+      <!-- ST-R8. Options come from the merek values present in THIS response —
+           never a hardcoded list; the catalogue gains and loses merek. -->
+      <label class="sr-only" for="brand">Merek</label>
+      <select id="brand" title="Merek"><option value="">Semua merek</option></select>
+      <!-- "Semua kode", beside a real Merek select, read as "semua merek" to a
+           rep. The ERP item code says so in full now (UX-SPEC §11-A1). -->
       <label class="sr-only" for="kode">Kode Barang</label>
-      <select id="kode" title="Kode Barang"><option value="">Semua kode</option></select>
+      <select id="kode" title="Kode Barang"><option value="">Semua kode barang</option></select>
       <label class="sr-only" for="warna">Warna</label>
       <select id="warna" title="Warna"><option value="">Semua warna</option></select>
       <label class="sr-only" for="th">Tebal</label>
@@ -368,10 +385,16 @@ function warnaFromName(i){
   let v=txt(i.name);
   if(!v || v===txt(i.sku_key)) return "";        // nameless fallback, not a name
   const dot=v.indexOf(" · "); if(dot>=0) v=v.slice(0,dot);
-  const kode=txt(i.kode_barang);
-  if(kode && v.toLowerCase().startsWith(kode.toLowerCase())) v=v.slice(kode.length).trim();
+  // composeName(): "{brand} {warna} {th_panel} {th} · {p}×{l}", where {brand}
+  // is brand_text ?? brand ?? kode_barang. Strip whichever of those is the
+  // actual prefix — on a CommitLine there is no kode_barang to strip.
+  for(const pre of [txt(i.brand_text),txt(i.brand),txt(i.kode_barang)]){
+    if(pre && v.toLowerCase().startsWith(pre.toLowerCase())){ v=v.slice(pre.length).trim(); break; }
+  }
   const th=i.th!=null?String(i.th):"";
   if(th && v.toLowerCase().endsWith(th.toLowerCase())) v=v.slice(0,v.length-th.length).trim();
+  const thp=i.th_panel!=null?String(i.th_panel):"";
+  if(thp && v.toLowerCase().endsWith(thp.toLowerCase())) v=v.slice(0,v.length-thp.length).trim();
   return v;
 }
 function warnaLabel(i){
@@ -382,6 +405,44 @@ function warnaLabel(i){
   const code=t||w||fromName;
   if(code) return "Kode warna "+code;            // never a bare number
   return txt(i.name)||txt(i.sku_key)||"—";
+}
+
+/* ── `brand` is an ID too — the Merek label ───────────────────────────────────
+   `erp_live_fg` and `erp_so_line` both carry `brand` (the product-line id the
+   SKU key is built from) and its display twin `brand_text`. The merek values
+   are DATA, not an enumeration — no merek name may be written anywhere in this
+   file, in code or in a comment (UX-SPEC §12 greps for exactly that).
+   Same precedence discipline as warnaLabel (UX-SPEC §1.6): the readable name
+   wins, a bare code is labelled AS a code, and when neither field is present we
+   render NOTHING — not an em dash, and never a merek guessed out of
+   `kode_barang`, which conflates merek, lini produk and tebal panel. A guess
+   shows a rep the wrong manufacturer, which is worse than showing none. */
+function brandLabel(i){
+  if(!i) return "";
+  const t=txt(i.brand_text); if(t && !isKode(t)) return t;
+  const b=txt(i.brand);      if(b && !isKode(b)) return b;
+  const code=t||b;
+  return code ? "Kode merek "+code : "";         // never a bare number, never a guess
+}
+/* The spec line under the colour, in the order the two selects sit in the
+   toolbar: merek · kode barang · tebal · ukuran. A merek that IS the
+   kode_barang (the server's own composeName falls back that way) prints once.
+   Returns HTML: every ERP-sourced string is esc()'d here, at the boundary. */
+function identHtml(i){
+  const mk=brandLabel(i), kb=txt(i.kode_barang);
+  const rest=[];
+  if(kb && kb.toLowerCase()!==mk.toLowerCase()) rest.push(kb);
+  const sp=specText(i); if(sp) rest.push(sp);
+  const tail=rest.join(" · ");
+  if(!mk) return esc(tail);
+  return `<b class="mk">${esc(mk)}</b>`+(tail?" · "+esc(tail):"");
+}
+/* Full product identity, merek then warna — what a rep reads aloud on the
+   phone. Used for the detail-sheet heading and the row's accessible name. */
+function identName(i,fallback){
+  const w=warnaLabel(i);
+  const head=[brandLabel(i), w==="—"?"":w].filter(Boolean).join(" ");
+  return head||fallback||"";
 }
 
 /* ── The five connection states — UX-SPEC §4 precedence, extended ─────────────
@@ -487,7 +548,8 @@ const PREV_ATP=new Map();// sku_key → last atp, for the delta flash
 let FLASH=new Map();     // sku_key → "f-up" | "f-dn", consumed by the next render
 
 const flt={
-  q:"", kode:"", warna:"", th:"", size:"", state:"",
+  q:"", brand:localStorage.getItem("stk_brand")||"",
+  kode:"", warna:"", th:"", size:"", state:"",
   sort:localStorage.getItem("stk_sort")||"warna",
   // Never defaulted on: UX-SPEC §2.3 forbids a filter default that hides rows.
   hideZero:localStorage.getItem("stk_hz")==="1",
@@ -625,7 +687,7 @@ function skeleton(){
 // ERP off ⇒ controls are disabled, never hidden: hiding them makes the page look
 // broken, disabling makes it look switched off (UX-SPEC §4.3).
 function setDisabled(off){
-  ["#q","#kode","#warna","#th","#size","#sort","#hz"].forEach(s=>{
+  ["#q","#brand","#kode","#warna","#th","#size","#sort","#hz"].forEach(s=>{
     const el=$(s); if(!el) return;
     el.disabled=off;
     if(off) el.setAttribute("title","ERP tidak terhubung"); else el.removeAttribute("title");
@@ -713,6 +775,9 @@ function syncSelect(id,opts,cur,placeholder){
 function syncFilterOptions(){
   const items=SUMMARY.items;
   const byId=(a,b)=>String(a).localeCompare(String(b),"id",{sensitivity:"base"});
+  // Keyed on the DISPLAYED merek for the same reason warna is: the filter must
+  // list what the rows say, and must never be a hardcoded brand list.
+  const brands=[...new Set(items.map(brandLabel).filter(Boolean))].sort(byId);
   const kodes=[...new Set(items.map(i=>i.kode_barang).filter(Boolean))].sort(byId);
   // Keyed on the DISPLAYED colour, not the raw code — otherwise the filter
   // reads "4 · 12 · 37" and sorts by id instead of alphabetically by name.
@@ -720,14 +785,20 @@ function syncFilterOptions(){
   const ths=[...new Set(items.map(i=>i.th).filter(v=>v!=null))].sort((a,b)=>N(a)-N(b));
   const sizes=[...new Set(items.map(sizeKey).filter(Boolean))]
     .sort((a,b)=>{const[ap,al]=a.split("x").map(Number),[bp,bl]=b.split("x").map(Number);return ap-bp||al-bl;});
-  syncSelect("kode",kodes.map(v=>({v,label:v})),flt.kode,"Semua kode");
+  syncSelect("brand",brands.map(v=>({v,label:v})),flt.brand,"Semua merek");
+  syncSelect("kode",kodes.map(v=>({v,label:v})),flt.kode,"Semua kode barang");
   syncSelect("warna",warnas.map(v=>({v,label:v})),flt.warna,"Semua warna");
   syncSelect("th",ths.map(v=>({v:String(v),label:num(v)+" mm"})),flt.th,"Semua tebal");
   syncSelect("size",sizes.map(v=>{const[a,b]=v.split("x");return {v,label:`${num(a)}×${num(b)}`};}),flt.size,"Semua ukuran");
-  flt.kode=$("#kode").value; flt.warna=$("#warna").value; flt.th=$("#th").value; flt.size=$("#size").value;
+  flt.brand=$("#brand").value; flt.kode=$("#kode").value;
+  flt.warna=$("#warna").value; flt.th=$("#th").value; flt.size=$("#size").value;
+  // A persisted merek that has left the catalogue was reset above; keep the
+  // stored value in step so a reload does not resurrect a dead filter.
+  if(flt.brand!==(localStorage.getItem("stk_brand")||"")) localStorage.setItem("stk_brand",flt.brand);
 }
 
 $("#q").addEventListener("input",e=>{flt.q=e.target.value;renderRows();});
+$("#brand").addEventListener("change",e=>{flt.brand=e.target.value;localStorage.setItem("stk_brand",flt.brand);renderRows();});
 $("#kode").addEventListener("change",e=>{flt.kode=e.target.value;renderRows();});
 $("#warna").addEventListener("change",e=>{flt.warna=e.target.value;renderRows();});
 $("#th").addEventListener("change",e=>{flt.th=e.target.value;renderRows();});
@@ -762,12 +833,13 @@ function renderTotals(){
 function rankOf(i,q){
   const w=String(warnaLabel(i)).toLowerCase();
   const k=String(i.kode_barang||"").toLowerCase();
+  const b=String(brandLabel(i)).toLowerCase();
   const n=String(i.name||"").toLowerCase();
   if(w===q) return 0;
   if(w.startsWith(q)) return 1;
   if(new RegExp(`(^|[^a-z0-9])${q.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}([^a-z0-9]|$)`).test(w)) return 2;
   if(w.includes(q)) return 3;
-  if(k.includes(q)) return 4;
+  if(k.includes(q)||(b&&b.includes(q))) return 4;   // merek ranks with the code
   if(n.includes(q)) return 5;
   return 6;
 }
@@ -794,6 +866,7 @@ function cmpFor(sort){
 function visibleItems(){
   const q=flt.q.trim().toLowerCase();
   const rows=SUMMARY.items.filter(i=>{
+    if(flt.brand && !eq(brandLabel(i),flt.brand)) return false;
     if(flt.kode && !eq(i.kode_barang,flt.kode)) return false;
     if(flt.warna && !eq(warnaLabel(i),flt.warna)) return false;
     if(flt.th && String(i.th)!==flt.th) return false;
@@ -806,7 +879,8 @@ function visibleItems(){
     if(q){
       // The raw code stays searchable — PPIC and IT quote it — but the name is
       // what a rep types, so both are in the haystack.
-      const hay=[warnaLabel(i),i.warna_name,i.warna_text,i.warna,i.kode_barang,i.name,i.sku_key]
+      const hay=[warnaLabel(i),i.warna_name,i.warna_text,i.warna,
+                 brandLabel(i),i.brand_text,i.brand,i.kode_barang,i.name,i.sku_key]
         .filter(Boolean).join(" ").toLowerCase();
       if(!hay.includes(q)) return false;
     }
@@ -865,7 +939,7 @@ function renderRows(){
   const t=SUMMARY.totals||{};
   const meta=$("#invMeta");
   if(meta){
-    const filtered=flt.q||flt.kode||flt.warna||flt.th||flt.size||flt.state||flt.hideZero;
+    const filtered=flt.q||flt.brand||flt.kode||flt.warna||flt.th||flt.size||flt.state||flt.hideZero;
     meta.textContent=filtered
       ? `${num(rows.length)} dari ${num(N(t.skus)||SUMMARY.items.length)} SKU`
       : `${num(N(t.skus)||SUMMARY.items.length)} SKU`;
@@ -876,11 +950,16 @@ function renderRows(){
   }
   // Only the tbody is replaced, so a poll never moves the page under the reader.
   tb.innerHTML=rows.map(i=>{
-    const sub=[i.kode_barang,specText(i)].filter(Boolean).join(" · ");
-    return `<tr class="itemrow" data-sku="${esc(i.sku_key)}" tabindex="0" role="button" aria-label="Lihat detail ${esc(warnaLabel(i))}">
+    // The colour keeps the 14px bold lead: it is what the list is sorted by
+    // (Warna A–Z), what rankOf() ranks and what §1.6 calls the single most
+    // important label — a bold lead that did not match the sort key would
+    // break scanning. The merek leads the line directly under it, where the
+    // eye goes next, which is exactly what tells two same-colour rows apart.
+    const sub=identHtml(i);
+    return `<tr class="itemrow" data-sku="${esc(i.sku_key)}" tabindex="0" role="button" aria-label="Lihat detail ${esc(identName(i,warnaLabel(i)))}">
       <td class="prod warna">
         <b>${esc(warnaLabel(i))}</b>
-        ${sub?`<div class="sub2">${esc(sub)}</div>`:""}
+        ${sub?`<div class="sub2">${sub}</div>`:""}
         <div style="margin-top:5px">${stateChip(i.state,false)}</div>
       </td>
       <td class="num">${atpBlock(i,FLASH.get(String(i.sku_key)))}</td>
@@ -1016,7 +1095,7 @@ function renderDetail(j,local,skuKey){
       }).join("")}</tbody></table></div>`:"";
 
   return `
-    <h3>${esc(warnaLabel(it)==="—"?skuKey:warnaLabel(it))}</h3>
+    <h3>${esc(identName(it,warnaLabel(it)==="—"?skuKey:warnaLabel(it)))}</h3>
     <p class="mp">${esc([it.kode_barang,specText(it)].filter(Boolean).join(" · ")||"—")}<br>Kode SKU ${esc(skuKey)}</p>
     <div style="display:flex;gap:10px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap">
       <div>

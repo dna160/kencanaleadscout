@@ -60,6 +60,8 @@ const {
   readEnvelope,
   redactSecrets,
   resetShapeNotices,
+  buildColumnDiagnostic,
+  describeColumnDiagnostic,
 } = clientMod;
 const { runErpSyncOnce } = workerMod;
 const { canonicalSkuKey } = skuMod;
@@ -81,6 +83,110 @@ const FIXTURES: Record<SelarasTable, unknown[]> = {
   so_line: loadFixture("selaras-so-line.json"),
   live_fg: loadFixture("selaras-live-fg.json"),
 };
+
+/**
+ * SO headers whose date columns are broken in every way the real ERP produces
+ * them. Kept out of `selaras-so-header.json` on purpose: the other tests assert
+ * exact mirror counts off that file, and these rows are served through
+ * `faults.rows` only by the tests that want them.
+ *
+ * `0000-00-00 00:00:00` is MySQL's zero date for an unset column. It is what
+ * aborted so_header in production: it matches a 'YYYY-MM-DD' shape check
+ * perfectly, but `new Date('0000-00-00')` is Invalid Date, and postgres.js
+ * serializes a `date`/`timestamptz` parameter with `.toISOString()` — which
+ * throws `RangeError: Invalid time value` during Bind, inside the page
+ * transaction, aborting the entire table pass and pinning its cursor forever.
+ */
+const MYSQL_ZERO_DATE = "0000-00-00 00:00:00";
+
+const BAD_DATE_HEADERS: unknown[] = [
+  {
+    tbl_1202_SOSalesOrderNID_id: "SOH-OK-1",
+    so_number: "SO/2026/09/0301",
+    customer_name_text: "PT Tanggal Benar",
+    sales_name_text: "Budi",
+    po_date: "2026-08-01",
+    status_order: "Open",
+    deleted_at: null,
+    updated_at: "2026-09-03T01:00:00Z",
+  },
+  {
+    // THE PRODUCTION CULPRIT, in both date columns at once.
+    tbl_1202_SOSalesOrderNID_id: "SOH-ZERO",
+    so_number: "SO/2011/01/0001",
+    customer_name_text: "PT Tanggal Nol",
+    sales_name_text: "Sari",
+    po_date: "0000-00-00",
+    status_order: "Open",
+    deleted_at: null,
+    updated_at: MYSQL_ZERO_DATE,
+  },
+  {
+    tbl_1202_SOSalesOrderNID_id: "SOH-NULL-TS",
+    so_number: "SO/2026/09/0302",
+    customer_name_text: "PT Tanpa Updated",
+    sales_name_text: "Dewi",
+    po_date: "2026-08-02",
+    status_order: "Open",
+    deleted_at: null,
+    updated_at: null,
+  },
+  {
+    tbl_1202_SOSalesOrderNID_id: "SOH-EMPTY",
+    so_number: "SO/2026/09/0303",
+    customer_name_text: "PT Kosong",
+    sales_name_text: "Dewi",
+    po_date: "",
+    status_order: "Open",
+    deleted_at: null,
+    updated_at: "",
+  },
+  {
+    tbl_1202_SOSalesOrderNID_id: "SOH-GARBAGE",
+    so_number: "SO/2026/09/0304",
+    customer_name_text: "PT Tanggal Ngawur",
+    sales_name_text: "Budi",
+    po_date: "tanggal tidak diketahui",
+    status_order: "Open",
+    deleted_at: null,
+    updated_at: "31 Februari kemarin",
+  },
+  {
+    tbl_1202_SOSalesOrderNID_id: "SOH-OK-2",
+    so_number: "SO/2026/09/0305",
+    customer_name_text: "PT Tanggal Benar Juga",
+    sales_name_text: "Sari",
+    po_date: "2026-08-03",
+    status_order: "Open",
+    deleted_at: null,
+    updated_at: "2026-09-04T02:00:00Z",
+  },
+];
+
+/** The newest VALID `updated_at` above — the only place the cursor may land. */
+const BAD_DATE_HEADERS_MAX_VALID = new Date("2026-09-04T02:00:00Z");
+
+/** The same rows with every timestamp broken: a page with nothing to advance to. */
+const ALL_BAD_DATE_HEADERS: unknown[] = [
+  {
+    tbl_1202_SOSalesOrderNID_id: "SOH-ALLBAD-1",
+    so_number: "SO/2011/01/0002",
+    customer_name_text: "PT Semua Nol",
+    po_date: "0000-00-00",
+    status_order: "Open",
+    deleted_at: null,
+    updated_at: MYSQL_ZERO_DATE,
+  },
+  {
+    tbl_1202_SOSalesOrderNID_id: "SOH-ALLBAD-2",
+    so_number: "SO/2011/01/0003",
+    customer_name_text: "PT Semua Ngawur",
+    po_date: "31/02/2020",
+    status_order: "Open",
+    deleted_at: null,
+    updated_at: "bukan tanggal",
+  },
+];
 
 /** ERP table name (what the URL carries) → our logical table name. */
 const ERP_TABLE_TO_LOGICAL: Record<string, SelarasTable> = {
@@ -123,6 +229,12 @@ interface ErpFault {
   unsuccessful?: Record<string, true>;
   /** `${table}:${page}` → answer with an envelope the verified API never sends. */
   shape?: Record<string, "bare_array">;
+  /**
+   * Serve a DIFFERENT row set for a table, instead of its on-disk fixture. Used
+   * by the bad-date tests, which need rows that the shared fixtures must not
+   * carry — every other test asserts exact mirror counts off those fixtures.
+   */
+  rows?: Partial<Record<SelarasTable, unknown[]>>;
 }
 
 let faults: ErpFault = {};
@@ -159,7 +271,7 @@ function erpRespond(path: string): { statusCode: number; data: unknown; headers:
   const sinceMs = since ? new Date(since).getTime() : Number.NEGATIVE_INFINITY;
 
   // `__gte` + ascending `updated_at`, exactly as PRD §4 specifies (A2).
-  const matching = FIXTURES[table]
+  const matching = (faults.rows?.[table] ?? FIXTURES[table])
     .filter((r) => rawUpdatedAtMs(r) >= sinceMs)
     .sort((a, b) => rawUpdatedAtMs(a) - rawUpdatedAtMs(b));
   const slice = matching.slice((page - 1) * limit, page * limit);
@@ -531,6 +643,354 @@ describe("adapters — one per table, on the verified column names", () => {
     expect(row?.estimate_delivery).toBeNull();
     expect(row?.erp_updated_at).toBeNull(); // ⇒ the cursor cannot advance on it
     expect(Number.isNaN(row?.qty_balance)).toBe(false);
+  });
+});
+
+// ── ST-R5.3 — the column diagnostic ──────────────────────────────────────────
+//
+// THE OPEN QUESTION IT EXISTS TO CLOSE. Production reports 97.4% of live
+// commitment lines matching NO stock row, and the two sides fail in mirror
+// image: every demand key ends `|-|-` (no `p`/`l`) and every stock key carries
+// `|0|0|` in the two thickness positions. Each side is missing precisely the
+// segments the other side has, which is a column-mapping failure — but THREE
+// mappings fit the evidence and the ERP is unreachable from here:
+//
+//   (a) the API returns different NAMES than the verified documentation lists;
+//   (b) it returns them NESTED inside another object;
+//   (c) it returns NULL for these rows — an ERP data problem, not a mapping one.
+//
+// These fixtures are deliberately NOT the documented column list: each one is
+// one of those three hypotheses made concrete, and the assertions are that the
+// diagnostic NAMES what is really on the wire instead of repeating what the
+// documentation claims. Guessing between (a), (b) and (c) is exactly what
+// produced the v1 key that matched nothing.
+
+/** (a) + (b): the FG table under different names, with `p`/`l` nested. */
+const DRIFTED_FG_ROW = {
+  tbl_1210_STLiveFGMX_id: "FG-DRIFT-1",
+  sn_fg: "FG-AAA-0001",
+  kode_barang: "ACP-4MM",
+  brand: "10",
+  warna: "141",
+  // NOT `th` and NOT `t` — the two segments production sees as `0`.
+  thickness_alu_skin: "0.3",
+  total_thickness: "4",
+  // NOT `p` / `l` at top level: one level down, which no adapter probe reaches.
+  dimensi: { p: 4880, l: 1220 },
+  qty: "12",
+  updated_at: "2026-09-05T00:00:00Z",
+  deleted_at: null,
+};
+
+/** (c): the documented names ARE there, and carry null for these rows. */
+const NULL_SEGMENT_FG_ROW = {
+  tbl_1210_STLiveFGMX_id: "FG-NULL-1",
+  brand: "10",
+  warna: "141",
+  th: null,
+  t: null,
+  p: 4880,
+  l: 1220,
+  qty: 3,
+  deleted_at: null,
+};
+
+/** The stock side exactly as production reports it: a REAL zero, not an absence. */
+const ZERO_SEGMENT_FG_ROW = {
+  tbl_1210_STLiveFGMX_id: "FG-ZERO-1",
+  brand: "10",
+  warna: "141",
+  th: 0,
+  t: "0",
+  p: 1000,
+  l: 500,
+  qty: 3,
+  deleted_at: null,
+};
+
+/** The demand side as production reports it: `p` and `l` simply are not there. */
+const NO_PL_SO_ROW = {
+  tbl_1203_SOSalesOrderDetailNID_id: "SOL-DRIFT-1",
+  brand: "1",
+  warna: "172",
+  th_alu_skin: "0.5",
+  total_thickness_acp: "4",
+  customer_name_text: "PT Rahasia Sekali",
+  harga_satuan: "1250000",
+  qty_balance: 7,
+};
+
+function probeOf(d: clientMod.ColumnDiagnostic, segment: string): clientMod.SegmentProbe {
+  const hit = d.segments.find((x) => x.segment === segment);
+  if (!hit) throw new Error(`no probe for ${segment}`);
+  return hit;
+}
+
+describe("column diagnostic — names the REAL wire keys, not the documented ones", () => {
+  it("lists the complete sorted key list actually present on the row", () => {
+    const d = buildColumnDiagnostic("live_fg", DRIFTED_FG_ROW);
+    expect(d).not.toBeNull();
+    // Sorted, complete, and spelled the way the WIRE spells them. `dimensi` is
+    // rendered with its child names because "returns them nested" is one of the
+    // three hypotheses and is otherwise invisible.
+    expect(d?.keys).toEqual([
+      "brand",
+      "deleted_at",
+      "dimensi{l,p}",
+      "kode_barang",
+      "qty",
+      "sn_fg",
+      "tbl_1210_STLiveFGMX_id",
+      "thickness_alu_skin",
+      "total_thickness",
+      "updated_at",
+      "warna",
+    ]);
+    expect(d?.keysTruncated).toBe(false);
+    expect(d?.erpTable).toBe("tbl_1210_STLiveFGMX");
+    expect(d?.side).toBe("live_fg");
+  });
+
+  it("reports every unmatched segment, with the probe names it actually tried", () => {
+    const d = buildColumnDiagnostic("live_fg", DRIFTED_FG_ROW);
+    expect(d?.unmatched).toEqual(["th", "th_panel", "p", "l"]);
+
+    // The probe list is READ FROM SKU_SEGMENT_SOURCES, so it cannot drift from
+    // the mapping the adapter is really running.
+    expect(probeOf(d!, "th").probes).toEqual(skuMod.SKU_SEGMENT_SOURCES.th.live_fg);
+    expect(probeOf(d!, "th").probes).toEqual(["th"]);
+    expect(probeOf(d!, "th_panel").probes).toEqual(["t"]);
+    expect(probeOf(d!, "p").probes).toEqual(["p"]);
+
+    // Absent ⇒ the segment contributes '-', which is what the key shows.
+    for (const name of ["th", "th_panel", "p", "l"]) {
+      expect(probeOf(d!, name).status, name).toBe("absent");
+      expect(probeOf(d!, name).matched, name).toBeNull();
+      expect(probeOf(d!, name).raw, name).toBeNull();
+      expect(probeOf(d!, name).normalized, name).toBe("-");
+    }
+    // …and the segments that DID match name the wire key and show both values.
+    expect(probeOf(d!, "brand")).toMatchObject({ status: "matched", matched: "brand", raw: "10", normalized: "10" });
+    expect(probeOf(d!, "warna")).toMatchObject({ status: "matched", matched: "warna", normalized: "141" });
+
+    // The adapter agrees with the diagnostic, which is the point of both.
+    expect(adaptLiveFgRow(DRIFTED_FG_ROW)?.sku_key).toBe("10|141|-|-|-|-");
+  });
+
+  it("separates 'no such key' from 'key present, value null' (hypothesis c)", () => {
+    const d = buildColumnDiagnostic("live_fg", NULL_SEGMENT_FG_ROW);
+    expect(probeOf(d!, "th").status).toBe("null");
+    expect(probeOf(d!, "th").matched).toBe("th"); // the column EXISTS
+    expect(probeOf(d!, "th").normalized).toBe("-");
+    expect(probeOf(d!, "th_panel").status).toBe("null");
+    // Same '-' in the key, completely different cause — and the log says which.
+    const text = describeColumnDiagnostic(d!);
+    expect(text).toContain("key 'th' EXISTS but its value is null");
+    expect(text).not.toContain("NO SUCH KEY on this row (under any casing) → \"-\"\n    th_panel");
+  });
+
+  it("separates a REAL zero from an absent segment (the 0-vs-'-' question)", () => {
+    // This is the FG side exactly as production reports it. A zero here is a
+    // value that was PRESENT and read as zero — NOT a column we failed to find.
+    // The two are different facts and the diagnostic must not blur them.
+    const d = buildColumnDiagnostic("live_fg", ZERO_SEGMENT_FG_ROW);
+    expect(probeOf(d!, "th")).toMatchObject({ status: "matched", matched: "th", raw: "0", normalized: "0" });
+    expect(probeOf(d!, "th_panel")).toMatchObject({ status: "matched", matched: "t", raw: "0", normalized: "0" });
+    expect(d?.unmatched).toEqual([]);
+    expect(adaptLiveFgRow(ZERO_SEGMENT_FG_ROW)?.sku_key).toBe("10|141|0|0|1000|500");
+  });
+
+  it("shows the demand side losing p and l, which is what ends every key '|-|-'", () => {
+    const d = buildColumnDiagnostic("so_line", NO_PL_SO_ROW);
+    expect(d?.side).toBe("so_line");
+    expect(d?.unmatched).toEqual(["p", "l"]);
+    expect(probeOf(d!, "th")).toMatchObject({ status: "matched", matched: "th_alu_skin", normalized: "0.5" });
+    expect(probeOf(d!, "th_panel")).toMatchObject({ status: "matched", matched: "total_thickness_acp" });
+    expect(adaptSoLineRow(NO_PL_SO_ROW)?.sku_key).toBe("1|172|0.5|4|-|-");
+  });
+
+  it("logs KEY NAMES and identity values only — never row content (§7.9)", () => {
+    const text = describeColumnDiagnostic(buildColumnDiagnostic("so_line", NO_PL_SO_ROW)!);
+    // The column NAMES are the diagnostic's whole payload and must be there…
+    expect(text).toContain("customer_name_text");
+    expect(text).toContain("harga_satuan");
+    // …but not one of their VALUES. Rows carry customers and prices.
+    expect(text).not.toContain("PT Rahasia Sekali");
+    expect(text).not.toContain("1250000");
+    // Only the six identity segments are ever sampled.
+    expect(text).toContain('raw="0.5"');
+  });
+
+  it("redacts a sampled value, and never prints a nested object's contents", () => {
+    const withSecret = { ...NULL_SEGMENT_FG_ROW, th: `x${TOKEN}x`, t: { inner: "PT Rahasia", nested: 1 } };
+    const text = describeColumnDiagnostic(buildColumnDiagnostic("live_fg", withSecret)!);
+    expect(text).not.toContain(TOKEN);
+    expect(text).not.toContain("PT Rahasia");
+    expect(text).toContain("t{inner,nested}"); // the shape, by name, and nothing else
+  });
+
+  it("caps a sampled value rather than spilling a long one into the log", () => {
+    const long = "9".repeat(500);
+    const d = buildColumnDiagnostic("live_fg", { ...ZERO_SEGMENT_FG_ROW, th: long });
+    expect((probeOf(d!, "th").raw ?? "").length).toBeLessThanOrEqual(40);
+  });
+
+  it("an ABSENT numeric segment is '-', never 0 — they are different facts", () => {
+    // The production symptom is `|0|0|` in the two FG thickness positions. That
+    // is NOT what a column we failed to read produces: EVERY way of failing to
+    // read a numeric segment already yields '-', matching the SQL twin
+    // (`sqlNumericSegment`: `when <arg> is null then '-'`). So a `0` in a stored
+    // key is evidence of a value that WAS present and WAS zero — a different
+    // problem from a missing column, and exactly the distinction the
+    // diagnostic's matched/null/absent split exists to report.
+    const base = { tbl_1210_STLiveFGMX_id: "FG-Z", brand: "10", warna: "141", p: 1000, l: 500 };
+    const absentish: readonly [string, unknown][] = [
+      ["absent", undefined],
+      ["null", null],
+      ["empty string", ""],
+      ["boolean false", false],
+      ["separator-ambiguous '0.000'", "0.000"],
+      ["unreadable text", "tidak ada"],
+    ];
+    for (const [name, value] of absentish) {
+      const row = value === undefined ? base : { ...base, th: value, t: value };
+      expect(adaptLiveFgRow(row)?.sku_key, name).toBe("10|141|-|-|1000|500");
+    }
+    // …and only a value that really IS zero renders as 0.
+    expect(adaptLiveFgRow({ ...base, th: 0, t: "0.00" })?.sku_key).toBe("10|141|0|0|1000|500");
+  });
+
+  it("says plainly that warna and so_header carry no sku_key segment", () => {
+    for (const table of ["warna", "so_header"] as const) {
+      const d = buildColumnDiagnostic(table, FIXTURES[table][0]);
+      expect(d?.side).toBeNull();
+      expect(d?.segments).toEqual([]);
+      expect(d?.keys.length).toBeGreaterThan(0);
+      expect(describeColumnDiagnostic(d!)).toContain("contributes no segment to the key");
+    }
+  });
+
+  it("is total: a non-object row yields null instead of throwing", () => {
+    for (const raw of [null, undefined, 42, "a string", [1, 2, 3]]) {
+      expect(buildColumnDiagnostic("live_fg", raw)).toBeNull();
+    }
+  });
+
+  it("is attached to the FIRST page only — once per table per run, not per page", async () => {
+    // live_fg has 9 fixture rows at a page size of 2, so a real run reads five
+    // pages. Only one of them may carry a diagnostic.
+    const carried: number[] = [];
+    for (let page = 1; page <= 5; page += 1) {
+      const res = await fetchPage("live_fg", { since: null, page, limit: PAGE_SIZE });
+      expect(res.ok).toBe(true);
+      if (res.ok && res.page.columnDiagnostic !== null) carried.push(page);
+    }
+    expect(carried).toEqual([1]);
+  });
+
+  it("is off, and costs nothing, when STOCK_SYNC_DIAGNOSE_COLUMNS=false", async () => {
+    vi.resetModules();
+    process.env["STOCK_SYNC_DIAGNOSE_COLUMNS"] = "false";
+    try {
+      const isolated = await import("../src/erp/selarasClient.js");
+      const res = await isolated.fetchPage("live_fg", { since: null, page: 1, limit: PAGE_SIZE });
+      expect(res.ok).toBe(true);
+      if (res.ok) {
+        expect(res.page.columnDiagnostic).toBeNull();
+        expect(res.page.rows.length).toBeGreaterThan(0); // …and the rows still arrive
+      }
+    } finally {
+      delete process.env["STOCK_SYNC_DIAGNOSE_COLUMNS"];
+      vi.resetModules();
+    }
+  });
+});
+
+describe("unreadable dates are refused at the adapter, never written through", () => {
+  /**
+   * The production defect, at the layer that caused it.
+   *
+   * `tbl_1202_SOSalesOrderNID.po_date` carries MySQL's zero date on older rows.
+   * `'0000-00-00'` matches a 'YYYY-MM-DD' shape test, so it used to be passed
+   * through verbatim as a `date` parameter — and postgres.js serializes a `date`
+   * with `(x instanceof Date ? x : new Date(x)).toISOString()`, which throws
+   * `RangeError: Invalid time value` on an Invalid Date. That RangeError landed
+   * inside `commitPage()`'s transaction and aborted the whole table pass.
+   *
+   * The rule now: a date is accepted only if it denotes a REAL calendar day that
+   * `new Date()` can parse. Everything else is NULL plus one tick on a counter.
+   * Never invented, never "now" — a fabricated timestamp in a cursor is worse
+   * than a missing row, because a cursor only ever moves forward.
+   */
+  it.each([
+    ["MySQL zero date", "0000-00-00"],
+    ["MySQL zero timestamp", "0000-00-00 00:00:00"],
+    ["zero date, ISO spelling", "0000-00-00T00:00:00Z"],
+    ["a day that does not exist", "2026-02-29"],
+    ["month 13", "2026-13-01"],
+    ["dd/mm/yyyy that does not exist", "31/02/2020"],
+    ["prose", "tanggal tidak diketahui"],
+  ])("refuses %s in po_date rather than handing it to postgres", (_name, value) => {
+    const row = adaptSoHeaderRow({ tbl_1202_SOSalesOrderNID_id: "SOH-X", po_date: value });
+    expect(row?.po_date).toBeNull();
+  });
+
+  it.each([
+    ["MySQL zero timestamp", "0000-00-00 00:00:00"],
+    ["MySQL zero date", "0000-00-00"],
+    ["prose", "31 Februari kemarin"],
+    ["an empty string", ""],
+    ["a null", null],
+  ])("refuses %s in updated_at — an Invalid Date must never reach the cursor", (_name, value) => {
+    const row = adaptSoHeaderRow({ tbl_1202_SOSalesOrderNID_id: "SOH-X", updated_at: value });
+    expect(row?.erp_updated_at).toBeNull();
+  });
+
+  it("treats a zero `deleted_at` as NOT DELETED, not as a broken deletion", () => {
+    // The alternative — "it has a value, so the row is gone" — would silently
+    // delete every legacy row whose deleted_at was never set.
+    const row = adaptSoHeaderRow({ tbl_1202_SOSalesOrderNID_id: "SOH-X", deleted_at: MYSQL_ZERO_DATE });
+    expect(row?.deleted_at).toBeNull();
+  });
+
+  it("applies the same rule to so_line.estimate_delivery — one shared helper, not one patched adapter", () => {
+    const bad = adaptSoLineRow({
+      tbl_1203_SOSalesOrderDetailNID_id: "SOL-X",
+      estimate_delivery: "0000-00-00",
+      updated_at: MYSQL_ZERO_DATE,
+    });
+    expect(bad?.estimate_delivery).toBeNull();
+    expect(bad?.erp_updated_at).toBeNull();
+  });
+
+  it("still accepts every date shape that IS real", () => {
+    const row = adaptSoHeaderRow({
+      tbl_1202_SOSalesOrderNID_id: "SOH-Y",
+      po_date: "14/03/2020", // A17: day-first
+      updated_at: "2026-09-02 01:15:00", // A18: naive, read as UTC
+    });
+    expect(row?.po_date).toBe("2020-03-14");
+    expect(row?.erp_updated_at?.toISOString()).toBe("2026-09-02T01:15:00.000Z");
+    expect(adaptSoHeaderRow({ tbl_1202_SOSalesOrderNID_id: "S", po_date: "2024-02-29" })?.po_date).toBe("2024-02-29");
+    expect(adaptSoHeaderRow({ tbl_1202_SOSalesOrderNID_id: "S", po_date: "2026-08-14T09:00:00Z" })?.po_date).toBe(
+      "2026-08-14",
+    );
+  });
+
+  it("counts the refusals on the page, alongside the numeric ones", async () => {
+    faults.rows = { so_header: BAD_DATE_HEADERS };
+    const res = await fetchPage("so_header", { since: null, page: 1, limit: 50 });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    // SOH-ZERO (po_date + updated_at) and SOH-GARBAGE (po_date + updated_at).
+    // A null or blank date is ABSENT, not broken, and is deliberately not counted.
+    expect(res.page.badDates.count).toBe(4);
+    expect(res.page.badDates.samples.length).toBeLessThanOrEqual(3);
+    expect(res.page.badDates.samples).toContain("0000-00-00");
+    // Tokens only — never a whole row, which could carry customer data.
+    expect(res.page.badDates.samples.join("|")).not.toContain("PT Tanggal Nol");
+    // Every row still came through; nothing was dropped over a date.
+    expect(res.page.rows).toHaveLength(BAD_DATE_HEADERS.length);
   });
 });
 
@@ -1076,6 +1536,117 @@ describe.skipIf(db === null)("syncWorker — against a real mirror schema", () =
     expect(degraded[0]?.th).toBeNull();
   });
 
+  it("survives a page of broken dates: bad values are NULLed and counted, the run still succeeds", async () => {
+    // THE REGRESSION. In production this exact page aborted so_header on every
+    // run for months — `[erp-sync] so_header: run aborted — Invalid time value`
+    // — while so_line, live_fg and warna all completed, so the UI said
+    // "Sinkronisasi ERP gagal" over three healthy tables and one stuck cursor.
+    faults.rows = { so_header: BAD_DATE_HEADERS };
+
+    const result = await run(sql);
+    expect(result.started).toBe(true);
+    const header = result.tables.find((t) => t.table === "so_header");
+    expect(header?.error).toBeUndefined();
+    expect(header?.ok).toBe(true);
+    expect(result.tables.every((t) => t.ok)).toBe(true);
+
+    // Counted, exactly like a non-finite numeric: two broken values on SOH-ZERO
+    // and two on SOH-GARBAGE. A null or blank date is an ABSENT date, not a
+    // broken one, and is deliberately not counted — po_date is nullable and a
+    // null there is entirely routine.
+    expect(header?.badDates).toBe(4);
+    expect(header?.dropped).toBe(0); // a bad date never costs us the row
+
+    // Every row is in the mirror, with the unreadable values as NULL and the
+    // readable ones untouched.
+    const mirrored = await sql<{ id: string; po_date: Date | null; erp_updated_at: Date | null }[]>`
+      select id, po_date, erp_updated_at from erp_so_header order by id
+    `;
+    expect(mirrored.map((r) => r.id)).toEqual([
+      "SOH-EMPTY",
+      "SOH-GARBAGE",
+      "SOH-NULL-TS",
+      "SOH-OK-1",
+      "SOH-OK-2",
+      "SOH-ZERO",
+    ]);
+    const byId = new Map(mirrored.map((r) => [r.id, r]));
+    expect(byId.get("SOH-ZERO")?.po_date).toBeNull();
+    expect(byId.get("SOH-ZERO")?.erp_updated_at).toBeNull();
+    expect(byId.get("SOH-GARBAGE")?.po_date).toBeNull();
+    expect(byId.get("SOH-EMPTY")?.po_date).toBeNull();
+    expect(byId.get("SOH-NULL-TS")?.erp_updated_at).toBeNull();
+    expect(byId.get("SOH-OK-2")?.erp_updated_at?.getTime()).toBe(BAD_DATE_HEADERS_MAX_VALID.getTime());
+
+    // Nothing was invented: not one fabricated date anywhere in the mirror, and
+    // in particular nothing dated "now" standing in for a value we could not read.
+    const invented = await sql<{ n: number }[]>`
+      select count(*)::int as n from erp_so_header
+       where po_date > current_date or erp_updated_at > now() - interval '1 minute'
+    `;
+    expect(invented[0]?.n).toBe(0);
+
+    // AND THE POINT OF ALL OF IT: the cursor moved, off the good rows alone.
+    const state = await syncStateRows(sql);
+    const cursor = state.find((r) => r.table_name === "so_header")?.cursor_value;
+    expect(cursor?.getTime()).toBe(BAD_DATE_HEADERS_MAX_VALID.getTime());
+    expect(header?.cursorAfter?.getTime()).toBe(BAD_DATE_HEADERS_MAX_VALID.getTime());
+  });
+
+  it("logs the bad-date refusal ONCE per table per run, with examples and a remedy", async () => {
+    faults.rows = { so_header: BAD_DATE_HEADERS };
+    const lines: string[] = [];
+    await run(sql, { info: () => {}, warn: (m: string) => lines.push(m), error: () => {} });
+
+    const refusals = lines.filter((l) => l.includes("unreadable date value"));
+    // One line per AFFECTED TABLE, not one per row: so_header here, and so_line,
+    // whose fixture has carried "31 Desember" / "bukan tanggal" all along.
+    expect(refusals).toHaveLength(2);
+    expect(refusals.filter((l) => l.startsWith("so_header:"))).toHaveLength(1);
+    expect(refusals.filter((l) => l.startsWith("so_line:"))).toHaveLength(1);
+
+    const headerLine = refusals.find((l) => l.startsWith("so_header:")) ?? "";
+    expect(headerLine).toMatch(/^so_header: refused 4 unreadable date value\(s\)/);
+    expect(headerLine).toContain('"0000-00-00"'); // the offending token, quoted
+    expect(headerLine).toContain("Invalid time value"); // …and what it used to do
+    // Tokens only, never a whole row: customer names must not reach a log line.
+    expect(headerLine).not.toContain("PT Tanggal Nol");
+    expect(headerLine).not.toContain("SOH-ZERO");
+  });
+
+  it("leaves the cursor untouched when a page yields NO valid timestamp at all", async () => {
+    // Not an error, and emphatically not a guess: there is simply nothing to
+    // advance to. The next run re-pulls the same window and tries again. The
+    // alternative — falling back to `now()` — would be permanent data loss,
+    // because the cursor only ever moves forward.
+    faults.rows = { so_header: ALL_BAD_DATE_HEADERS };
+
+    const result = await run(sql);
+    const header = result.tables.find((t) => t.table === "so_header");
+    expect(header?.ok).toBe(true);
+    expect(header?.error).toBeUndefined();
+    expect(header?.badDates).toBe(4); // two po_dates, two updated_ats
+    expect(header?.cursorAfter).toBeNull();
+
+    const state = await syncStateRows(sql);
+    const row = state.find((r) => r.table_name === "so_header");
+    expect(row?.cursor_value).toBeNull(); // still exactly where it started
+    expect(row?.last_error).toBeNull();
+
+    // The rows themselves are mirrored — only their dates were unreadable.
+    const mirrored = await sql<{ id: string; po_date: Date | null }[]>`
+      select id, po_date from erp_so_header order by id
+    `;
+    expect(mirrored.map((r) => r.id)).toEqual(["SOH-ALLBAD-1", "SOH-ALLBAD-2"]);
+    expect(mirrored.every((r) => r.po_date === null)).toBe(true);
+
+    // And a second run over the same untouched cursor is still fine — the page
+    // replays rather than being skipped.
+    const again = await run(sql);
+    expect(again.tables.every((t) => t.ok)).toBe(true);
+    expect((await syncStateRows(sql)).find((r) => r.table_name === "so_header")?.cursor_value).toBeNull();
+  });
+
   it("survives a total ERP outage without throwing, and leaves the mirror intact", async () => {
     await run(sql);
     const mirrorBefore = await mirrorSnapshot(sql);
@@ -1215,6 +1786,80 @@ describe.skipIf(db === null)("syncWorker — against a real mirror schema", () =
     expect(report.ratio).toBe(1);
     expect(report.tripped).toBe(false);
     expect(errors).toEqual([]);
+  });
+
+  it("emits the column diagnostic exactly ONCE per table per run (ST-R5.3)", async () => {
+    await resetCursors(sql);
+    const lines: string[] = [];
+    const recorder = {
+      info: (m: string) => lines.push(m),
+      warn: (m: string) => lines.push(m),
+      error: (m: string) => lines.push(m),
+    };
+    const first = await runErpSyncOnce({ db: sql, pageSize: PAGE_SIZE, intervalMs: 60_000, log: recorder });
+    expect(first.started).toBe(true);
+
+    // live_fg alone is read over five pages at this page size — the guarantee is
+    // per TABLE per RUN, not per page and certainly not per row.
+    expect(first.tables.find((t) => t.table === "live_fg")?.pages).toBeGreaterThan(1);
+
+    const diagnostics = lines.filter((m) => m.includes("COLUMN DIAGNOSTIC"));
+    expect(diagnostics).toHaveLength(4);
+    for (const table of ["warna", "so_header", "so_line", "live_fg"] as const) {
+      expect(diagnostics.filter((m) => m.startsWith(`${table}: COLUMN DIAGNOSTIC`)), table).toHaveLength(1);
+    }
+
+    // It names the REAL wire keys of the fixture — which is the only thing that
+    // makes the next production sync answer the mapping question by itself.
+    const fg = diagnostics.find((m) => m.startsWith("live_fg:")) ?? "";
+    expect(fg).toContain("kode_barang");
+    expect(fg).toContain("tbl_1210_STLiveFGMX_id");
+    expect(fg).toContain("th (numeric): probed [th] → matched 'th'");
+    expect(fg).toContain("th_panel (numeric): probed [t] → matched 't'");
+    const so = diagnostics.find((m) => m.startsWith("so_line:")) ?? "";
+    expect(so).toContain("probed [th_alu_skin] → matched 'th_alu_skin'");
+
+    // And it leaks nothing: no row content, no credential.
+    for (const m of diagnostics) {
+      expect(m).not.toContain(TOKEN);
+      expect(m).not.toContain("PT Sinar Mandiri"); // a customer name, from so_header
+      expect(m).not.toContain("SN-0001"); // a roll serial, from live_fg
+    }
+
+    // Per RUN, not per process: the next run says it again, because the wire
+    // shape can change under us between runs.
+    await resetCursors(sql);
+    const second: string[] = [];
+    await runErpSyncOnce({
+      db: sql,
+      pageSize: PAGE_SIZE,
+      intervalMs: 60_000,
+      log: { info: (m: string) => second.push(m), warn: () => {}, error: () => {} },
+    });
+    expect(second.filter((m) => m.includes("COLUMN DIAGNOSTIC"))).toHaveLength(4);
+  });
+
+  it("the diagnostic changes nothing: same mirror, same ATP, with it and without", async () => {
+    // It is observation only. Byte-identical rows and byte-identical ATP are the
+    // acceptance criterion for the whole sync (§5), so they are the right test.
+    await resetCursors(sql);
+    await runErpSyncOnce({ db: sql, pageSize: PAGE_SIZE, intervalMs: 60_000, log: silentLog });
+    const withDiagnostic = await atpSnapshot(sql);
+    const fgWith = await sql`select erp_row_id, sku_key, qty::text from erp_live_fg order by erp_row_id`;
+
+    vi.resetModules();
+    process.env["STOCK_SYNC_DIAGNOSE_COLUMNS"] = "false";
+    try {
+      const isolated = await import("../src/erp/syncWorker.js");
+      await resetCursors(sql);
+      const off = await isolated.runErpSyncOnce({ db: sql, pageSize: PAGE_SIZE, intervalMs: 60_000, log: silentLog });
+      expect(off.started).toBe(true);
+      expect(await atpSnapshot(sql)).toEqual(withDiagnostic);
+      expect(await sql`select erp_row_id, sku_key, qty::text from erp_live_fg order by erp_row_id`).toEqual(fgWith);
+    } finally {
+      delete process.env["STOCK_SYNC_DIAGNOSE_COLUMNS"];
+      vi.resetModules();
+    }
   });
 
   it("records an auth failure as a typed kind, not as prose (FIX D)", async () => {

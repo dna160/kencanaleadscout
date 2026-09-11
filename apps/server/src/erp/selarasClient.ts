@@ -47,7 +47,16 @@
  */
 import { request, type Dispatcher } from "undici";
 import { config } from "../config.js";
-import { canonicalSkuKey, SKU_SEGMENT_SOURCES } from "./sku.js";
+import {
+  canonicalSkuKey,
+  normalizeSegment,
+  SKU_SEGMENT_KINDS,
+  SKU_SEGMENT_SEPARATOR,
+  SKU_SEGMENT_SOURCES,
+  SKU_SEGMENTS,
+  type SkuSegmentKind,
+  type SkuSegmentName,
+} from "./sku.js";
 
 // ── Logical tables ───────────────────────────────────────────────────────────
 
@@ -488,10 +497,19 @@ function successFailure(table: SelarasTable, env: SelarasEnvelope): string {
  * all answer to the same probe. Field casing is unverified (HANDOVER §2); this
  * makes the adapters indifferent to it instead of wrong about it.
  */
+/**
+ * THE fold rule, in one place. `pick()`, `foldKeys()` and the column diagnostic
+ * all call it, so what the diagnostic reports as "matched" is by construction
+ * the same name the adapter actually read.
+ */
+function foldName(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
 function foldKeys(raw: Record<string, unknown>): Map<string, unknown> {
   const out = new Map<string, unknown>();
   for (const [k, v] of Object.entries(raw)) {
-    const folded = k.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const folded = foldName(k);
     // First spelling wins, so an exact snake_case key is never shadowed later.
     if (!out.has(folded)) out.set(folded, v);
   }
@@ -500,7 +518,7 @@ function foldKeys(raw: Record<string, unknown>): Map<string, unknown> {
 
 function pick(row: Map<string, unknown>, ...names: string[]): unknown {
   for (const n of names) {
-    const v = row.get(n.toLowerCase().replace(/[^a-z0-9]/g, ""));
+    const v = row.get(foldName(n));
     if (v !== undefined && v !== null) return v;
   }
   return null;
@@ -673,6 +691,8 @@ const MAX_AMBIGUITY_SAMPLES = 3;
 interface PageTally {
   ambiguous: AmbiguityTally;
   nonFinite: AmbiguityTally;
+  /** Date/timestamp values that were present and unreadable (the zero date). */
+  badDates: AmbiguityTally;
 }
 
 let tally: PageTally | null = null;
@@ -722,6 +742,94 @@ function asNumberOr(v: unknown, fallback: number): number {
 
 const DATE_ONLY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const DMY_RE = /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/;
+const ISO_DATE_PREFIX_RE = /^(\d{4})-(\d{2})-(\d{2})[T ]/;
+const NAIVE_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/;
+
+/**
+ * THE BUG THIS EXISTS TO KILL (production, so_header, every run for months):
+ *
+ *   MySQL stores an UNSET date as `0000-00-00` / `0000-00-00 00:00:00`. It is not
+ *   rare — it is what older `tbl_1202_SOSalesOrderNID` rows carry in `po_date`.
+ *   It matches `DATE_ONLY_RE` perfectly, so a shape-only check waved it straight
+ *   through as a well-formed 'YYYY-MM-DD' string. postgres.js then looked up the
+ *   parameter's real type from Postgres (`po_date` is `date`, OID 1082) and
+ *   applied its `date` serializer, which is literally
+ *
+ *       serialize: x => (x instanceof Date ? x : new Date(x)).toISOString()
+ *
+ *   `new Date('0000-00-00')` is Invalid Date, so `.toISOString()` threw
+ *   `RangeError: Invalid time value` during Bind — inside `commitPage`'s
+ *   transaction. The page rolled back, the whole so_header pass aborted, and the
+ *   cursor stayed pinned at the last good run. FOREVER: a cursor only moves
+ *   forward, and this table's never moved at all.
+ *
+ * So shape is not enough. A date is only accepted if it denotes a REAL calendar
+ * day that `new Date()` can also parse — which is the actual contract the write
+ * path has with postgres.js. Anything else is refused: null out, count it, log
+ * once per table per run with examples (`badDates`), exactly the posture
+ * `asNumber()` already takes for NaN/Infinity. Never fabricated, never "now".
+ */
+function realCalendarDate(y: number, m: number, d: number): boolean {
+  if (!Number.isInteger(y) || !Number.isInteger(m) || !Number.isInteger(d)) return false;
+  // Year 0 is MySQL's zero date; years 1-99 are refused too, because `Date.UTC()`
+  // maps them into the 1900s and no ERP row legitimately carries one.
+  if (y < 100 || m < 1 || m > 12 || d < 1 || d > 31) return false;
+  const probe = new Date(Date.UTC(y, m - 1, d));
+  // `Date.UTC` rolls 2026-02-31 forward to 2026-03-03 rather than refusing it;
+  // anything that moved was not a real day.
+  return probe.getUTCFullYear() === y && probe.getUTCMonth() === m - 1 && probe.getUTCDate() === d;
+}
+
+/** 'YYYY-MM-DD' for a real day, or null. Parts arrive as captured strings. */
+function dateOnlyFrom(y: string | undefined, m: string | undefined, d: string | undefined): string | null {
+  if (!y || !m || !d) return null;
+  const yy = Number(y);
+  const mm = Number(m);
+  const dd = Number(d);
+  if (!realCalendarDate(yy, mm, dd)) return null;
+  return `${String(yy).padStart(4, "0")}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
+}
+
+/**
+ * A refusal that is DISTINGUISHABLE from an absent value. `null`, `undefined` and
+ * a blank string are simply "the ERP has no date here" — `po_date` is nullable
+ * and a null is routine, so counting one would be noise. `bad: true` is reserved
+ * for a value that was PRESENT and could not be read.
+ */
+interface DateReading<T> {
+  value: T | null;
+  bad: boolean;
+}
+
+const ABSENT = { value: null, bad: false } as const;
+const BAD = { value: null, bad: true } as const;
+
+function readDateOnly(v: unknown): DateReading<string> {
+  if (v instanceof Date) {
+    return Number.isNaN(v.getTime()) ? BAD : { value: v.toISOString().slice(0, 10), bad: false };
+  }
+  const s = asText(v);
+  if (s === null) return ABSENT;
+
+  const iso = DATE_ONLY_RE.exec(s);
+  if (iso) {
+    const out = dateOnlyFrom(iso[1], iso[2], iso[3]);
+    return out === null ? BAD : { value: out, bad: false }; // '0000-00-00' lands here
+  }
+  const prefix = ISO_DATE_PREFIX_RE.exec(s);
+  if (prefix) {
+    const out = dateOnlyFrom(prefix[1], prefix[2], prefix[3]);
+    return out === null ? BAD : { value: out, bad: false }; // '0000-00-00 00:00:00' too
+  }
+  const dmy = DMY_RE.exec(s);
+  if (dmy) {
+    // A17: day-first, the Indonesian convention.
+    const out = dateOnlyFrom(dmy[3], dmy[2], dmy[1]);
+    return out === null ? BAD : { value: out, bad: false };
+  }
+  const parsed = new Date(s);
+  return Number.isNaN(parsed.getTime()) ? BAD : { value: parsed.toISOString().slice(0, 10), bad: false };
+}
 
 /**
  * `date` columns (`po_date`, `estimate_delivery`) are handed to Postgres as a
@@ -729,47 +837,54 @@ const DMY_RE = /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/;
  * the process timezone and can land a day early or late. Accepts ISO date,
  * ISO timestamp (date part taken) and dd/mm/yyyy (A17: day-first, the Indonesian
  * convention; an ISO string is always preferred when both could parse).
+ *
+ * An unreadable value is NULL in the mirror and one tick on the `badDates`
+ * tally. It is never guessed at and never replaced with today — a fabricated
+ * date is worse than a missing one, because nothing downstream can tell.
  */
 function asDateOnly(v: unknown): string | null {
-  const s = asText(v);
-  if (s === null) return null;
-  const iso = DATE_ONLY_RE.exec(s);
-  if (iso) return s;
-  const t = /^(\d{4}-\d{2}-\d{2})[T ]/.exec(s);
-  if (t) return t[1] ?? null;
-  const dmy = DMY_RE.exec(s);
-  if (dmy) {
-    const [, d, m, y] = dmy;
-    if (d && m && y) return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  const read = readDateOnly(v);
+  if (read.bad && tally) note(tally.badDates, v);
+  return read.value;
+}
+
+function readTimestamp(v: unknown): DateReading<Date> {
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? BAD : { value: v, bad: false };
+  if (typeof v === "number") {
+    // Seconds vs milliseconds epoch: anything below ~Sep 2001 in ms is seconds.
+    const ms = v < 1e11 ? v * 1000 : v;
+    const d = new Date(ms);
+    return Number.isNaN(d.getTime()) ? BAD : { value: d, bad: false };
   }
-  const parsed = new Date(s);
-  return Number.isNaN(parsed.getTime()) ? null : (parsed.toISOString().slice(0, 10) ?? null);
+  const s = asText(v);
+  if (s === null) return ABSENT;
+
+  // Reject the zero date on its SHAPE before `new Date()` ever sees it, so the
+  // refusal is the same whether it arrives as a date or as a timestamp.
+  const iso = DATE_ONLY_RE.exec(s) ?? ISO_DATE_PREFIX_RE.exec(s);
+  if (iso && dateOnlyFrom(iso[1], iso[2], iso[3]) === null) return BAD;
+
+  let norm = s;
+  if (DATE_ONLY_RE.test(s)) norm = `${s}T00:00:00Z`;
+  else if (NAIVE_TIMESTAMP_RE.test(s)) norm = `${s.replace(" ", "T")}Z`;
+  const d = new Date(norm);
+  return Number.isNaN(d.getTime()) ? BAD : { value: d, bad: false };
 }
 
 /**
- * `timestamptz` columns (`erp_updated_at`) — the sync cursor is read from this,
- * so a bad parse must yield null (cursor does not advance) rather than an
- * Invalid Date (which postgres.js would reject mid-batch).
+ * `timestamptz` columns (`erp_updated_at`, and the `deleted_at` marker) — the
+ * sync cursor is read from `erp_updated_at`, so a bad parse must yield null
+ * (the cursor does not advance) rather than an Invalid Date, which postgres.js
+ * would reject mid-batch and take the whole run down with it.
  *
  * A18: a timestamp with no zone designator is read as UTC, not as local time.
  * `new Date('2026-09-11 14:05:00')` is LOCAL in V8, which would shift every
  * cursor by the container's offset; appending 'Z' pins it.
  */
 function asTimestamp(v: unknown): Date | null {
-  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v;
-  if (typeof v === "number") {
-    // Seconds vs milliseconds epoch: anything below ~Sep 2001 in ms is seconds.
-    const ms = v < 1e11 ? v * 1000 : v;
-    const d = new Date(ms);
-    return Number.isNaN(d.getTime()) ? null : d;
-  }
-  const s = asText(v);
-  if (s === null) return null;
-  let norm = s;
-  if (DATE_ONLY_RE.test(s)) norm = `${s}T00:00:00Z`;
-  else if (/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(s)) norm = `${s.replace(" ", "T")}Z`;
-  const d = new Date(norm);
-  return Number.isNaN(d.getTime()) ? null : d;
+  const read = readTimestamp(v);
+  if (read.bad && tally) note(tally.badDates, v);
+  return read.value;
 }
 
 /** The ERP's `updated_at`, under every spelling we are prepared to see (A2). */
@@ -953,6 +1068,256 @@ const ADAPTERS: { [K in SelarasTable]: (raw: unknown) => SelarasRowByTable[K] | 
   live_fg: adaptLiveFgRow,
 };
 
+// ── Column diagnostic (ST-R5.3) ──────────────────────────────────────────────
+//
+// WHY THIS EXISTS. Production reports 97.4% of live commitment lines matching NO
+// row in `erp_live_fg`, and the two sides fail in mirror image:
+//
+//   demand keys  1|172|0.5|4|-|-      ← `p` and `l` absent on every SO line
+//   stock keys   10|141|0|0|1000|500  ← `th` and `th_panel` read ZERO on every FG row
+//
+// Each side is missing precisely the segments the other side has. That is not
+// dirty data; it is a column-mapping failure. Three explanations fit it equally
+// well and NONE can be chosen from here (selaras2.io is unreachable from the
+// build environment): the API returns different NAMES than the verified
+// documentation lists, it returns them NESTED inside another object, or it
+// returns NULL for these rows. Guessing produced the v1 key that matched nothing
+// and an inventory that read as fully promiseable, so this prints the evidence
+// instead:
+//
+//   1. the COMPLETE sorted list of raw wire key names on the first row of the
+//      first page — before folding, before aliasing, before any adapter runs.
+//      That alone separates "different name" from "nested" from "null";
+//   2. for each sku_key segment, the probe names tried (read from
+//      SKU_SEGMENT_SOURCES so they cannot drift from the real mapping), which
+//      one answered, the raw value it carried and the normalized result.
+//
+// WHAT IT MAY NEVER DO: log a row. Rows carry customer names, sales names and
+// prices (§7.9). Only KEY NAMES and the six identity segments' own values are
+// ever printed, each truncated and pushed through `redactSecrets()`; a nested
+// object contributes its child key names and nothing else.
+//
+// It is observation only — it reads a row that was fetched anyway, returns a
+// value, and never throws (`buildColumnDiagnostic` is total over `unknown`).
+
+/** Which side of the join a mirrored table sits on; null ⇒ it has no sku_key. */
+export type SkuSide = "so_line" | "live_fg";
+
+const SKU_SIDE_BY_TABLE: Record<SelarasTable, SkuSide | null> = {
+  warna: null,
+  so_header: null,
+  so_line: "so_line",
+  live_fg: "live_fg",
+};
+
+/**
+ * What a probe found. The three cases are DIFFERENT FACTS and the whole point of
+ * the diagnostic is to tell them apart:
+ *  - `matched` — the key exists and carried a value the adapter read;
+ *  - `null`    — the key EXISTS but its value is null (the ERP returns nulls for
+ *                these rows: a data problem, not a mapping problem);
+ *  - `absent`  — no such key on the row at all (a mapping problem: look at the
+ *                wire key list for what it is really called, nesting included).
+ */
+export type SegmentProbeStatus = "matched" | "null" | "absent";
+
+export interface SegmentProbe {
+  segment: SkuSegmentName;
+  kind: SkuSegmentKind;
+  /** Exactly `SKU_SEGMENT_SOURCES[segment][side]` — never re-spelled here. */
+  probes: readonly string[];
+  /** The wire key, in the ROW's own spelling, that answered. Null when none did. */
+  matched: string | null;
+  status: SegmentProbeStatus;
+  /** Redacted, truncated. Null unless `status === "matched"`. Never a whole row. */
+  raw: string | null;
+  /** What this segment contributes to the sku_key — `-` when nothing was read. */
+  normalized: string;
+}
+
+export interface ColumnDiagnostic {
+  table: SelarasTable;
+  /** The ERP table name the row actually came from. */
+  erpTable: string;
+  side: SkuSide | null;
+  /** Raw wire key names on the first row, sorted. Nested keys as `name{a,b}`. */
+  keys: readonly string[];
+  /** True when the row carried more keys than `keys` lists (see MAX_WIRE_KEYS). */
+  keysTruncated: boolean;
+  /** One entry per ACTIVE sku_key segment, in key order. Empty when side is null. */
+  segments: readonly SegmentProbe[];
+  /** Segments that matched nothing — the ones contributing `-` to every key. */
+  unmatched: readonly SkuSegmentName[];
+}
+
+/** A real ERP table is nowhere near this wide; the cap only bounds a hostile body. */
+const MAX_WIRE_KEYS = 200;
+/** Child key NAMES of a nested object, so "returns them nested" is visible. */
+const MAX_NESTED_KEYS = 16;
+/** Same budget the ambiguity samples use — a dimension, not a row. */
+const MAX_SAMPLE_CHARS = 40;
+
+/**
+ * One raw value, rendered for a log line. An object or array contributes its
+ * SHAPE and its child key names, never its contents — that is the difference
+ * between a diagnostic and a customer-data leak.
+ */
+function sampleValue(v: unknown): string {
+  let text: string;
+  if (typeof v === "string") text = v;
+  else if (typeof v === "number" || typeof v === "boolean") text = String(v);
+  else if (v === null) text = "null";
+  else if (v === undefined) text = "undefined";
+  else if (v instanceof Date) text = Number.isNaN(v.getTime()) ? "Invalid Date" : v.toISOString();
+  else if (Array.isArray(v)) text = `<array of ${v.length}>`;
+  else if (isRecord(v)) text = `<object {${Object.keys(v).sort().slice(0, MAX_NESTED_KEYS).join(",")}}>`;
+  else text = `<${typeof v}>`;
+  return redactSecrets(text).slice(0, MAX_SAMPLE_CHARS);
+}
+
+/**
+ * A wire key as it should be READ by a human: the name itself, plus — when the
+ * value is a container — the child key names, because "the API returns them
+ * nested" is one of the three live explanations and is invisible otherwise.
+ */
+function describeWireKey(key: string, value: unknown): string {
+  if (Array.isArray(value)) return `${key}[${value.length}]`;
+  if (isRecord(value)) {
+    const inner = Object.keys(value).sort();
+    const shown = inner.slice(0, MAX_NESTED_KEYS);
+    return `${key}{${shown.join(",")}${inner.length > shown.length ? ",…" : ""}}`;
+  }
+  return key;
+}
+
+/**
+ * Build the diagnostic for ONE raw row. Total over `unknown` — a non-object row
+ * yields null rather than throwing, because nothing here may ever fail a page.
+ *
+ * The probe loop mirrors `pick()` EXACTLY (same fold rule, same "first non-null
+ * name wins", same order) — a diagnostic that probed differently from the
+ * adapter would describe a mapping nobody is running.
+ */
+export function buildColumnDiagnostic(table: SelarasTable, raw: unknown): ColumnDiagnostic | null {
+  if (!isRecord(raw)) return null;
+  const entries = Object.entries(raw);
+  const keys = entries
+    .slice(0, MAX_WIRE_KEYS)
+    .map(([k, v]) => redactSecrets(describeWireKey(k, v)))
+    .sort();
+
+  const side = SKU_SIDE_BY_TABLE[table];
+  const segments: SegmentProbe[] = [];
+  const unmatched: SkuSegmentName[] = [];
+
+  if (side !== null) {
+    // Folded ONCE, first spelling winning, exactly as `foldKeys()` does — but
+    // remembering the row's own spelling so the log names the REAL wire key.
+    const folded = new Map<string, { key: string; value: unknown }>();
+    for (const [k, v] of entries) {
+      const f = foldName(k);
+      if (!folded.has(f)) folded.set(f, { key: k, value: v });
+    }
+
+    for (const segment of SKU_SEGMENTS) {
+      const probes = SKU_SEGMENT_SOURCES[segment][side];
+      const kind = SKU_SEGMENT_KINDS[segment];
+      let matched: string | null = null;
+      let status: SegmentProbeStatus = "absent";
+      let value: unknown = null;
+      for (const probe of probes) {
+        const hit = folded.get(foldName(probe));
+        if (hit === undefined) continue; // no such column, under any casing
+        if (hit.value === null || hit.value === undefined) {
+          // The column EXISTS and is null. `pick()` keeps looking, so we do too,
+          // but we remember that the name was there — that is the whole
+          // "different name" vs "null value" distinction.
+          if (status === "absent") {
+            status = "null";
+            matched = hit.key;
+          }
+          continue;
+        }
+        matched = hit.key;
+        value = hit.value;
+        status = "matched";
+        break;
+      }
+      // The adapter's own reading, reproduced: asNumber()/asText() then
+      // normalizeSegment(). parseErpNumber() is called directly rather than
+      // asNumber() so the diagnostic never adds a tick to the refusal tallies.
+      const read = kind === "numeric" ? parseErpNumber(value).value : asText(value);
+      segments.push({
+        segment,
+        kind,
+        probes,
+        matched,
+        status,
+        raw: status === "matched" ? sampleValue(value) : null,
+        normalized: normalizeSegment(read, kind),
+      });
+      if (status !== "matched") unmatched.push(segment);
+    }
+  }
+
+  return {
+    table,
+    erpTable: SELARAS_ENDPOINTS[table],
+    side,
+    keys,
+    keysTruncated: entries.length > keys.length,
+    segments,
+    unmatched,
+  };
+}
+
+function describeProbe(p: SegmentProbe): string {
+  const probes = `probed [${p.probes.join(", ")}]`;
+  if (p.status === "matched") {
+    return `    ${p.segment} (${p.kind}): ${probes} → matched '${p.matched}' raw="${p.raw}" → "${p.normalized}"`;
+  }
+  const why =
+    p.status === "null"
+      ? `key '${p.matched}' EXISTS but its value is null`
+      : "NO SUCH KEY on this row (under any casing)";
+  return `    ${p.segment} (${p.kind}): ${probes} → NO MATCH — ${why} → "${p.normalized}"`;
+}
+
+/**
+ * The diagnostic as it appears in the log: ONE multi-line message, greppable on
+ * `COLUMN DIAGNOSTIC`. Key names and six segment values only.
+ */
+export function describeColumnDiagnostic(d: ColumnDiagnostic): string {
+  const lines: string[] = [
+    `${d.table}: COLUMN DIAGNOSTIC (${d.erpTable}) — one-shot, first row of the first page. ` +
+      `Key NAMES and sku_key segment values only; no row is ever logged. ` +
+      `Turn off with STOCK_SYNC_DIAGNOSE_COLUMNS=false once the mapping is settled.`,
+    `  wire keys (${d.keys.length}${d.keysTruncated ? `, first ${MAX_WIRE_KEYS} of more` : ""}, ` +
+      `sorted, raw — name{a,b} means the value is a nested object): ${d.keys.join(", ") || "(none)"}`,
+  ];
+  if (d.side === null) {
+    lines.push(`  sku_key: none — '${d.table}' contributes no segment to the key.`);
+    return lines.join("\n");
+  }
+  lines.push(
+    `  sku_key = ${SKU_SEGMENTS.join(SKU_SEGMENT_SEPARATOR)} (side '${d.side}', ` +
+      `probe names from SKU_SEGMENT_SOURCES in erp/sku.ts):`,
+  );
+  for (const p of d.segments) lines.push(describeProbe(p));
+  if (d.unmatched.length === 0) {
+    lines.push(`  every segment matched a wire key on this row.`);
+  } else {
+    lines.push(
+      `  UNMATCHED: ${d.unmatched.join(", ")} — each contributes '-' to EVERY sku_key on the ` +
+        `'${d.side}' side, so nothing on this side can join a row that has them. Compare the ` +
+        `unmatched probe names against the wire key list above: a different spelling is a ` +
+        `SKU_SEGMENT_SOURCES fix, a nested name{...} is an adapter fix, an existing-but-null key ` +
+        `is an ERP data problem and not a mapping problem at all.`,
+    );
+  }
+  return lines.join("\n");
+}
+
 // ── Primary keys ─────────────────────────────────────────────────────────────
 
 /**
@@ -1036,9 +1401,25 @@ export interface SelarasPage<T> {
   ambiguousNumbers: AmbiguityTally;
   /** Numerics refused for being NaN / ±Infinity (X11). Never written through. */
   nonFiniteNumbers: AmbiguityTally;
+  /**
+   * Date/timestamp values that were PRESENT and unreadable — MySQL's
+   * `0000-00-00` zero date above all. Refused to NULL rather than handed to
+   * postgres.js, whose `date` serializer calls `.toISOString()` on them and
+   * throws `RangeError: Invalid time value` mid-transaction, aborting the run.
+   * A blank or absent value is not counted here: that is a missing date, not a
+   * broken one.
+   */
+  badDates: AmbiguityTally;
   page: number;
   /** Null when the ERP did not tell us; then paging stops on a short page. */
   totalPages: number | null;
+  /**
+   * ST-R5.3. Non-null ONLY on the first page of a table, only when
+   * `STOCK_SYNC_DIAGNOSE_COLUMNS` is on, and only when that page had a row to
+   * describe — which is what makes it once per table per run rather than per
+   * page. The worker logs it; nothing reads it to make a decision.
+   */
+  columnDiagnostic: ColumnDiagnostic | null;
 }
 
 /**
@@ -1326,6 +1707,17 @@ export async function fetchPage<K extends SelarasTable>(
       }
       noticeShape(table, env);
 
+      // ST-R5.3 — built from the row we already hold, before the adapt loop, and
+      // deliberately wrapped: a diagnostic is never allowed to fail a page.
+      let columnDiagnostic: ColumnDiagnostic | null = null;
+      if (config.stock.diagnoseColumns && opts.page === 1) {
+        try {
+          columnDiagnostic = buildColumnDiagnostic(table, env.rows[0]);
+        } catch {
+          columnDiagnostic = null;
+        }
+      }
+
       const adapt = ADAPTERS[table];
       const rows: SelarasRowByTable[K][] = [];
       let dropped = 0;
@@ -1333,6 +1725,7 @@ export async function fetchPage<K extends SelarasTable>(
       const pageTally: PageTally = {
         ambiguous: { count: 0, samples: [] },
         nonFinite: { count: 0, samples: [] },
+        badDates: { count: 0, samples: [] },
       };
       tally = pageTally;
       try {
@@ -1359,8 +1752,10 @@ export async function fetchPage<K extends SelarasTable>(
           dropped,
           ambiguousNumbers: pageTally.ambiguous,
           nonFiniteNumbers: pageTally.nonFinite,
+          badDates: pageTally.badDates,
           page: opts.page,
           totalPages: env.totalPages,
+          columnDiagnostic,
         },
       };
     } catch (err) {

@@ -839,7 +839,21 @@ population. With a true share the threshold drops from 50% to 25% — at a quart
 of SKUs unmatched the join is already catastrophic, and the inflation headroom is
 no longer needed.
 
-## Known gap — `brand` / `th_panel` make §11-A1 obsolete
+## RESOLVED — `brand` / `th_panel` are implemented (was: §11-A1 obsolete)
+
+**Status: built.** `brand`/`brand_text` render on both pages, `/stock` has a real
+`Merek` filter (ST-R8, open since the beginning and blocked only by the absent
+field), and `th_panel` is a real field the name-strip now accounts for. The
+paragraph below is kept for the reasoning; its closing instruction to leave it
+unimplemented no longer applies.
+
+**Still open on this:** `/stale-commitments` and `/exceptions` take no `brand`
+parameter, so PPIC's server-paged queues render the merek but cannot filter by
+it — a client-side filter there would filter one page of ~4,158 while appearing
+to filter the queue, which is the same trap §11-A11 already names for sorting.
+The honest control there is the `q` box, which does match brand server-side.
+
+### Original note
 
 §11-A1 records "the item has no brand field", which was true when the SKU key was
 `kode_barang|warna|th|p|l`. The verified ERP schema moved the key onto `brand` and
