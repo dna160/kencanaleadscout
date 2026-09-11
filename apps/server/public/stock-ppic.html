@@ -71,6 +71,8 @@
   .warnbox{background:#fef2f2;border:1px solid #fbcaca;color:#991b1b;border-radius:10px;padding:10px 12px;font-size:13px;margin:10px 0;font-weight:600}
   .warnbox.amber{background:#fffbeb;border-color:#fde68a;color:#92400e}
   .metaline{font-size:12px;color:var(--muted);margin:6px 0;line-height:1.5}
+  .fixh{font-size:13px;margin:16px 0 2px;font-weight:700}
+  .fixrow{display:flex;gap:10px;flex-wrap:wrap;margin:8px 0 2px}
   .counts{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
   .countchip{background:#f3f4f6;border-radius:8px;padding:4px 10px;font-size:12px;font-weight:700;color:#374151}
   .modal-bg{position:fixed;inset:0;background:rgba(15,23,42,.5);display:none;align-items:flex-end;justify-content:center;z-index:50}
@@ -374,6 +376,44 @@
     </div>
     <div id="syBody" class="grid3"></div>
     <div class="card"><div class="foot">Sinkronisasi otomatis berjalan setiap ±3 menit.</div></div>
+
+    <!-- Perbaikan data · DELIBERATELY SEPARATE from "Sinkron Sekarang" above.
+         That button pulls the window since the last cursor and finishes in
+         seconds. Neither control here does that: one rewrites stored keys, the
+         other re-downloads the entire ERP mirror. They are grouped, labelled and
+         explained apart so nobody reaches for them by reflex. -->
+    <div class="card">
+      <h2>Perbaikan Data</h2>
+      <div class="body">
+        <p class="metaline">Dipakai hanya kalau angka stok tampak salah karena <b>data lama</b> —
+          bukan karena sinkronisasi gagal. Sinkronisasi biasa hanya mengambil data yang
+          <b>berubah</b> di ERP, jadi baris lama yang terlanjur tersimpan salah tidak pernah
+          ikut diperbaiki dengan sendirinya.</p>
+
+        <h3 class="fixh">1 · Hitung Ulang Kunci SKU</h3>
+        <p class="metaline">Menyusun ulang kode SKU dari kolom yang <b>sudah ada</b> di LeadScout.
+          Tidak mengambil apa pun dari ERP, selesai dalam hitungan detik.
+          <b>Cocok bila:</b> rincian barang (merek, warna, tebal, ukuran) sudah benar tetapi
+          pesanan tetap tidak cocok dengan stok. <b>Coba ini dulu.</b></p>
+        <div class="fixrow">
+          <button class="btn ghost tap" data-dbwrite id="skuRecalc">Hitung Ulang Kunci SKU</button>
+        </div>
+        <div id="recalcOut"></div>
+
+        <h3 class="fixh">2 · Tarik Ulang Semua Data ERP</h3>
+        <p class="metaline">Menghapus posisi kursor semua tabel lalu mengunduh <b>seluruh isi</b>
+          tabel ERP dari awal — sekitar <b>137.000 baris pesanan</b> ditambah stok dan master warna.
+          <b>Berlangsung beberapa menit</b> dan membebani ERP selama itu.
+          <b>Cocok bila:</b> rincian barangnya sendiri yang kosong atau salah di LeadScout
+          (mis. panjang/lebar kosong), sehingga menghitung ulang kunci saja tidak menolong.</p>
+        <p class="metaline">Aman dijalankan: setiap baris ditimpa berdasarkan nomor aslinya, jadi
+          data tidak pernah terhitung dua kali. Selama proses berjalan, angka stok tetap bisa dibaca.
+          Tidak bisa dijalankan bersamaan dengan sinkronisasi lain.</p>
+        <div class="fixrow">
+          <button class="btn danger tap" data-write id="fullResync">Tarik Ulang Semua Data ERP…</button>
+        </div>
+      </div>
+    </div>
   </section>
 </div>
 
@@ -940,6 +980,14 @@ function applyLocks(){
   $$("[data-write]").forEach(b=>{
     b.disabled=off||b.hasAttribute("data-busy");
     if(off) b.title="ERP tidak terhubung"; else b.removeAttribute("title");
+  });
+  // The sku_key recompute reads and writes only LeadScout's own mirror — it
+  // never calls the ERP — so a disconnected ERP is no reason to lock it. It is
+  // in fact the one repair that still works in that state. Only a dead database
+  // takes it away.
+  $$("[data-dbwrite]").forEach(b=>{
+    b.disabled=DB_DOWN||b.hasAttribute("data-busy");
+    if(DB_DOWN) b.title="Database tidak tersedia"; else b.removeAttribute("title");
   });
 }
 function renderSkuList(){
@@ -2097,6 +2145,88 @@ async function kickSync(){
 }
 $("#syncNow").addEventListener("click",kickSync);
 $("#syReload").addEventListener("click",loadSync);
+
+/* ── Perbaikan Data — the two stale-data repairs ─────────────────────────────
+   Both go to POST /api/stock/sync, both require an actor server-side, and both
+   are refused with 409 while any run is in flight. They are kept off the same
+   row as "Sinkron Sekarang" on purpose: that one is routine, these are not.
+
+   1 · recompute — POST { recompute:true }. Two UPDATEs, no ERP traffic, awaited,
+       so the row count comes straight back into the page.
+   2 · full      — POST { full:true }. Clears every cursor and re-pulls ~137k
+       rows; it answers as soon as the run is accepted, never when it finishes,
+       so the page falls back to polling the per-table cards like any other run.
+       Gated behind a typed confirmation, because an accidental press costs the
+       ERP several minutes of load. */
+const RESYNC_PHRASE="TARIK ULANG";
+
+async function runRecalc(){
+  if(!requireActor()) return;
+  const btn=$("#skuRecalc"), out=$("#recalcOut");
+  busy(btn,"Menghitung ulang…");
+  const res=await api("/api/stock/sync",{method:"POST",headers:{"content-type":"application/json"},
+    body:JSON.stringify({recompute:true,actor:actor()})});
+  unbusy(btn,"Hitung Ulang Kunci SKU");
+  if(res.status===409){ out.innerHTML=""; toast("Sinkronisasi sedang berjalan.","warn"); return; }
+  if(!res.ok){ out.innerHTML=""; toast(errText(res,"Gagal menghitung ulang kunci SKU."),"err"); return; }
+  const j=res.json||{}, up=n(j.updated);
+  const per=Array.isArray(j.tables)
+    ? j.tables.map(t=>`${esc(TABLE_LABEL[t.table]||t.table)} ${esc(num(n(t.updated)))}`).join(" · ")
+    : "";
+  out.innerHTML = up>0
+    ? `<div class="warnbox amber">${esc(num(up))} baris diperbaiki kunci SKU-nya${per?` (${per})`:""}.
+         Rincian barangnya memang sudah benar — hanya kodenya yang usang. Angka Bisa Dijual
+         akan menyesuaikan begitu halaman dimuat ulang.</div>`
+    : `<div class="warnbox amber">Tidak ada baris yang berubah${per?` (${per})`:""}. Berarti kunci SKU
+         sudah sesuai dengan rincian barang yang tersimpan — jadi yang salah adalah
+         <b>rincian barangnya</b>, bukan kodenya. Yang bisa memperbaikinya hanya
+         <b>Tarik Ulang Semua Data ERP</b> di bawah.</div>`;
+  if(up>0) loadSummary();
+  toast(up>0?`${num(up)} baris diperbaiki.`:"Tidak ada baris yang berubah.", up>0?"ok":"warn");
+}
+$("#skuRecalc").addEventListener("click",runRecalc);
+
+function askFullResync(){
+  if(!requireActor()) return;
+  openModal(`<h3>Tarik ulang SELURUH data ERP?</h3>
+    <p class="mp">Bukan sinkronisasi biasa. Ini menghapus posisi kursor semua tabel dan mengunduh
+      ulang <b>seluruh isi</b> tabel ERP — sekitar <b>137.000 baris pesanan</b> ditambah stok dan
+      master warna.</p>
+    <p class="mp">Perkiraan <b>beberapa menit</b>, dan ERP akan terbebani selama itu. Jalankan hanya
+      kalau <b>Hitung Ulang Kunci SKU</b> sudah dicoba dan tidak ada baris yang berubah.</p>
+    <p class="mp">Selama proses berjalan, angka stok tetap bisa dibaca — setiap baris ditimpa
+      berdasarkan nomor aslinya, tidak pernah dihitung dua kali. Tercatat atas nama
+      <b>${esc(actor())}</b>.</p>
+    <label class="fld" for="rsWord">Ketik <b>${esc(RESYNC_PHRASE)}</b> untuk melanjutkan
+      <input id="rsWord" type="text" autocomplete="off" spellcheck="false" placeholder="${esc(RESYNC_PHRASE)}" />
+    </label>
+    <div class="actions">
+      <button class="btn ghost tap" id="rsNo">Batal</button>
+      <button class="btn danger tap" id="rsYes" disabled>Tarik Ulang Semua Data</button>
+    </div>`);
+  const w=$("#rsWord"), yes=$("#rsYes");
+  w.addEventListener("input",()=>{ yes.disabled=w.value.trim().toUpperCase()!==RESYNC_PHRASE; });
+  $("#rsNo").addEventListener("click",closeModal);
+  yes.addEventListener("click",doFullResync);
+}
+async function doFullResync(){
+  const yes=$("#rsYes");
+  busy(yes,"Memulai…");
+  const res=await api("/api/stock/sync",{method:"POST",headers:{"content-type":"application/json"},
+    body:JSON.stringify({full:true,actor:actor()})});
+  closeModal();
+  if(res.status===409){ toast("Sinkronisasi sedang berjalan — coba lagi setelah selesai.","warn"); loadSync(); return; }
+  if(!res.ok){ toast(errText(res,"Gagal memulai tarik ulang."),"err"); return; }
+  toast("Tarik ulang dimulai. Perlu beberapa menit.","ok");
+  // The run is accepted, not finished. The per-table cards below are the only
+  // honest progress indicator, so go and refresh them — loadSync() re-polls
+  // itself every 5s for as long as a run reports `running`.
+  const btn=$("#fullResync");
+  btn.setAttribute("data-cool","1"); busy(btn,"Menarik ulang…");
+  setTimeout(()=>{ btn.removeAttribute("data-cool"); unbusy(btn,"Tarik Ulang Semua Data ERP…"); },30000);
+  if(TAB==="sinkron") loadSync();
+}
+$("#fullResync").addEventListener("click",askFullResync);
 
 /* ════════════════════════════════════════════════════════════════════════════
    Detail sheet (ST-R13) — GET /api/stock/sku/:sku_key, AMENDMENT 3 + 5.

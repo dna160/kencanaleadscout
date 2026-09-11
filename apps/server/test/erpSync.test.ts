@@ -63,7 +63,7 @@ const {
   buildColumnDiagnostic,
   describeColumnDiagnostic,
 } = clientMod;
-const { runErpSyncOnce } = workerMod;
+const { runErpSyncOnce, recomputeSkuKeys } = workerMod;
 const { canonicalSkuKey } = skuMod;
 
 type SelarasTable = clientMod.SelarasTable;
@@ -71,6 +71,9 @@ type SelarasTable = clientMod.SelarasTable;
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
 const FIXTURE_DIR = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
+
+/** warna + so_header + so_line + live_fg — every table a full re-sync clears and re-pulls. */
+const SYNC_TABLE_COUNT = clientMod.SYNC_TABLES.length;
 
 function loadFixture(name: string): unknown[] {
   const parsed = JSON.parse(readFileSync(join(FIXTURE_DIR, name), "utf8")) as { rows: unknown[] };
@@ -1362,6 +1365,21 @@ function run(sql: postgres.Sql<{}>, log = silentLog) {
   return runErpSyncOnce({ db: sql, pageSize: PAGE_SIZE, intervalMs: 60_000, log });
 }
 
+/** The same pass, with the cursors cleared first: a FULL re-pull of every table. */
+function runFull(sql: postgres.Sql<{}>, log = silentLog, actor = "wp2.ppic") {
+  return runErpSyncOnce({ db: sql, pageSize: PAGE_SIZE, intervalMs: 60_000, log, full: true, actor });
+}
+
+function recompute(sql: postgres.Sql<{}>, log = silentLog) {
+  return recomputeSkuKeys({ db: sql, intervalMs: 60_000, log });
+}
+
+/** Every path the fake ERP was asked for, for one logical table. */
+function pathsFor(table: SelarasTable): string[] {
+  const erpTable = Object.entries(ERP_TABLE_TO_LOGICAL).find(([, l]) => l === table)?.[0] ?? "";
+  return requestLog.filter((p) => p.split("?")[0]?.endsWith(`/${erpTable}`));
+}
+
 describe.skipIf(db === null)("syncWorker — against a real mirror schema", () => {
   const sql = db as postgres.Sql<{}>;
 
@@ -2013,6 +2031,345 @@ describe.skipIf(db === null)("syncWorker — against a real mirror schema", () =
     } finally {
       for (const spy of Object.values(spies)) spy.mockRestore();
     }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // The stale-data repairs — the two of them, and which one fixes what.
+  //
+  // The hazard these exist for: EVERY derived value in the mirror (`sku_key`,
+  // and the parsed `th`/`th_panel`/`p`/`l` it is built from) is computed at WRITE
+  // time and stored. The cursor only ever moves FORWARD. So a fix to how a value
+  // is read or how the key is composed reaches exactly the rows pulled after it,
+  // and rows behind the cursor keep the old answer forever.
+  //
+  //   · key composition changed, columns intact  → recompute in place, no ERP
+  //   · the COLUMNS are wrong (refused/misparsed) → nothing but a full re-pull
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("full re-sync (cursor reset) and the in-place sku_key recompute", () => {
+    /** so_line's oldest row — 2026-09-01T02:05Z, far behind the cursor a full pass leaves. */
+    const OLD_LINE = "SOL-2001";
+
+    it("a FULL re-sync clears every cursor and re-pulls rows an incremental one can never see", async () => {
+      await run(sql); // a normal pass: mirror filled, every cursor advanced
+      const seeded = await syncStateRows(sql);
+      expect(seeded.find((r) => r.table_name === "so_line")?.cursor_value).not.toBeNull();
+
+      // Stand in for a row that was mirrored WRONG and has since fallen behind
+      // the cursor. Deleting it is the sharpest possible form of "wrong": if an
+      // incremental pass could still reach it, it would come back.
+      await sql`delete from erp_so_line where id = ${OLD_LINE}`;
+
+      requestLog = [];
+      const incremental = await run(sql);
+      expect(incremental.full).toBe(false);
+      expect(incremental.cursorsCleared).toBe(0);
+      expect(incremental.recompute).toBeUndefined();
+      // It really did ask with a cursor, and the row really did not come back.
+      expect(pathsFor("so_line").every((p) => p.includes("updated_at__gte="))).toBe(true);
+      const missing = await sql<{ n: number }[]>`select count(*)::int as n from erp_so_line where id = ${OLD_LINE}`;
+      expect(missing[0]?.n).toBe(0);
+
+      // Cursors are NOT cleared by an incremental pass — that is the whole
+      // difference between the two, and the reason the old row stayed missing.
+      const afterIncremental = await syncStateRows(sql);
+      for (const t of afterIncremental) {
+        const before = seeded.find((r) => r.table_name === t.table_name);
+        expect(t.cursor_value).not.toBeNull();
+        expect(t.cursor_value?.getTime()).toBe(before?.cursor_value?.getTime());
+      }
+
+      requestLog = [];
+      const full = await runFull(sql);
+      expect(full.started).toBe(true);
+      expect(full.full).toBe(true);
+      expect(full.cursorsCleared).toBe(SYNC_TABLE_COUNT);
+      expect(full.tables.every((t) => t.ok)).toBe(true);
+
+      // The cursor was genuinely gone when the pull ran: not one request for any
+      // table carried updated_at__gte.
+      expect(requestLog.length).toBeGreaterThan(0);
+      expect(requestLog.some((p) => p.includes("updated_at__gte="))).toBe(false);
+
+      // And the row an incremental pass structurally could not reach is back.
+      const back = await sql<{ n: number }[]>`select count(*)::int as n from erp_so_line where id = ${OLD_LINE}`;
+      expect(back[0]?.n).toBe(1);
+
+      // The cursors are advanced again afterwards, so the next tick is ordinary.
+      const afterFull = await syncStateRows(sql);
+      expect(afterFull.find((r) => r.table_name === "so_line")?.cursor_value).not.toBeNull();
+      expect(afterFull.every((r) => r.running === false)).toBe(true);
+    });
+
+    it("re-pulling is idempotent: a full pass leaves the same rows and the same ATP as an incremental one", async () => {
+      await run(sql);
+      const mirrorBefore = await mirrorSnapshot(sql);
+      const atpBefore = await atpSnapshot(sql);
+
+      const full = await runFull(sql);
+      expect(full.tables.every((t) => t.ok)).toBe(true);
+
+      // Every write is an upsert by primary key (§5), so re-fetching a row that
+      // has not changed rewrites it byte-identically. That is what makes a
+      // 137k-row re-pull a safe thing to hand an operator.
+      expect(await mirrorSnapshot(sql)).toEqual(mirrorBefore);
+      expect(await atpSnapshot(sql)).toEqual(atpBefore);
+    });
+
+    it("a failure partway through a full re-sync leaves the mirror readable and the cursor behind the gap", async () => {
+      await run(sql); // seven so_line rows mirrored and readable
+      const mirrorBefore = await mirrorSnapshot(sql);
+
+      faults = { status: { "so_line:2": 500 } };
+      const full = await runFull(sql);
+
+      expect(full.started).toBe(true); // resolved, never rejected
+      expect(full.full).toBe(true);
+      expect(full.cursorsCleared).toBe(SYNC_TABLE_COUNT);
+
+      const soLine = full.tables.find((t) => t.table === "so_line");
+      expect(soLine?.ok).toBe(false);
+      expect(soLine?.pages).toBe(1); // page 1 committed, page 2 blew up
+
+      // THE POINT: the cursor sits at page 1's high-water mark. Not null (that
+      // would re-pull work already committed), and emphatically not past page 2 —
+      // a cursor ahead of data that was never fetched would skip those rows
+      // forever, which is the one outcome a re-pull must never produce.
+      const state = (await syncStateRows(sql)).find((r) => r.table_name === "so_line");
+      expect(state?.cursor_value?.toISOString()).toBe("2026-09-01T03:35:00.000Z");
+      expect(state?.last_error).toBeTruthy();
+      expect(state?.running).toBe(false); // the guard is always released
+
+      // A half-repulled mirror is still a readable mirror: nothing was truncated
+      // ahead of the pull, so every row that was there is still there.
+      expect(await mirrorSnapshot(sql)).toEqual(mirrorBefore);
+
+      // And an ordinary tick resumes from page 1's mark and finishes the job —
+      // no second full re-pull needed.
+      faults = {};
+      const recovery = await run(sql);
+      expect(recovery.tables.find((t) => t.table === "so_line")?.ok).toBe(true);
+      const n = await sql<{ n: number }[]>`select count(*)::int as n from erp_so_line`;
+      expect(n[0]?.n).toBe(7);
+    });
+
+    it("ABORTS a full re-sync, pulling nothing, if the cursor reset itself fails", async () => {
+      await run(sql);
+      const cursorsBefore = await syncStateRows(sql);
+
+      // Fail the clear, and only the clear. Everything else on this handle works,
+      // so the run genuinely reaches the reset and genuinely stops there.
+      const proxy = new Proxy(sql, {
+        apply(target: postgres.Sql<{}>, thisArg, args: unknown[]) {
+          const text = String((args[0] as readonly string[])[0] ?? "");
+          if (text.includes("set cursor_value = null")) throw new Error("cursor reset exploded");
+          return Reflect.apply(target as never, thisArg, args as never);
+        },
+      }) as postgres.Sql<{}>;
+
+      requestLog = [];
+      const result = await runErpSyncOnce({
+        db: proxy,
+        pageSize: PAGE_SIZE,
+        intervalMs: 60_000,
+        log: silentLog,
+        full: true,
+      });
+
+      expect(result.started).toBe(false);
+      expect(result.skipped).toBe("cursor_reset_failed");
+      expect(result.cursorsCleared).toBe(0);
+      expect(result.tables).toEqual([]);
+      // A half-cleared cursor set that nothing follows is the forbidden state.
+      // One statement means all-or-nothing, and nothing is what happened.
+      const cursorsAfter = await syncStateRows(sql);
+      expect(cursorsAfter.map((r) => r.cursor_value?.toISOString() ?? null)).toEqual(
+        cursorsBefore.map((r) => r.cursor_value?.toISOString() ?? null),
+      );
+      expect(cursorsAfter.every((r) => r.running === false)).toBe(true);
+      // Nothing was pulled either — an aborted reset must not become a silent
+      // incremental pass that the logs would describe as a full one.
+      expect(requestLog).toEqual([]);
+    });
+
+    it("REFUSES a full re-sync while a run is in flight, and clears nothing on the way out", async () => {
+      await run(sql);
+      const cursorsBefore = await syncStateRows(sql);
+
+      // The in-process half of the guard: the interval tick and the manual
+      // re-pull share one `inFlight`, so they cannot interleave.
+      const inFlight = run(sql);
+      const refused = await runFull(sql);
+      await inFlight;
+
+      expect(refused.started).toBe(false);
+      expect(refused.skipped).toBe("in_flight");
+      expect(refused.cursorsCleared).toBe(0);
+
+      const cursorsAfter = await syncStateRows(sql);
+      expect(cursorsAfter.map((r) => r.cursor_value?.toISOString() ?? null)).toEqual(
+        cursorsBefore.map((r) => r.cursor_value?.toISOString() ?? null),
+      );
+    });
+
+    it("REFUSES a full re-sync while ANOTHER PROCESS holds the erp_sync_state guard", async () => {
+      await run(sql);
+      const cursorsBefore = await syncStateRows(sql);
+
+      // `running = true` with fresh activity is a LIVE run, not an abandoned
+      // lock — the staleness rule only reclaims a guard that has gone quiet for
+      // three intervals, so this one is respected.
+      await sql`update erp_sync_state set running = true, last_ok_at = now() where table_name = 'so_line'`;
+      try {
+        requestLog = [];
+        const refused = await runFull(sql);
+        expect(refused.started).toBe(false);
+        expect(refused.skipped).toBe("locked");
+        expect(refused.cursorsCleared).toBe(0);
+        expect(requestLog).toEqual([]);
+
+        const cursorsAfter = await syncStateRows(sql);
+        expect(cursorsAfter.map((r) => r.cursor_value?.toISOString() ?? null)).toEqual(
+          cursorsBefore.map((r) => r.cursor_value?.toISOString() ?? null),
+        );
+      } finally {
+        await sql`update erp_sync_state set running = false`;
+      }
+    });
+
+    // ── Repair (a): the key composition is stale, the columns are fine ────────
+
+    it("the recompute rekeys a row whose stored key is stale, and leaves a correct key untouched", async () => {
+      await run(sql);
+      const before = await sql<{ id: string; sku_key: string }[]>`
+        select id, sku_key from erp_so_line order by id
+      `;
+      expect(before.length).toBeGreaterThan(1);
+
+      // One row carries a key from a retired composition. Its COLUMNS are intact,
+      // which is the whole precondition for repairing it without the ERP.
+      await sql`update erp_so_line set sku_key = 'RETIRED|COMPOSITION' where id = ${OLD_LINE}`;
+
+      requestLog = [];
+      const result = await recompute(sql);
+      expect(result.started).toBe(true);
+      expect(result.ok).toBe(true);
+      expect(result.updated).toBe(1);
+      expect(result.tables.map((t) => t.table)).toEqual(["so_line", "live_fg"]);
+      // No ERP traffic at all — that is the entire advantage over a re-pull.
+      expect(requestLog).toEqual([]);
+
+      const after = await sql<{ id: string; sku_key: string }[]>`
+        select id, sku_key from erp_so_line order by id
+      `;
+      expect(after).toEqual(before); // the stale one restored, every other one identical
+
+      // Idempotent, and the second run is the diagnostic: nothing left to fix.
+      const again = await recompute(sql);
+      expect(again.updated).toBe(0);
+      expect(await sql`select id, sku_key from erp_so_line order by id`).toEqual(before);
+
+      // The guard is released both times.
+      expect((await syncStateRows(sql)).every((r) => r.running === false)).toBe(true);
+    });
+
+    it("the recompute REFUSES to run while a sync holds the guard", async () => {
+      const inFlight = run(sql);
+      const refused = await recompute(sql);
+      await inFlight;
+      expect(refused.started).toBe(false);
+      expect(refused.skipped).toBe("in_flight");
+    });
+
+    // ── Repair (b): the COLUMNS are wrong — only a re-pull can fix it ─────────
+
+    it("the recompute cannot repair a row whose COLUMNS are wrong; the full re-sync can", async () => {
+      await run(sql);
+      const good = await sql<{ sku_key: string; p: string | null; l: string | null }[]>`
+        select sku_key, p::text as p, l::text as l from erp_so_line where id = ${OLD_LINE}
+      `;
+      expect(good[0]?.p).not.toBeNull();
+      expect(good[0]?.l).not.toBeNull();
+
+      // EXACTLY the production damage: mirrored while SELARAS_NUMBER_FORMAT was
+      // `auto`, where "2.440" is structurally ambiguous and was correctly refused
+      // rather than guessed — so p and l were written NULL and the key that was
+      // computed from them, at write time, ends in the '-' placeholders.
+      await sql`
+        update erp_so_line
+           set p = null, l = null, sku_key = erp_sku_key(brand, warna, th, th_panel, null, null)
+         where id = ${OLD_LINE}
+      `;
+      const broken = await sql<{ sku_key: string }[]>`select sku_key from erp_so_line where id = ${OLD_LINE}`;
+      expect(broken[0]?.sku_key).toMatch(/\|-\|-$/);
+
+      // The cheap repair changes NOTHING, and that is the correct answer, not a
+      // bug: the stored key already agrees with the stored columns. Recomputing
+      // a key from broken inputs reproduces the broken key.
+      const cheap = await recompute(sql);
+      expect(cheap.started).toBe(true);
+      expect(cheap.updated).toBe(0);
+      const stillBroken = await sql<{ sku_key: string; p: string | null }[]>`
+        select sku_key, p::text as p from erp_so_line where id = ${OLD_LINE}
+      `;
+      expect(stillBroken[0]?.sku_key).toBe(broken[0]?.sku_key);
+      expect(stillBroken[0]?.p).toBeNull();
+
+      // An incremental pass cannot fix it either — the row is behind the cursor.
+      await run(sql);
+      const afterIncremental = await sql<{ sku_key: string }[]>`
+        select sku_key from erp_so_line where id = ${OLD_LINE}
+      `;
+      expect(afterIncremental[0]?.sku_key).toBe(broken[0]?.sku_key);
+
+      // Only re-fetching the row under today's parsing rules restores it.
+      const full = await runFull(sql);
+      expect(full.tables.every((t) => t.ok)).toBe(true);
+      expect(full.recompute?.started).toBe(true); // the cheap step ran first, as it always does
+      const repaired = await sql<{ sku_key: string; p: string | null; l: string | null }[]>`
+        select sku_key, p::text as p, l::text as l from erp_so_line where id = ${OLD_LINE}
+      `;
+      expect(repaired[0]?.sku_key).toBe(good[0]?.sku_key);
+      expect(repaired[0]?.p).toBe(good[0]?.p);
+      expect(repaired[0]?.l).toBe(good[0]?.l);
+    });
+
+    it("names both repairs in the log, and says which situation each one fixes", async () => {
+      await run(sql);
+      await sql`update erp_so_line set sku_key = 'RETIRED|COMPOSITION' where id = ${OLD_LINE}`;
+
+      const lines: string[] = [];
+      const capture = {
+        info: (m: string) => lines.push(m),
+        warn: (m: string) => lines.push(m),
+        error: (m: string) => lines.push(m),
+      };
+      const result = await runFull(sql, capture);
+      expect(result.started).toBe(true);
+
+      const all = lines.join("\n");
+      expect(all).toContain("FULL RE-SYNC starting");
+      expect(all).toContain("wp2.ppic"); // the actor is on the record
+      expect(all).toContain("sku-key recompute: rekeyed 1 row(s) in place");
+      expect(all).toContain(`cleared ${SYNC_TABLE_COUNT} stored cursor(s)`);
+      // One grep-able line PER TABLE saying it is pulling with no cursor. The
+      // `^<table>:` anchor is what separates them from the preamble, which names
+      // the same string so an operator knows what to grep for.
+      const fullPullLines = lines.filter((l) => /^[a-z_]+: pulling with updated_at__gte=\(none — full pull\)/.test(l));
+      expect(fullPullLines.length).toBe(SYNC_TABLE_COUNT);
+      expect(all).toContain("FULL re-sync ok");
+
+      // The heartbeat. A full re-pull is minutes of otherwise unbroken silence
+      // between "pulling" and "ok"; without a line whose numbers visibly move,
+      // a healthy long run and a wedged one read identically in the log.
+      const beats = lines.filter((l) => l.includes("full re-pull progress"));
+      expect(beats.length).toBeGreaterThanOrEqual(1);
+      expect(beats.some((l) => /\d+ page\(s\), \d+ row\(s\) committed in \d+s/.test(l))).toBe(true);
+      // An INCREMENTAL run never emits one — this is not new noise on every tick.
+      const quiet: string[] = [];
+      await run(sql, { info: (m) => quiet.push(m), warn: (m) => quiet.push(m), error: (m) => quiet.push(m) });
+      expect(quiet.some((l) => l.includes("full re-pull progress"))).toBe(false);
+    });
   });
 });
 

@@ -1823,6 +1823,137 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
         }
       });
     });
+
+    // ── the two stale-data repairs ({ full } and { recompute }) ──────────────
+    //
+    // Both ride this one endpoint because all three modes take the same run
+    // guard, and a caller must never be able to start two of them at once.
+    // `full` re-pulls ~137k SO lines and takes minutes; it is gated on an actor
+    // so it cannot be triggered by a bare `POST /api/stock/sync` from a script
+    // or a stale tab, and so the log names who asked.
+
+    describe("{ full: true } — the cursor-clearing re-pull", () => {
+      it("REFUSES a full re-sync with no actor, before any cursor is touched", async () => {
+        await inRollback(async (tx) => {
+          erp.connected = true;
+          try {
+            const before = await tx`select table_name, cursor_value, running from erp_sync_state order by table_name`;
+            const { status, body } = await POST<{ error: string }>("/api/stock/sync", { full: true });
+            expect(status).toBe(400);
+            expect(body).toEqual({ error: "Nama petugas wajib diisi." });
+            // The refusal precedes the worker entirely: nothing cleared, nothing started.
+            expect(await tx`select table_name, cursor_value, running from erp_sync_state order by table_name`).toEqual(
+              before,
+            );
+          } finally {
+            erp.connected = false;
+          }
+        });
+      });
+
+      it("a plain kick still needs no actor — the incremental path is unchanged", async () => {
+        // Contrast, not a kick: the guard is held so neither call can start a run
+        // (this suite must not leave a background sync in flight). What it proves
+        // is WHICH refusal each body earns — a bare kick reaches the run guard and
+        // answers 409, while the full re-sync is stopped earlier, at the actor
+        // check, with 400. The actor requirement is therefore new to `full` only.
+        await inRollback(async (tx) => {
+          erp.connected = true;
+          try {
+            await tx`update erp_sync_state set running = true where table_name = 'so_line'`;
+            const plain = await POST<{ started: boolean; mode: string }>("/api/stock/sync", {});
+            expect(plain.status).toBe(409);
+            expect(plain.body.mode).toBe("incremental");
+
+            const full = await POST<{ error: string }>("/api/stock/sync", { full: true });
+            expect(full.status).toBe(400);
+            expect(full.body).toEqual({ error: "Nama petugas wajib diisi." });
+          } finally {
+            erp.connected = false;
+          }
+        });
+      });
+
+      it("REFUSES a full re-sync while a run holds the guard, and clears no cursor", async () => {
+        await inRollback(async (tx) => {
+          erp.connected = true;
+          try {
+            await tx`update erp_sync_state set cursor_value = now() - interval '1 hour'`;
+            await tx`update erp_sync_state set running = true where table_name = 'so_line'`;
+            const before = await tx`select table_name, cursor_value from erp_sync_state order by table_name`;
+
+            const { status, body } = await POST<{ started: boolean; mode: string }>("/api/stock/sync", {
+              full: true,
+              actor: ACTOR,
+            });
+            expect(status).toBe(409);
+            expect(body.started).toBe(false);
+            expect(body.mode).toBe("full");
+
+            // THE POINT: a refused full re-sync must leave every cursor exactly
+            // where it was. A cleared cursor set that no run consumes would turn
+            // the next ordinary tick into a surprise 137k-row re-pull.
+            expect(await tx`select table_name, cursor_value from erp_sync_state order by table_name`).toEqual(before);
+          } finally {
+            erp.connected = false;
+          }
+        });
+      });
+
+      it("refuses a body that asks for both repairs at once", async () => {
+        await inRollback(async () => {
+          erp.connected = true;
+          try {
+            const { status } = await POST("/api/stock/sync", { full: true, recompute: true, actor: ACTOR });
+            expect(status).toBe(400);
+          } finally {
+            erp.connected = false;
+          }
+        });
+      });
+    });
+
+    describe("{ recompute: true } — the in-place sku_key repair", () => {
+      it("needs an actor too — it is a write over every mirrored row", async () => {
+        await inRollback(async () => {
+          const { status, body } = await POST<{ error: string }>("/api/stock/sync", { recompute: true });
+          expect(status).toBe(400);
+          expect(body).toEqual({ error: "Nama petugas wajib diisi." });
+        });
+      });
+
+      it("runs with the ERP DISCONNECTED and reports what it changed — it never calls the ERP", async () => {
+        await inRollback(async (tx) => {
+          // Deliberately left disconnected. The recompute derives each key from
+          // the row's own mirrored columns, so it is the one repair that still
+          // works while the ERP is down — refusing it with 503 would be wrong.
+          erp.connected = false;
+          const key = canonicalSkuKey(parts("RECALC", { th: 0.3 }));
+          await seedFg(tx, [{ sn_fg: `${P}-recalc-fg`, qty: 5, parts: parts("RECALC", { th: 0.3 }) }]);
+          await tx`update erp_live_fg set sku_key = 'RETIRED|COMPOSITION' where sn_fg = ${`${P}-recalc-fg`}`;
+
+          const { status, body } = await POST<{
+            started: boolean;
+            mode: string;
+            ok: boolean;
+            updated: number;
+            tables: { table: string; updated: number }[];
+          }>("/api/stock/sync", { recompute: true, actor: ACTOR });
+
+          expect(status).toBe(200);
+          expect(body.started).toBe(true);
+          expect(body.mode).toBe("recompute");
+          expect(body.ok).toBe(true);
+          expect(body.updated).toBeGreaterThanOrEqual(1);
+          expect(body.tables.map((t) => t.table)).toEqual(["so_line", "live_fg"]);
+
+          const [row] = await tx<{ sku_key: string }[]>`
+            select sku_key from erp_live_fg where sn_fg = ${`${P}-recalc-fg`}
+          `;
+          expect(row?.sku_key).toBe(key);
+        });
+      });
+    });
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
