@@ -663,3 +663,50 @@ to lembar" exception ST-R5.4 calls for cannot be detected. `/exceptions` ships
 with one reason in v1, `sku_tidak_cocok` (no FG row for the SKU). If SO lines do
 carry a UoM in the real ERP payload, it needs mirroring before ST-R5.4 can be
 honoured — resolve during ST-R5.2 validation.
+
+
+## AMENDMENT 11 — invariant §7.6 made precise (the partition that actually caught a bug)
+
+**Raised by WP-7**, which found §7.6 had two under-specified edges. Both are
+ruled here, because this invariant is not decoration: asserted as a *property*
+over a seeded population, it independently caught the AMENDMENT 1 defect that
+example-based tests missed.
+
+**Edge 1 — confirm-closed lines belong to no set, and that is correct.** A closed
+line leaves both views by design. It is not "silently dropped" — it is the exact
+opposite: an audited, reversible, attributed human decision. The universe is
+therefore scoped to exclude it, and §7.6 now says so rather than leaving it
+implied.
+
+**Edge 2 — `exception` is not a third disjoint set.** ST-R5.3 is explicit that an
+unmatched-SKU line *still counts as demand* and must read ATP-negative rather
+than vanish — so unmatched lines **are live commitments**, and `/exceptions` is a
+**view onto** the live set (those whose `sku_key` has no `erp_live_fg` row), not a
+partition class. The only genuinely disjoint reading would be ST-R5.4's UoM
+exception, and that cannot occur: `erp_so_line` carries no unit column.
+
+**The invariant, restated:**
+
+> Over every SO line that is **approved, non-cancelled, has `qty_balance > 0`,
+> and is not confirm-closed**, the sets `live` and `stale` are **disjoint and
+> covering**. `exception` is a labelled subset of `live`, not a third class.
+
+Testable as written, and no line can fall between the two.
+
+## AMENDMENT 12 — small additions the front end had to probe or fake
+
+Each of these existed only because the contract was silent, and each cost a
+request or a dash on screen:
+
+- **`totals.undated_commitments`** on `/summary`. Without it the review tab's
+  segmented control cannot label its second population, and the page fires a
+  throwaway `segment=undated&limit=1` probe purely to count it.
+- **`po_date`** on every commitment shape (`/sku/:sku_key` and
+  `/stale-commitments` rows). An undated line has no ETA to age from, so the
+  order date is the only way to show how old it is — which is the single most
+  useful triage signal on exactly the population that reserves stock.
+- **Per-segment sort is server-side and implied by the segment** — `stale` by
+  oldest ETA, `undated` by largest balance. Stated so it cannot drift. The client
+  sends no `sort` for the review queue (AMENDMENT 9 applies here too).
+- **`skipped` in the `close-batch` response** is an array of
+  `{ so_line_id, reason }` objects, never bare ids.

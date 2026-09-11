@@ -358,13 +358,27 @@ export interface NumberReading {
   value: number | null;
   /** True only when the string was genuinely ambiguous AND the mode is `auto`. */
   ambiguous: boolean;
+  /**
+   * X11: the token was NaN / ±Infinity, or a finite-looking token that overflowed
+   * to one. Distinguished from merely unreadable because it is far more alarming —
+   * see `isNonFiniteToken()` for why it must never reach the mirror.
+   */
+  nonFinite: boolean;
 }
 
-const UNAMBIGUOUS: NumberReading = { value: null, ambiguous: false };
+const UNREADABLE: NumberReading = { value: null, ambiguous: false, nonFinite: false };
+const NON_FINITE: NumberReading = { value: null, ambiguous: false, nonFinite: true };
+
+/** `NaN`, `Infinity`, `-inf`, … in any casing. Postgres `numeric` accepts these. */
+const NON_FINITE_TOKEN_RE = /^(nan|inf|infinity)$/i;
+/** A plain integer, optionally with an exponent. No separators by this point. */
+const PLAIN_INT_RE = /^\d+(?:[eE][+-]?\d+)?$/;
 
 function finite(n: number, neg: boolean): NumberReading {
-  if (!Number.isFinite(n)) return UNAMBIGUOUS;
-  return { value: neg ? -n : n, ambiguous: false };
+  // Every caller has already validated the digit shape, so a non-finite result
+  // here can only be an overflow ("1e999"), never unparseable text.
+  if (!Number.isFinite(n)) return NON_FINITE;
+  return { value: neg ? -n : n, ambiguous: false, nonFinite: false };
 }
 
 function countOf(s: string, ch: string): number {
@@ -382,11 +396,13 @@ function countOf(s: string, ch: string): number {
  * Postgres as the literal `NaN` and poison a `numeric` column.
  */
 export function parseErpNumber(v: unknown, mode: NumberFormat = config.selarasNumberFormat): NumberReading {
-  if (typeof v === "number") return Number.isFinite(v) ? { value: v, ambiguous: false } : UNAMBIGUOUS;
-  if (typeof v !== "string") return UNAMBIGUOUS;
+  if (typeof v === "number") {
+    return Number.isFinite(v) ? { value: v, ambiguous: false, nonFinite: false } : NON_FINITE;
+  }
+  if (typeof v !== "string") return UNREADABLE;
 
   let s = v.trim();
-  if (s === "") return UNAMBIGUOUS;
+  if (s === "") return UNREADABLE;
   let neg = false;
   const sign = s.charAt(0);
   if (sign === "+" || sign === "-") {
@@ -398,16 +414,20 @@ export function parseErpNumber(v: unknown, mode: NumberFormat = config.selarasNu
   const commas = countOf(s, ",");
 
   // No separator at all — including exponent forms. Nothing to disambiguate.
-  if (dots === 0 && commas === 0) return finite(Number(s), neg);
+  if (dots === 0 && commas === 0) {
+    if (NON_FINITE_TOKEN_RE.test(s)) return NON_FINITE; // "NaN" / "Infinity" (X11)
+    if (!PLAIN_INT_RE.test(s)) return UNREADABLE; // ordinary garbage text
+    return finite(Number(s), neg);
+  }
 
   // Both separators present: the last one is the decimal and the other is
   // grouping, in BOTH conventions. "1.234,50" and "1,234.50" are both 1234.5.
   if (dots > 0 && commas > 0) {
     const decSep = s.lastIndexOf(".") > s.lastIndexOf(",") ? "." : ",";
     const grpSep = decSep === "." ? "," : ".";
-    if (countOf(s, decSep) !== 1) return UNAMBIGUOUS; // two decimal points: malformed
+    if (countOf(s, decSep) !== 1) return UNREADABLE; // two decimal points: malformed
     const normalized = s.split(grpSep).join("").replace(decSep, ".");
-    if (!/^\d*\.\d+$/.test(normalized)) return UNAMBIGUOUS;
+    if (!/^\d*\.\d+$/.test(normalized)) return UNREADABLE;
     return finite(Number(normalized), neg);
   }
 
@@ -418,12 +438,12 @@ export function parseErpNumber(v: unknown, mode: NumberFormat = config.selarasNu
   if (parts.length > 2) {
     const head = parts[0] ?? "";
     const valid = /^\d{1,3}$/.test(head) && parts.slice(1).every((p) => /^\d{3}$/.test(p));
-    return valid ? finite(Number(parts.join("")), neg) : UNAMBIGUOUS;
+    return valid ? finite(Number(parts.join("")), neg) : UNREADABLE;
   }
 
   const head = parts[0] ?? "";
   const tail = parts[1] ?? "";
-  if (!/^\d*$/.test(head) || !/^\d+$/.test(tail)) return UNAMBIGUOUS; // e.g. "1.2a"
+  if (!/^\d*$/.test(head) || !/^\d+$/.test(tail)) return UNREADABLE; // e.g. "1.2a"
 
   // Grouping is always exactly three digits after a separator, and at most three
   // before it. Fail either and the separator can only be a decimal point.
@@ -439,7 +459,7 @@ export function parseErpNumber(v: unknown, mode: NumberFormat = config.selarasNu
       // en: comma = thousands, dot = decimal. "1,234" → 1234, "1.234" → 1.234.
       return sep === "," ? finite(Number(head + tail), neg) : finite(Number(`${head || "0"}.${tail}`), neg);
     case "auto":
-      return { value: null, ambiguous: true };
+      return { value: null, ambiguous: true, nonFinite: false };
   }
 }
 
@@ -455,21 +475,46 @@ export interface AmbiguityTally {
 }
 
 const MAX_AMBIGUITY_SAMPLES = 3;
-let tally: AmbiguityTally | null = null;
 
-function noteAmbiguous(raw: unknown): void {
-  if (!tally) return;
-  tally.count += 1;
+interface PageTally {
+  ambiguous: AmbiguityTally;
+  nonFinite: AmbiguityTally;
+}
+
+let tally: PageTally | null = null;
+
+function note(into: AmbiguityTally, raw: unknown): void {
+  into.count += 1;
   const token = redactSecrets(typeof raw === "string" ? raw : String(raw)).slice(0, 40);
-  if (tally.samples.length < MAX_AMBIGUITY_SAMPLES && !tally.samples.includes(token)) {
-    tally.samples.push(token);
+  if (into.samples.length < MAX_AMBIGUITY_SAMPLES && !into.samples.includes(token)) {
+    into.samples.push(token);
   }
 }
 
-/** Nullable numeric column. An ambiguous token is refused, not guessed (A22). */
+/**
+ * Nullable numeric column. THE ONLY WAY a numeric reaches a mirrored row.
+ *
+ * Two classes of value are refused here rather than written through:
+ *
+ *  - AMBIGUOUS (A22): "1.234" is 1234 or 1.234 depending on the emitter's locale.
+ *    Refused under `auto`, counted, logged.
+ *
+ *  - NON-FINITE (X11): `'NaN'::numeric` and `'Infinity'::numeric` are LEGAL
+ *    values in Postgres and the frozen schema does not forbid them in `th`/`p`/`l`.
+ *    If one were stored, `erp_sku_key()` would render the literal text `NaN` while
+ *    `canonicalSkuKey()` renders `'-'` — the two key implementations would disagree
+ *    (invariant §7.4) and that SKU's commitments would silently stop matching its
+ *    stock. The parity test would not catch it, because the divergence is created
+ *    at WRITE time, not by either key function. Keeping the value out of the mirror
+ *    entirely is better than teaching two functions to agree about a value that
+ *    should never have been stored.
+ */
 function asNumber(v: unknown): number | null {
   const read = parseErpNumber(v);
-  if (read.ambiguous) noteAmbiguous(v);
+  if (tally) {
+    if (read.ambiguous) note(tally.ambiguous, v);
+    else if (read.nonFinite) note(tally.nonFinite, v);
+  }
   return read.value;
 }
 
@@ -674,6 +719,8 @@ export interface SelarasPage<T> {
    * that one line turns "ATP is mysteriously 1000× off" into a 30-second fix.
    */
   ambiguousNumbers: AmbiguityTally;
+  /** Numerics refused for being NaN / ±Infinity (X11). Never written through. */
+  nonFiniteNumbers: AmbiguityTally;
   page: number;
   /** Null when the ERP did not tell us; then paging stops on a short page. */
   totalPages: number | null;
@@ -815,7 +862,10 @@ export async function fetchPage<K extends SelarasTable>(
       const rows: SelarasRowByTable[K][] = [];
       let dropped = 0;
       // Install the ambiguity collector around the SYNCHRONOUS adapt loop only.
-      const pageTally: AmbiguityTally = { count: 0, samples: [] };
+      const pageTally: PageTally = {
+        ambiguous: { count: 0, samples: [] },
+        nonFinite: { count: 0, samples: [] },
+      };
       tally = pageTally;
       try {
         for (const raw of env.rows) {
@@ -839,7 +889,8 @@ export async function fetchPage<K extends SelarasTable>(
           rows,
           rawCount: env.rows.length,
           dropped,
-          ambiguousNumbers: pageTally,
+          ambiguousNumbers: pageTally.ambiguous,
+          nonFiniteNumbers: pageTally.nonFinite,
           page: opts.page,
           totalPages: env.totalPages,
         },

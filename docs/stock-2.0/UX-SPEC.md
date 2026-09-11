@@ -947,7 +947,7 @@ browser session (id, SKU, qty, ETA, time):
   must not renumber under a finger mid-triage.
 
 **Finding a closed line later:** the tab gains one `.fchip` at the end of the
-Umur row: `Yang sudah ditutup`. It sets `state=closed` on the request and renders
+Umur row: `Yang sudah ditutup`. It sets `segment=closed` on the request and renders
 the same table, struck through, with `Aktifkan Lagi` in the Aksi cell. This is
 the recovery path once the session tray is gone. See §11-A3 — the contract does
 not specify a filter for closed rows.
@@ -1772,3 +1772,23 @@ to prevent, in the order they are usually got wrong.
       `erp_connected === false`.
 - [ ] Adjustments: `reason` < 4 chars and `qty_delta === 0` are both blocked
       client-side *and* handled when the server rejects them.
+
+---
+
+## Superseded by CONTRACTS amendments — read the contract, not these paragraphs
+
+Two passages in §6 were written before the contract was amended and are now
+wrong. They are left in place rather than silently rewritten, because a reader
+who remembers them needs to know they changed:
+
+- **§6.7** described listing already-closed rows via `state=closed`. The ratified
+  parameter is `segment=closed` (AMENDMENT 8). One enum, three values —
+  `stale` · `undated` · `closed` — replaces the earlier booleans.
+- **§6.8** said "there is no bulk endpoint" and specified sequential POSTs at
+  concurrency 4 with a progress bar, a cancel button and a partial-failure retry
+  list. `POST /stale-commitments/close-batch` now exists (AMENDMENT 6b) and is
+  all-or-nothing, so none of that UI applies: a batch either applies in full or
+  writes nothing, and a stale selection returns 409 with the operator's typed
+  reason preserved.
+
+Where this file and `CONTRACTS.md` disagree, **the contract wins.**
