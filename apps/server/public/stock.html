@@ -3,13 +3,27 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Stok &amp; Booking</title>
+<title>Stok</title>
 <style>
-  /* Shared UI system (PRD §7) — mobile-first at 380px */
+  /* ── Inherited design system (CONTRACTS §6, UX-SPEC §1.1) ──────────────────
+     Carried forward byte for byte from stock 1.0. Additive changes only. */
   :root{
     --bg:#f2f4f7; --card:#fff; --ink:#17233b; --muted:#6b7280; --line:#e5e7eb;
     --accent:#157a46; --danger:#c03c2b;
     --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  :root{
+    /* Stock 2.0 additions — see UX-SPEC §1.2. Additive only. */
+    --ink-2:#475569;            /* secondary numerals; --muted is too weak here */
+    --ok-bg:#dcfce7;   --ok-ink:#15803d;
+    --warn-bg:#fef3c7; --warn-ink:#b45309; --warn-line:#fde68a; --warn-ink-strong:#7a4f08;
+    --neg-bg:#fee2e2;  --neg-ink:#b91c1c;
+    --neutral-bg:#f3f4f6; --neutral-ink:#4b5563;
+    --offline-bg:#eef1f6; --offline-ink:#334155; --offline-line:#cbd5e1;
+    --age-old-bg:#ffedd5;     --age-old-ink:#9a3412;
+    --age-ancient-bg:#fee2e2; --age-ancient-ink:#b91c1c;
+    --focus:#1d4ed8;
+    --tap:44px;
   }
   *{box-sizing:border-box}
   html,body{margin:0}
@@ -20,7 +34,6 @@
   header .sub{font-size:12px;color:#c7cfde;margin-top:2px}
   header a.pplink{color:#ffd27a;text-decoration:none;font-size:13px;font-weight:600;white-space:nowrap}
   .wrap{max-width:960px;margin:0 auto;padding:14px 16px}
-  .idbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
   label.fld{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted);font-weight:600}
   select,input[type=text],input[type=number],textarea{font:inherit;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink);min-height:44px}
   select{min-width:180px}
@@ -40,14 +53,15 @@
   th{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:700;background:#fafbfc}
   tr.itemrow{cursor:pointer}
   tr.itemrow:hover{background:#f7fafc}
-  .warna b{font-size:13px}
+  .warna b{font-size:14px}
   .sub2{color:var(--muted);font-size:11px;margin-top:2px}
   .avail{font-weight:800;font-size:14px;white-space:nowrap}
   .avail.neg{color:var(--danger)}
   .m2{color:var(--muted);font-size:11px;font-weight:500}
-  .badge{display:inline-block;font-size:10px;font-weight:800;letter-spacing:.4px;padding:2px 6px;border-radius:6px;margin-left:6px;background:#ede9fe;color:#6d28d9}
   .chip{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;white-space:nowrap}
   .chip.age{background:#f3f4f6;color:#6b7280}
+  /* Booking-era status chips: CSS kept per UX-SPEC §1.1, but NO element on this
+     page carries them — the features they named no longer exist. */
   .st-confirmed{background:#dcfce7;color:#15803d}
   .st-overbooked{background:#fef3c7;color:#b45309}
   .st-approved{background:#ede9fe;color:#6d28d9}
@@ -74,8 +88,6 @@
   .big-avail{font-size:15px;font-weight:800;margin:10px 0}
   .big-avail.neg{color:var(--danger)}
   .hint{font-size:12px;color:#b45309;background:#fef3c7;border-radius:8px;padding:6px 10px;margin-top:6px}
-  .modal label.fld{margin-top:12px;color:var(--ink)}
-  .modal input,.modal textarea{width:100%}
   .rev{text-decoration:line-through;opacity:.6}
   .sisa{text-align:right;font-weight:700;white-space:nowrap}
   .foot{font-size:12px;color:var(--muted);padding:10px 4px 0}
@@ -87,49 +99,139 @@
   @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
   .spin{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.5);border-top-color:#fff;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px;margin-right:6px}
   @keyframes sp{to{transform:rotate(360deg)}}
+
+  /* ── New classes — UX-SPEC §1.3. Defined only from tokens. ──────────────── */
+  /* ST-R10 state chips */
+  .st-tersedia      {background:var(--ok-bg);      color:var(--ok-ink)}
+  .st-habis         {background:var(--warn-bg);    color:var(--warn-ink)}
+  .st-kosong        {background:var(--neutral-bg); color:var(--neutral-ink)}
+  .st-perlu-produksi{background:var(--neg-bg);     color:var(--neg-ink)}
+  /* age pill, three tiers */
+  .chip.umur        {background:var(--neutral-bg); color:var(--neutral-ink)}
+  .chip.umur.old    {background:var(--age-old-bg); color:var(--age-old-ink)}
+  .chip.umur.ancient{background:var(--age-ancient-bg); color:var(--age-ancient-ink)}
+  /* the headline number (UX-SPEC §2) */
+  .atp      {font-size:22px;font-weight:800;line-height:1.05;white-space:nowrap;
+             font-variant-numeric:tabular-nums;color:var(--ink)}
+  .atp.neg  {color:var(--danger)}
+  .atp .un  {font-size:12px;font-weight:700;color:var(--ink-2);margin-left:4px}
+  .atp-m2   {font-size:11px;color:var(--muted);font-weight:500;margin-top:1px}
+  .atp-sub  {font-size:11px;color:var(--ink-2);margin-top:3px;
+             font-variant-numeric:tabular-nums;line-height:1.35}
+  .atp-note {font-size:11px;color:var(--ink-2);margin-top:3px;line-height:1.35}
+  /* the offline (ERP not configured) box — deliberately NOT amber */
+  .offbox{background:var(--offline-bg);border:1px solid var(--offline-line);
+          color:var(--offline-ink);border-radius:12px;padding:12px 14px;
+          font-size:13px;line-height:1.45;display:flex;gap:10px;
+          align-items:flex-start;margin-bottom:12px}
+  /* filter chip row + totals strip — same class names on both pages */
+  .fltchips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+  .fchip{border:1px solid var(--line);background:var(--card);color:var(--ink-2);
+         border-radius:999px;padding:0 12px;min-height:var(--tap);font:inherit;
+         font-size:12px;font-weight:700;cursor:pointer;display:inline-flex;
+         align-items:center;gap:6px}
+  .fchip[aria-pressed="true"]{background:var(--ink);color:var(--card);border-color:var(--ink)}
+  .fchip:disabled{opacity:.55;cursor:default}
+  .fchip .n{font-variant-numeric:tabular-nums;font-weight:800}
+  /* skeleton */
+  .sk{background:var(--line);border-radius:6px;height:12px;animation:skp 1.1s ease-in-out infinite}
+  .sk.lg{height:20px}
+  @keyframes skp{0%,100%{opacity:.55}50%{opacity:1}}
+  /* poll delta flash */
+  @keyframes flup{from{background:var(--ok-bg)}to{background:transparent}}
+  @keyframes fldn{from{background:var(--neg-bg)}to{background:transparent}}
+  .f-up{animation:flup 1.2s ease-out}
+  .f-dn{animation:fldn 1.2s ease-out}
+  /* a11y */
+  .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
+           overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+  :focus-visible{outline:3px solid var(--focus);outline-offset:2px;border-radius:6px}
+  header :focus-visible{outline-color:var(--card)}
+  .btn.tap{min-height:var(--tap)}
+  .mini.tap{min-height:var(--tap);padding:0 12px}
+
+  /* ── Row layout: table ≥560px, two-column cards ≤559px (UX-SPEC §2.2) ───── */
+  td.prod{min-width:0}
+  td.num{text-align:right;white-space:nowrap}
+  td.num .atp-sub,td.num .atp-note,td.num .atp-m2{white-space:normal}
+  @media(max-width:559px){
+    table.items thead{display:none}
+    table.items,table.items tbody,table.items tr,table.items td{display:block;width:100%}
+    table.items tr.itemrow{display:flex;gap:12px;align-items:flex-start;
+      justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--line)}
+    table.items td{border:none;padding:0}
+    table.items td.prod{flex:1 1 auto}
+    table.items td.num{flex:0 0 auto;max-width:52%}
+    table.items tr.norows td{padding:0}
+  }
 </style>
 </head>
 <body>
 <header>
   <div class="hrow">
     <div>
-      <h1>Stok &amp; Booking</h1>
-      <div class="sub" id="dataPer">Memuat…</div>
+      <h1>Stok</h1>
+      <!-- Freshness is always visible, never behind a tap (UX-SPEC §4.1). -->
+      <div class="sub" id="dataPer" role="status">Memuat…</div>
     </div>
     <a class="pplink" href="/stock-ppic">PPIC ↗</a>
   </div>
 </header>
 
 <div class="wrap">
-  <div class="idbar">
-    <label class="fld" style="flex:1;min-width:200px">Atas nama (sales)
-      <select id="repSel"><option value="">— Pilih nama —</option></select>
-    </label>
-    <label class="fld" id="repFreeWrap" style="display:none;flex:1;min-width:200px">Nama sales
-      <input type="text" id="repFree" placeholder="Ketik nama" />
-    </label>
+  <!-- Three conditions, three looks, mutually exclusive (UX-SPEC §4):
+       offline box ▸ amber stale banner ▸ freshness line only. -->
+  <div class="offbox" id="offBox" role="status" style="display:none">
+    <span aria-hidden="true">🔌</span>
+    <div>
+      <b>ERP tidak terhubung.</b><br>
+      <span id="offText"></span>
+    </div>
   </div>
 
-  <div class="banner" id="banner" style="display:none">
-    <span>Stok live untuk sales. Untuk qty besar atau PO yang sudah fix, wajib konfirmasi ulang ke tim PPIC.</span>
-    <button id="bannerX" title="Tutup">×</button>
+  <div class="banner" id="staleBanner" role="status" style="display:none">
+    <span aria-hidden="true">⚠️</span>
+    <span id="staleText"></span>
   </div>
 
-  <div id="mainArea"></div>
+  <div id="stateArea"></div>
 
-  <div class="card" id="mineCard" style="display:none">
-    <h2>Booking Saya <span class="chip age" id="mineCount">0</span></h2>
-    <div id="mineBody"></div>
+  <div id="listArea" style="display:none">
+    <div class="fltchips" id="totals"></div>
+    <div class="toolbar">
+      <label class="sr-only" for="q">Cari warna atau kode barang</label>
+      <input type="text" id="q" placeholder="Cari warna / kode barang…" />
+      <label class="sr-only" for="kode">Kode Barang</label>
+      <select id="kode" title="Kode Barang"><option value="">Semua kode</option></select>
+      <label class="sr-only" for="warna">Warna</label>
+      <select id="warna" title="Warna"><option value="">Semua warna</option></select>
+      <label class="sr-only" for="th">Tebal</label>
+      <select id="th" title="Tebal"><option value="">Semua tebal</option></select>
+      <label class="sr-only" for="size">Ukuran</label>
+      <select id="size" title="Ukuran (P×L)"><option value="">Semua ukuran</option></select>
+      <label class="sr-only" for="sort">Urutkan</label>
+      <select id="sort" title="Urutkan">
+        <option value="warna">Urut: Warna A–Z</option>
+        <option value="kode">Urut: Kode Barang</option>
+        <option value="atp_desc">Urut: Bisa dijual terbanyak</option>
+        <option value="atp_asc">Urut: Bisa dijual paling sedikit</option>
+        <option value="eta">Urut: ETA terdekat</option>
+      </select>
+      <label class="chkline"><input type="checkbox" id="hz" /> Sembunyikan yang kosong</label>
+    </div>
+    <div class="card">
+      <h2>Daftar Produk <span class="chip umur" id="invMeta">—</span></h2>
+      <div style="overflow-x:auto"><table class="items">
+        <thead><tr><th>Produk</th><th style="text-align:right">Bisa Dijual</th></tr></thead>
+        <tbody id="tbody"></tbody>
+      </table></div>
+    </div>
   </div>
 </div>
 
-<!-- Booking modal -->
-<div class="modal-bg" id="bkBg">
-  <div class="modal" id="bkModal"></div>
-</div>
-<!-- Riwayat modal -->
-<div class="modal-bg" id="rwBg">
-  <div class="modal" id="rwModal"></div>
+<!-- Detail per SKU (CONTRACTS §4.2). Read-only: the only interaction left. -->
+<div class="modal-bg" id="dtBg">
+  <div class="modal" id="dtModal" role="dialog" aria-modal="true"></div>
 </div>
 
 <div id="toast"></div>
@@ -137,32 +239,46 @@
 <script>
 "use strict";
 const $ = (s,r=document)=>r.querySelector(s);
-const NF = new Intl.NumberFormat("id-ID",{maximumFractionDigits:2});
 const eq = (a,b)=>String(a)===String(b);
+function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 
-// ── WIB + duration formatting (R11, R14) ──────────────────────────────────────
-function wib(iso,withDate=true){
-  if(!iso) return "—";
-  const d=new Date(iso);
+// ── Number / date formatting — UX-SPEC §1.4, identical on both pages ─────────
+const NF  = new Intl.NumberFormat("id-ID",{maximumFractionDigits:2});   // inherited
+const num = n => NF.format(Number(n)||0).replace("-","−");         // U+2212 MINUS
+const N   = v => { const x=Number(v); return Number.isFinite(x)?x:0; }; // arithmetic only
+
+function toDate(v){
+  if(!v) return null;
+  // Date-only values (estimate_delivery, nearest_eta) are WIB calendar dates.
+  const d=new Date(/^\d{4}-\d{2}-\d{2}$/.test(String(v))?String(v)+"T00:00:00+07:00":v);
+  return isNaN(d)?null:d;
+}
+function wib(iso,withDate=true){            // inherited
+  const d=toDate(iso); if(!d) return "—";
   const opt=withDate
     ? {day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",hour12:false,timeZone:"Asia/Jakarta"}
     : {hour:"2-digit",minute:"2-digit",hour12:false,timeZone:"Asia/Jakarta"};
   return new Intl.DateTimeFormat("id-ID",opt).format(d).replace(/\./g,":").replace(/:(\w{3}):/," $1 ");
 }
-function wibShort(iso){ // dd MMM
-  if(!iso) return "—";
-  return new Intl.DateTimeFormat("id-ID",{day:"2-digit",month:"short",timeZone:"Asia/Jakarta"}).format(new Date(iso));
+function jakYear(d){ return new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Jakarta",year:"numeric"}).format(d); }
+// Inherited wibShort(), extended with an optional year — a 2020 ETA reading
+// "27 Agu" is the single most misleading thing we could print (UX-SPEC §1.4).
+function wibShort(iso,withYear){
+  const d=toDate(iso); if(!d) return "—";
+  if(withYear===undefined) withYear = jakYear(d)!==jakYear(new Date());
+  const opt={day:"2-digit",month:"short",timeZone:"Asia/Jakarta"};
+  if(withYear) opt.year="numeric";
+  return new Intl.DateTimeFormat("id-ID",opt).format(d);
 }
-// Duration: 38m / 5j / 2h 3j  (m=menit, j=jam, h=hari)
-function dur(sec){
-  sec=Math.max(0,Math.floor(sec));
-  const d=Math.floor(sec/86400), h=Math.floor((sec%86400)/3600), m=Math.floor((sec%3600)/60);
-  if(d>0) return `${d}h ${h}j`;
-  if(h>0) return `${h}j`;
-  return `${m}m`;
+// Relative freshness: baru saja / N mnt lalu / N jam lalu / absolute beyond 24h.
+function relFresh(iso){
+  const d=toDate(iso); if(!d) return null;
+  const s=Math.max(0,(Date.now()-d.getTime())/1000);
+  if(s<60) return "baru saja";
+  if(s<3600) return Math.floor(s/60)+" mnt lalu";
+  if(s<86400) return Math.floor(s/3600)+" jam lalu";
+  return null;                                  // beyond 24h → absolute only
 }
-// Live age for a running booking from server created_at (client tick, R14/§8.9)
-function ageSec(iso){ return (Date.now()-Date.parse(iso))/1000; }
 
 function toast(msg,kind){
   const t=document.createElement("div");
@@ -172,388 +288,509 @@ function toast(msg,kind){
   setTimeout(()=>t.remove(),3500);
 }
 
-// ── identity (persist stk_rep) ────────────────────────────────────────────────
-let REPS=[];
-function selectedRep(){
-  const v=$("#repSel").value;
-  if(v){ const r=REPS.find(x=>eq(x.value,v)); return {key:v, name:r?r.name:v}; }
-  const free=$("#repFree").value.trim();
-  if(free) return {key:null,name:free};
-  return null;
-}
-async function loadReps(){
-  // Shared roster across every surface: Retail, Project, Distributor, Online.
-  try{
-    const r=await fetch("/api/sales-reps"); const j=await r.json();
-    REPS=(j.sales_reps||[]).map(x=>({
-      value:x.value||((x.team||"retail")+":"+x.id),
-      name:x.full_name||x.name||"—",
-      team:x.team||"retail",
-    }));
-  }catch{ REPS=[]; }
-  const sel=$("#repSel");
-  if(REPS.length===0){ // §8.6 registry empty → free-typed fallback
-    $("#repFreeWrap").style.display="";
-    sel.parentElement.style.display="none";
-  }else{
-    const groups={retail:"Retail",project:"Project",distributor:"Distributor",online:"Online"};
-    const byTeam={};
-    for(const r of REPS){ (byTeam[r.team]=byTeam[r.team]||[]).push(r); }
-    let html='<option value="">— Pilih nama —</option>';
-    for(const t of Object.keys(groups)){
-      if(!byTeam[t]) continue;
-      html+=`<optgroup label="${groups[t]}">`+byTeam[t].map(r=>`<option value="${r.value}">${esc(r.name)}</option>`).join("")+"</optgroup>";
-    }
-    // any other teams
-    for(const t of Object.keys(byTeam)){ if(groups[t]) continue;
-      html+=`<optgroup label="${esc(t)}">`+byTeam[t].map(r=>`<option value="${r.value}">${esc(r.name)}</option>`).join("")+"</optgroup>"; }
-    sel.innerHTML=html;
+// ── Domain vocabulary — UX-SPEC §1.5 + §3. One word per concept, both pages ──
+const STATES=["tersedia","habis","kosong","perlu_produksi"];
+const ST_CLASS={tersedia:"st-tersedia",habis:"st-habis",kosong:"st-kosong",perlu_produksi:"st-perlu-produksi"};
+const ST_SHORT={tersedia:"Tersedia",habis:"Habis",kosong:"Kosong",perlu_produksi:"Perlu Produksi"};
+const ST_LONG ={tersedia:"Tersedia",habis:"Habis (Semua Dipesan)",kosong:"Kosong",perlu_produksi:"Perlu Produksi"};
+function stateNote(i){
+  switch(i.state){
+    case "tersedia": return "Masih bisa dijual sekarang.";
+    case "habis":    return "Stok fisik ada, tapi seluruhnya sudah dipesan Sales Order lain.";
+    case "kosong":   return "Tidak ada stok fisik di gudang.";
+    case "perlu_produksi":
+      // The deficit restated as a positive number — "berapa yang harus dibuat"
+      // is the question, and subtracting a minus in your head is an error source.
+      return `Pesanan melebihi stok. Kekurangan ${num(Math.abs(N(i.atp)))} ${i.unit||""}`.trim()+".";
+    default: return "";
   }
-  const saved=localStorage.getItem("stk_rep");
-  if(saved){ sel.value=saved; if(sel.value!==saved){ $("#repFree").value=saved; } }
-  onRepChange();
 }
-$("#repSel")?.addEventListener("change",()=>{ localStorage.setItem("stk_rep",$("#repSel").value); onRepChange(); });
-$("#repFree")?.addEventListener("input",()=>{ localStorage.setItem("stk_rep",$("#repFree").value.trim()); onRepChange(); });
-function onRepChange(){
-  const rep=selectedRep();
-  $("#mineCard").style.display=rep?"":"none";
-  if(rep) loadMine();
+function stateChip(state,long){
+  const k=STATES.includes(state)?state:null;
+  if(!k) return "";
+  return `<span class="chip ${ST_CLASS[k]}">${esc(long?ST_LONG[k]:ST_SHORT[k])}</span>`;
 }
-function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 
-// ── banner dismissal (persisted) ──────────────────────────────────────────────
-if(localStorage.getItem("stk_banner_x")!=="1"){ $("#banner").style.display=""; }
-$("#bannerX").addEventListener("click",()=>{ $("#banner").style.display="none"; localStorage.setItem("stk_banner_x","1"); });
+// ── state ─────────────────────────────────────────────────────────────────────
+// SUMMARY holds the last payload that actually arrived. A failed poll never
+// blanks the table — the rep keeps reading the last known numbers (ST-R7).
+let SUMMARY=null;
+let FIRSTLOAD=true;      // no successful load yet → skeleton
+let LASTERR="";          // last fetch failure
+let RELOAD_FAILED=false; // a poll failed while old data is still on screen
+let WAS_STALE=false;     // to announce recovery exactly once (UX-SPEC §4.2)
+const PREV_ATP=new Map();// sku_key → last atp, for the delta flash
+let FLASH=new Map();     // sku_key → "f-up" | "f-dn", consumed by the next render
 
-// ── state + fetch ─────────────────────────────────────────────────────────────
-let SUMMARY={upload:null,items:[],totals:{}};
-// Sort defaults to colour A–Z so a given warna always lands in the same place
-// (users were missing "BLACK" because file order scattered it below "BLACK
-// GALAXY"). Persisted, so the ordering a rep learns stays put across visits.
-const flt={q:"",brand:"",coating:"",size:"",mm:"",sort:localStorage.getItem("stk_sort")||"warna",hideZero:true,onlyOver:false};
+const flt={
+  q:"", kode:"", warna:"", th:"", size:"", state:"",
+  sort:localStorage.getItem("stk_sort")||"warna",
+  // Never defaulted on: UX-SPEC §2.3 forbids a filter default that hides rows.
+  hideZero:localStorage.getItem("stk_hz")==="1",
+};
+$("#sort").value=flt.sort;
+$("#hz").checked=flt.hideZero;
 
+// ── fetch (ST-R15: same URL as 1.0) ───────────────────────────────────────────
 async function loadSummary(){
   try{
-    const r=await fetch("/api/stock/summary");
-    if(r.status===503){ toast("Database tidak tersedia.","err"); return; }
-    SUMMARY=await r.json();
-  }catch{ return; }
-  renderHeader(); renderMain();
+    const r=await fetch("/api/stock/summary",{headers:{accept:"application/json"}});
+    let j=null;
+    try{ j=await r.json(); }catch{ j=null; }
+    if(!r.ok){
+      LASTERR=(j&&j.error)||(r.status===503?"Database tidak tersedia.":"Gagal memuat data stok.");
+      RELOAD_FAILED=!!SUMMARY;
+      if(SUMMARY) toast(LASTERR,"err");   // keep showing the old numbers
+      FIRSTLOAD=false; renderAll(); return;
+    }
+    LASTERR=""; RELOAD_FAILED=false;
+    const next=normalize(j);
+    markDeltas(next);
+    if(WAS_STALE && !next.freshness.stale && next.freshness.erp_connected){
+      toast("Data ERP sudah diperbarui.","ok");
+    }
+    WAS_STALE=next.freshness.stale;
+    SUMMARY=next;
+  }catch{
+    LASTERR="Gagal terhubung ke server.";
+    RELOAD_FAILED=!!SUMMARY;
+    if(SUMMARY) toast("Gagal memuat ulang. Menampilkan data terakhir.","warn");
+  }
+  FIRSTLOAD=false;
+  renderAll();
 }
-function renderHeader(){
-  const u=SUMMARY.upload;
-  $("#dataPer").textContent = u
-    ? `Data per ${wib(u.created_at)} · ${u.filename||"tanpa nama"}`
-    : "Belum ada data stok";
+// Defensive only — the page must not explode if a field is absent while the
+// back end is still landing. No field is invented: missing stays missing.
+function normalize(j){
+  const o=j&&typeof j==="object"?j:{};
+  const f=o.freshness&&typeof o.freshness==="object"?o.freshness:{};
+  return {
+    freshness:{
+      last_ok_at:f.last_ok_at??null,
+      stale:f.stale===true,
+      erp_connected:f.erp_connected!==false,
+    },
+    totals:o.totals&&typeof o.totals==="object"?o.totals:{},
+    items:Array.isArray(o.items)?o.items:[],
+  };
+}
+// Which numbers moved under the reader since the last poll (UX-SPEC §1.3 flash).
+function markDeltas(next){
+  const f=new Map();
+  for(const i of next.items){
+    const k=String(i.sku_key), a=N(i.atp), p=PREV_ATP.get(k);
+    if(p!=null && p!==a) f.set(k, a>p ? "f-up" : "f-dn");
+    PREV_ATP.set(k,a);
+  }
+  if(f.size) FLASH=f;
 }
 
-function renderMain(){
-  const host=$("#mainArea");
-  if(!SUMMARY.upload){
-    host.innerHTML=`<div class="card"><div class="empty">Belum ada data stok.<br>Minta tim PPIC upload file Excel di halaman <a href="/stock-ppic">PPIC</a>.</div></div>`;
+// ── render orchestration ──────────────────────────────────────────────────────
+function renderAll(){
+  renderFreshness();
+  const host=$("#stateArea"), list=$("#listArea");
+
+  if(FIRSTLOAD && !SUMMARY){
+    list.style.display="none";
+    $("#offBox").style.display="none";
+    host.innerHTML=skeleton();
     return;
   }
-  const brands=[...new Set(SUMMARY.items.map(i=>i.product_line).filter(Boolean))].sort();
-  // Sizing options come from the active period only, so a generic upload (no
-  // dimensions) simply doesn't show these filters.
-  const sizes=[...new Set(SUMMARY.items.map(sizeKey).filter(Boolean))]
-    .sort((a,b)=>{const[ap,al]=a.split("x").map(Number),[bp,bl]=b.split("x").map(Number);return ap-bp||al-bl;});
-  const mms=[...new Set(SUMMARY.items.map(i=>i.mm).filter(v=>v!=null))].sort((a,b)=>a-b);
-  const coatings=[...new Set(SUMMARY.items.map(i=>i.coating).filter(Boolean))].sort();
-  const t=SUMMARY.totals;
-  host.innerHTML=`
-    <div class="toolbar">
-      <input type="text" id="q" placeholder="Cari warna / batch / nama…" value="${esc(flt.q)}" />
-      <select id="brand"><option value="">Semua brand</option>${brands.map(b=>`<option ${eq(b,flt.brand)?"selected":""} value="${esc(b)}">${esc(b)}</option>`).join("")}</select>
-      ${coatings.length?`<select id="coating" title="Jenis coating"><option value="">Semua coating</option>${coatings.map(c=>`<option ${eq(c,flt.coating)?"selected":""} value="${esc(c)}">${esc(c)}</option>`).join("")}</select>`:""}
-      ${sizes.length?`<select id="size" title="Ukuran panel (P×L)"><option value="">Semua ukuran</option>${sizes.map(v=>{const[a,b2]=v.split("x");return `<option ${eq(v,flt.size)?"selected":""} value="${esc(v)}">${NF.format(Number(a))}×${NF.format(Number(b2))}</option>`;}).join("")}</select>`:""}
-      ${mms.length?`<select id="mm" title="Tebal panel"><option value="">Semua tebal</option>${mms.map(v=>`<option ${eq(String(v),flt.mm)?"selected":""} value="${v}">${NF.format(v)} mm</option>`).join("")}</select>`:""}
-      <select id="sort" title="Urutkan">
-        <option value="warna" ${flt.sort==="warna"?"selected":""}>Urut: Warna A–Z</option>
-        <option value="coating" ${flt.sort==="coating"?"selected":""}>Urut: Coating</option>
-        <option value="avail_desc" ${flt.sort==="avail_desc"?"selected":""}>Urut: Stok terbanyak</option>
-        <option value="avail_asc" ${flt.sort==="avail_asc"?"selected":""}>Urut: Stok paling sedikit</option>
-        <option value="file" ${flt.sort==="file"?"selected":""}>Urut: Sesuai file</option>
-      </select>
-      <label class="chkline"><input type="checkbox" id="hz" ${flt.hideZero?"checked":""}/> Sembunyikan stok 0</label>
-      <label class="chkline"><input type="checkbox" id="oo" ${flt.onlyOver?"checked":""}/> Hanya overbooked</label>
-    </div>
-    <div class="card">
-      <h2>Inventaris
-        <span class="chip age" id="invMeta">${t.items_available||0} tersedia · ${t.items||0} item${t.pending_overbooked?` · ${t.pending_overbooked} overbook`:""}</span>
-      </h2>
-      <div style="overflow-x:auto"><table>
-        <thead><tr><th>Brand</th><th>Warna</th><th>Spec</th><th style="text-align:right">Tersedia</th><th></th></tr></thead>
-        <tbody id="tbody"></tbody>
-      </table></div>
-    </div>`;
-  $("#q").addEventListener("input",e=>{flt.q=e.target.value;renderRows();});
-  $("#brand").addEventListener("change",e=>{flt.brand=e.target.value;renderRows();});
-  $("#coating")?.addEventListener("change",e=>{flt.coating=e.target.value;renderRows();});
-  $("#size")?.addEventListener("change",e=>{flt.size=e.target.value;renderRows();});
-  $("#mm")?.addEventListener("change",e=>{flt.mm=e.target.value;renderRows();});
-  $("#sort").addEventListener("change",e=>{flt.sort=e.target.value;localStorage.setItem("stk_sort",flt.sort);renderRows();});
-  $("#hz").addEventListener("change",e=>{flt.hideZero=e.target.checked;renderRows();});
-  $("#oo").addEventListener("change",e=>{flt.onlyOver=e.target.checked;renderRows();});
+  if(!SUMMARY){
+    list.style.display="none";
+    $("#offBox").style.display="none";
+    host.innerHTML=`<div class="card"><div class="empty">
+      Data stok gagal dimuat.<br>${esc(LASTERR||"Coba lagi sebentar.")}
+      <div style="margin-top:12px"><button class="btn tap" id="retry">Coba lagi</button></div></div></div>`;
+    $("#retry").addEventListener("click",()=>{ FIRSTLOAD=true; renderAll(); loadSummary(); });
+    return;
+  }
+
+  const items=SUMMARY.items, off=!SUMMARY.freshness.erp_connected;
+  if(off){
+    $("#offText").textContent = items.length
+      ? "Angka di bawah adalah data terakhir sebelum koneksi dimatikan dan tidak lagi diperbarui."
+      : "Integrasi ke sistem ERP belum diaktifkan, jadi angka stok belum bisa ditampilkan. Hubungi tim IT untuk mengaktifkan.";
+    $("#offBox").style.display="";
+  }else{
+    $("#offBox").style.display="none";
+  }
+
+  if(items.length===0){
+    list.style.display="none";
+    host.innerHTML=off
+      ? `<div class="card"><div class="empty">Data stok belum tersedia.<br>Halaman ini akan terisi otomatis setelah ERP terhubung.</div></div>`
+      : `<div class="card"><div class="empty">Data stok belum tersedia.<br>Sinkronisasi ERP belum menghasilkan baris stok.</div></div>`;
+    return;
+  }
+  host.innerHTML="";
+  list.style.display="";
+  setDisabled(off);
+  syncFilterOptions();
+  renderTotals();
   renderRows();
 }
-// Stable size key: raw numbers so "2440x1220" never depends on locale format.
+function skeleton(){
+  const bar=(w,cls)=>`<div class="sk ${cls||""}" style="width:${w}"></div>`;
+  const row=()=>`<div style="padding:12px 14px;border-bottom:1px solid var(--line);display:flex;gap:12px;justify-content:space-between">
+    <div style="flex:1"><div class="sk" style="width:62%;height:14px"></div><div class="sk" style="width:44%;margin-top:8px"></div></div>
+    <div style="flex:0 0 40%"><div class="sk lg" style="width:80%;margin-left:auto"></div><div class="sk" style="width:60%;margin-top:8px;margin-left:auto"></div></div>
+  </div>`;
+  return `<div class="toolbar">${bar("100%","lg")}</div>
+    <div class="card"><h2>Daftar Produk</h2>${row()}${row()}${row()}${row()}</div>
+    <span class="sr-only" role="status">Memuat data stok…</span>`;
+}
+// ERP off ⇒ controls are disabled, never hidden: hiding them makes the page look
+// broken, disabling makes it look switched off (UX-SPEC §4.3).
+function setDisabled(off){
+  ["#q","#kode","#warna","#th","#size","#sort","#hz"].forEach(s=>{
+    const el=$(s); if(!el) return;
+    el.disabled=off;
+    if(off) el.setAttribute("title","ERP tidak terhubung"); else el.removeAttribute("title");
+  });
+}
+
+function renderFreshness(){
+  const el=$("#dataPer"), banner=$("#staleBanner");
+  if(!SUMMARY){ el.textContent=LASTERR?"Data stok gagal dimuat":"Memuat…"; banner.style.display="none"; return; }
+  const f=SUMMARY.freshness;
+  if(!f.erp_connected){
+    el.textContent="ERP tidak terhubung";
+    banner.style.display="none";          // offline box wins; never both (§4)
+    return;
+  }
+  if(!f.last_ok_at){
+    el.textContent="Menunggu sinkronisasi pertama…";
+  }else{
+    const rel=relFresh(f.last_ok_at);
+    const head="Data ERP per "+(rel?wib(f.last_ok_at,false):wib(f.last_ok_at));
+    el.textContent = RELOAD_FAILED ? head+" · gagal memuat ulang" : (rel?head+" · "+rel:head);
+  }
+  if(f.stale){
+    banner.style.display="";
+    $("#staleText").innerHTML = f.last_ok_at
+      ? `Data ERP belum diperbarui sejak <b>${esc(wib(f.last_ok_at,!relFresh(f.last_ok_at)))}</b>. Angka di bawah mungkin sudah tidak akurat — konfirmasi ke PPIC sebelum menjanjikan stok.`
+      : `Sinkronisasi ERP belum pernah berhasil. Angka di bawah mungkin sudah tidak akurat — konfirmasi ke PPIC sebelum menjanjikan stok.`;
+  }else{
+    banner.style.display="none";
+  }
+}
+// The relative half re-renders on a client tick, without refetching.
+setInterval(()=>{ if(SUMMARY) renderFreshness(); },30000);
+
+// ── filter option lists ───────────────────────────────────────────────────────
+// Rebuilt only when the underlying option set changes, so a poll never steals
+// focus from the search box or resets an open dropdown.
 function sizeKey(i){ return (i.p!=null&&i.l!=null)?`${i.p}x${i.l}`:""; }
+const optSig={};
+function syncSelect(id,opts,cur,placeholder){
+  const sel=$("#"+id);
+  const sig=opts.map(o=>o.v).join("");
+  if(optSig[id]!==sig){
+    optSig[id]=sig;
+    sel.innerHTML=`<option value="">${esc(placeholder)}</option>`+
+      opts.map(o=>`<option value="${esc(o.v)}">${esc(o.label)}</option>`).join("");
+  }
+  sel.value=cur;
+  if(sel.value!==cur) sel.value="";       // an option that vanished resets cleanly
+  sel.style.display=opts.length?"":"none";
+}
+function syncFilterOptions(){
+  const items=SUMMARY.items;
+  const byId=(a,b)=>String(a).localeCompare(String(b),"id",{sensitivity:"base"});
+  const kodes=[...new Set(items.map(i=>i.kode_barang).filter(Boolean))].sort(byId);
+  const warnas=[...new Set(items.map(i=>i.warna).filter(Boolean))].sort(byId);
+  const ths=[...new Set(items.map(i=>i.th).filter(v=>v!=null))].sort((a,b)=>N(a)-N(b));
+  const sizes=[...new Set(items.map(sizeKey).filter(Boolean))]
+    .sort((a,b)=>{const[ap,al]=a.split("x").map(Number),[bp,bl]=b.split("x").map(Number);return ap-bp||al-bl;});
+  syncSelect("kode",kodes.map(v=>({v,label:v})),flt.kode,"Semua kode");
+  syncSelect("warna",warnas.map(v=>({v,label:v})),flt.warna,"Semua warna");
+  syncSelect("th",ths.map(v=>({v:String(v),label:num(v)+" mm"})),flt.th,"Semua tebal");
+  syncSelect("size",sizes.map(v=>{const[a,b]=v.split("x");return {v,label:`${num(a)}×${num(b)}`};}),flt.size,"Semua ukuran");
+  flt.kode=$("#kode").value; flt.warna=$("#warna").value; flt.th=$("#th").value; flt.size=$("#size").value;
+}
+
+$("#q").addEventListener("input",e=>{flt.q=e.target.value;renderRows();});
+$("#kode").addEventListener("change",e=>{flt.kode=e.target.value;renderRows();});
+$("#warna").addEventListener("change",e=>{flt.warna=e.target.value;renderRows();});
+$("#th").addEventListener("change",e=>{flt.th=e.target.value;renderRows();});
+$("#size").addEventListener("change",e=>{flt.size=e.target.value;renderRows();});
+$("#sort").addEventListener("change",e=>{flt.sort=e.target.value;localStorage.setItem("stk_sort",flt.sort);renderRows();});
+$("#hz").addEventListener("change",e=>{flt.hideZero=e.target.checked;localStorage.setItem("stk_hz",flt.hideZero?"1":"0");renderRows();});
+
+// ── totals strip, doubling as the state filter ────────────────────────────────
+function renderTotals(){
+  const t=SUMMARY.totals||{}, off=!SUMMARY.freshness.erp_connected;
+  const parts=STATES.map(s=>
+    `<button type="button" class="fchip" data-state="${s}" aria-pressed="${flt.state===s?"true":"false"}" ${off?"disabled":""}>`+
+    `${esc(ST_SHORT[s])} <span class="n">${num(t[s])}</span></button>`);
+  if(N(t.stale_commitments)>0){
+    parts.push(`<span class="chip umur" title="Pesanan lama tidak mengurangi Bisa Dijual">Pesanan lama ${num(t.stale_commitments)}</span>`);
+  }
+  const el=$("#totals");
+  el.innerHTML=parts.join("");
+  el.querySelectorAll("[data-state]").forEach(b=>b.addEventListener("click",()=>{
+    const s=b.getAttribute("data-state");
+    flt.state = flt.state===s ? "" : s;
+    renderTotals(); renderRows();
+  }));
+}
 
 /**
- * Search relevance (issue: searching "black" buried the plain BLACK colour
- * under BLACK GALAXY because rows came back in raw file order). Lower = higher
- * up. Exact colour first, then colours that START with the term, then the term
- * as a whole word, then any substring, and only then batch/name matches.
+ * Search relevance, carried over from 1.0 (issue: searching "black" buried the
+ * plain BLACK colour under BLACK GALAXY). Lower = higher up. Exact colour first,
+ * then colours that START with the term, then the term as a whole word, then any
+ * substring, and only then kode/name matches.
  */
 function rankOf(i,q){
   const w=String(i.warna||i.name||"").toLowerCase();
-  const b=String(i.batch_warna||"").toLowerCase();
+  const k=String(i.kode_barang||"").toLowerCase();
   const n=String(i.name||"").toLowerCase();
   if(w===q) return 0;
   if(w.startsWith(q)) return 1;
   if(new RegExp(`(^|[^a-z0-9])${q.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}([^a-z0-9]|$)`).test(w)) return 2;
   if(w.includes(q)) return 3;
-  if(b.includes(q)) return 4;
+  if(k.includes(q)) return 4;
   if(n.includes(q)) return 5;
   return 6;
 }
 
 // Deterministic tie-breakers: whatever the chosen order, equal keys always fall
-// back to warna → brand → size → id, so a colour never moves between renders.
-function cmpFor(sort,fileIdx){
+// back to warna → kode → ukuran → sku_key, so a colour never moves between polls.
+function cmpFor(sort){
   const byName=(a,b)=>String(a.warna||a.name||"").localeCompare(String(b.warna||b.name||""),"id",{sensitivity:"base"});
   const tail=(a,b)=>byName(a,b)
-    || String(a.product_line||"").localeCompare(String(b.product_line||""),"id",{sensitivity:"base"})
+    || String(a.kode_barang||"").localeCompare(String(b.kode_barang||""),"id",{sensitivity:"base"})
     || sizeKey(a).localeCompare(sizeKey(b))
-    || (String(a.id)<String(b.id)?-1:String(a.id)>String(b.id)?1:0);
-  if(sort==="coating") return (a,b)=>String(a.coating||"~").localeCompare(String(b.coating||"~"),"id",{sensitivity:"base"})||tail(a,b);
-  if(sort==="avail_desc") return (a,b)=>(b.available-a.available)||tail(a,b);
-  if(sort==="avail_asc")  return (a,b)=>(a.available-b.available)||tail(a,b);
-  if(sort==="file")       return (a,b)=>((fileIdx.get(String(a.id))??0)-(fileIdx.get(String(b.id))??0));
-  return tail; // "warna" — colour A–Z, brands of the same colour adjacent
+    || (String(a.sku_key)<String(b.sku_key)?-1:String(a.sku_key)>String(b.sku_key)?1:0);
+  if(sort==="kode") return (a,b)=>String(a.kode_barang||"~").localeCompare(String(b.kode_barang||"~"),"id",{sensitivity:"base"})||tail(a,b);
+  if(sort==="atp_desc") return (a,b)=>(N(b.atp)-N(a.atp))||tail(a,b);
+  if(sort==="atp_asc")  return (a,b)=>(N(a.atp)-N(b.atp))||tail(a,b);
+  if(sort==="eta") return (a,b)=>{
+    const av=a.nearest_eta?String(a.nearest_eta):"9999-12-31";
+    const bv=b.nearest_eta?String(b.nearest_eta):"9999-12-31";
+    return av<bv?-1:av>bv?1:tail(a,b);
+  };
+  return tail; // "warna" — colour A–Z, kode of the same colour adjacent
 }
 
 function visibleItems(){
   const q=flt.q.trim().toLowerCase();
   const rows=SUMMARY.items.filter(i=>{
-    if(flt.brand && !eq(i.product_line,flt.brand)) return false;
-    if(flt.coating && !eq(i.coating,flt.coating)) return false;
+    if(flt.kode && !eq(i.kode_barang,flt.kode)) return false;
+    if(flt.warna && !eq(i.warna,flt.warna)) return false;
+    if(flt.th && String(i.th)!==flt.th) return false;
     if(flt.size && sizeKey(i)!==flt.size) return false;
-    if(flt.mm && String(i.mm)!==flt.mm) return false;
-    if(flt.onlyOver && !i.overbooked) return false;
-    // zero toggle never hides overbooked/negative rows
-    if(flt.hideZero && i.available===0 && !i.overbooked) return false;
+    if(flt.state && i.state!==flt.state) return false;
+    // The toggle never hides perlu_produksi: a negative number is the single
+    // most valuable row on this page (UX-SPEC §2.3, CONTRACTS §7.5). This
+    // mirrors the inherited rule that the zero toggle never hid overbooked rows.
+    if(flt.hideZero && i.state!=="perlu_produksi" && N(i.atp)<=0) return false;
     if(q){
-      const hay=[i.warna,i.batch_warna,i.name].filter(Boolean).join(" ").toLowerCase();
+      const hay=[i.warna,i.kode_barang,i.name,i.sku_key].filter(Boolean).join(" ").toLowerCase();
       if(!hay.includes(q)) return false;
     }
     return true;
   });
-  // Original file order, captured once, for the "Sesuai file" option.
-  const fileIdx=new Map(SUMMARY.items.map((i,idx)=>[String(i.id),idx]));
-  const cmp=cmpFor(flt.sort,fileIdx);
+  const cmp=cmpFor(flt.sort);
   // While searching, relevance leads and the chosen sort breaks ties, so the
   // exact colour is always the first row rather than somewhere down the list.
   rows.sort(q ? (a,b)=>(rankOf(a,q)-rankOf(b,q))||cmp(a,b) : cmp);
   return rows;
 }
+
 function specText(i){
   const parts=[];
-  if(i.th!=null) parts.push(NF.format(i.th));
-  if(i.mm!=null) parts.push(NF.format(i.mm)+"mm");
-  if(i.p!=null&&i.l!=null) parts.push(`${NF.format(i.p)}×${NF.format(i.l)}`);
+  if(i.th!=null) parts.push(num(i.th)+" mm");
+  if(i.p!=null&&i.l!=null) parts.push(`${num(i.p)}×${num(i.l)}`);
   return parts.join(" · ");
 }
+
+// The headline block (UX-SPEC §2.2), identical on both pages.
+function atpBlock(i,flash){
+  const atp=N(i.atp), unit=i.unit||"";
+  const sub=[`Fisik ${num(i.on_hand)}`,`Dipesan ${num(i.committed)}`];
+  if(N(i.adjustment)!==0) sub.push(`Penyesuaian ${N(i.adjustment)>0?"+":"−"}${num(Math.abs(N(i.adjustment)))}`);
+  // stale_committed is deliberately EXCLUDED from the arithmetic above, so it
+  // gets its own line and must never read as part of that sum.
+  const pesananLama=N(i.stale_committed)>0
+    ? `<div class="atp-note"><span class="chip umur">Pesanan lama ${num(i.stale_committed)} — tidak dihitung</span></div>` : "";
+  // The explanation renders on the row only for the two counter-intuitive
+  // states; tersedia and kosong are noise there and the chip already says it.
+  let note="";
+  if(i.state==="habis"||i.state==="perlu_produksi"){
+    const eta=(i.state==="habis"&&i.nearest_eta)?` ETA terdekat ${esc(wibShort(i.nearest_eta))}.`:"";
+    note=`<div class="atp-note">${esc(stateNote(i))}${eta}</div>`;
+  }
+  const m2=i.atp_m2!=null?`<div class="atp-m2">≈ ${num(i.atp_m2)} m²</div>`:"";
+  const cls=["atp",atp<0?"neg":"",flash||""].filter(Boolean).join(" ");
+  return `<div class="${cls}" aria-label="Bisa dijual ${esc(num(atp))} ${esc(unit)}">${esc(num(atp))}<span class="un">${esc(unit)}</span></div>
+    ${m2}
+    <div class="atp-sub">${esc(sub.join(" · "))}</div>
+    ${pesananLama}${note}`;
+}
+
 function renderRows(){
   const tb=$("#tbody"); if(!tb) return;
   const rows=visibleItems();
-  const meta=$("#invMeta"), t=SUMMARY.totals||{};
+  const t=SUMMARY.totals||{};
+  const meta=$("#invMeta");
   if(meta){
-    const filtered=flt.q||flt.brand||flt.coating||flt.size||flt.mm||flt.onlyOver||flt.hideZero;
+    const filtered=flt.q||flt.kode||flt.warna||flt.th||flt.size||flt.state||flt.hideZero;
     meta.textContent=filtered
-      ? `${rows.length} ditampilkan · ${t.items||0} item`
-      : `${t.items_available||0} tersedia · ${t.items||0} item${t.pending_overbooked?` · ${t.pending_overbooked} overbook`:""}`;
+      ? `${num(rows.length)} dari ${num(N(t.skus)||SUMMARY.items.length)} SKU`
+      : `${num(N(t.skus)||SUMMARY.items.length)} SKU`;
   }
-  if(rows.length===0){ tb.innerHTML=`<tr><td colspan="5" class="empty">Tidak ada produk cocok.</td></tr>`; return; }
+  if(rows.length===0){
+    tb.innerHTML=`<tr class="norows"><td colspan="2"><div class="empty">Tidak ada produk yang cocok dengan pencarian ini.</div></td></tr>`;
+    return;
+  }
+  // Only the tbody is replaced, so a poll never moves the page under the reader.
   tb.innerHTML=rows.map(i=>{
-    const sub=[i.batch_warna,i.coating].filter(Boolean).join(" · ");
-    const negCls=i.available<0?"neg":"";
-    const badge=i.available<0?`<span class="badge">OVERBOOKED</span>`:"";
-    const m2=i.available_m2!=null?`<div class="m2">≈ ${NF.format(i.available_m2)} m²</div>`:"";
-    return `<tr class="itemrow" data-id="${i.id}">
-      <td>${esc(i.product_line||"—")}</td>
-      <td class="warna"><b>${esc(i.warna||i.name)}</b>${sub?`<div class="sub2">${esc(sub)}</div>`:""}</td>
-      <td>${esc(specText(i))}</td>
-      <td style="text-align:right"><span class="avail ${negCls}">${NF.format(i.available)} ${esc(i.unit)}</span>${badge}${m2}</td>
-      <td style="text-align:right"><button class="btn mini" data-book="${i.id}">＋ Booking</button></td>
+    const sub=[i.kode_barang,specText(i)].filter(Boolean).join(" · ");
+    return `<tr class="itemrow" data-sku="${esc(i.sku_key)}" tabindex="0" role="button" aria-label="Lihat detail ${esc(i.name||i.warna||i.sku_key)}">
+      <td class="prod warna">
+        <b>${esc(i.warna||i.name||"—")}</b>
+        ${sub?`<div class="sub2">${esc(sub)}</div>`:""}
+        <div style="margin-top:5px">${stateChip(i.state,false)}</div>
+      </td>
+      <td class="num">${atpBlock(i,FLASH.get(String(i.sku_key)))}</td>
     </tr>`;
   }).join("");
-  tb.querySelectorAll("[data-book]").forEach(b=>b.addEventListener("click",e=>{e.stopPropagation();openBooking(b.getAttribute("data-book"));}));
-  tb.querySelectorAll("tr.itemrow").forEach(r=>r.addEventListener("click",()=>openRiwayat(r.getAttribute("data-id"))));
+  FLASH=new Map();   // a flash is shown once, not re-played on every filter tap
+  tb.querySelectorAll("tr.itemrow").forEach(r=>{
+    const open=()=>openDetail(r.getAttribute("data-sku"));
+    r.addEventListener("click",open);
+    r.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); open(); } });
+  });
 }
 
-// ── booking modal ─────────────────────────────────────────────────────────────
-function openBooking(itemId){
-  const rep=selectedRep();
-  if(!rep){ toast("Pilih nama sales dulu di atas.","warn"); ($("#repSel")||$("#repFree")).focus(); return; }
-  const i=SUMMARY.items.find(x=>eq(x.id,itemId)); if(!i) return;
-  const neg=i.available<=0;
-  $("#bkModal").innerHTML=`
-    <h3>${esc(i.name)}</h3>
-    <p class="mp">${esc(i.product_line||"")}</p>
-    <div class="big-avail ${neg?"neg":""}">Tersedia ${NF.format(i.available)} ${esc(i.unit)}</div>
-    ${neg?`<div class="hint">Booking tetap bisa — akan masuk antrean verifikasi PPIC.</div>`:""}
-    <label class="fld">Jumlah (${esc(i.unit)})<input type="number" id="bkQty" min="0.01" step="0.01" inputmode="decimal" placeholder="0"/></label>
-    <label class="fld">Customer<input type="text" id="bkCust" placeholder="Nama customer"/></label>
-    <label class="fld">No. SO (opsional)<input type="text" id="bkSO" placeholder="mis. SO-2026-0142"/></label>
-    <label class="fld">Catatan (opsional)<input type="text" id="bkNote" placeholder="—"/></label>
-    <div class="foot">Atas nama: <b>${esc(rep.name)}</b></div>
-    <div class="actions">
-      <button class="btn ghost" id="bkCancel">Batal</button>
-      <button class="btn" id="bkSubmit">Booking</button>
-    </div>`;
-  $("#bkBg").classList.add("on");
-  $("#bkCancel").addEventListener("click",closeBooking);
-  $("#bkQty").focus();
-  $("#bkSubmit").addEventListener("click",()=>submitBooking(itemId));
-}
-function closeBooking(){ $("#bkBg").classList.remove("on"); }
-$("#bkBg").addEventListener("click",e=>{ if(e.target.id==="bkBg") closeBooking(); });
+// ── per-SKU detail (CONTRACTS §4.2) ───────────────────────────────────────────
+// Tolerant readers: §4.2 names the endpoint's purpose but not its field names,
+// so a couple of plausible spellings are accepted rather than one guessed at.
+// Nothing is fabricated — an absent section simply renders as empty.
+function pickArr(o,...keys){ for(const k of keys){ const v=o&&o[k]; if(Array.isArray(v)) return v; } return []; }
+function pick(o,...keys){ for(const k of keys){ const v=o&&o[k]; if(v!=null&&v!=="") return v; } return null; }
 
-async function submitBooking(itemId){
-  const rep=selectedRep(); if(!rep) return;
-  const qty=Number($("#bkQty").value);
-  const customer=$("#bkCust").value.trim();
-  const so=$("#bkSO").value.trim();
-  const note=$("#bkNote").value.trim();
-  if(!(qty>0)){ toast("Jumlah tidak valid.","err"); return; }
-  if(!customer){ toast("Customer wajib diisi.","err"); return; }
-  const btn=$("#bkSubmit"); btn.disabled=true; btn.innerHTML=`<span class="spin"></span>Menyimpan`;
+function closeDetail(){ $("#dtBg").classList.remove("on"); }
+$("#dtBg").addEventListener("click",e=>{ if(e.target.id==="dtBg") closeDetail(); });
+document.addEventListener("keydown",e=>{ if(e.key==="Escape") closeDetail(); });
+
+async function openDetail(skuKey){
+  if(!skuKey) return;
+  const local=(SUMMARY&&SUMMARY.items.find(x=>eq(x.sku_key,skuKey)))||null;
+  $("#dtModal").innerHTML=`<h3>Memuat…</h3>
+    <div class="sk lg" style="width:70%;margin-bottom:10px"></div>
+    <div class="sk" style="width:90%;margin-bottom:8px"></div>
+    <div class="sk" style="width:60%"></div>`;
+  $("#dtBg").classList.add("on");
+  let j=null,err="";
   try{
-    const r=await fetch("/api/stock/bookings",{method:"POST",headers:{"content-type":"application/json"},
-      body:JSON.stringify({item_id:itemId,rep_key:rep.key,rep_name:rep.name,qty,customer_name:customer,so_number:so||null,note:note||null})});
-    const j=await r.json();
-    if(!r.ok){
-      toast(j.error||"Gagal.","err");
-      if((j.error||"").includes("Muat ulang")) loadSummary();
-      btn.disabled=false; btn.textContent="Booking"; return;
-    }
-    closeBooking();
-    toast(j.message, j.booking.status==="overbooked"?"warn":"ok");
-    await loadSummary(); await loadMine();
-  }catch{ toast("Gagal terhubung.","err"); btn.disabled=false; btn.textContent="Booking"; }
+    // sku_key contains "|" — it must survive as one path segment.
+    const r=await fetch(`/api/stock/sku/${encodeURIComponent(skuKey)}`,{headers:{accept:"application/json"}});
+    try{ j=await r.json(); }catch{ j=null; }
+    if(!r.ok){ err=(j&&j.error)||(r.status===404?"Kode SKU tidak ditemukan.":"Detail gagal dimuat."); j=null; }
+  }catch{ err="Gagal terhubung ke server."; }
+  if(!j){
+    $("#dtModal").innerHTML=`<div class="empty">${esc(err||"Detail gagal dimuat.")}</div>
+      <div class="actions">
+        <button class="btn ghost tap" id="dtClose">Tutup</button>
+        <button class="btn tap" id="dtRetry">Coba lagi</button>
+      </div>`;
+    $("#dtRetry").addEventListener("click",()=>openDetail(skuKey));
+    $("#dtClose").addEventListener("click",closeDetail);
+    return;
+  }
+  $("#dtModal").innerHTML=renderDetail(j,local,skuKey);
+  $("#dtClose").addEventListener("click",closeDetail);
 }
 
-// ── Booking Saya ──────────────────────────────────────────────────────────────
-let MINE=[];
-async function loadMine(){
-  const rep=selectedRep(); if(!rep){ MINE=[]; renderMine(); return; }
-  try{
-    const qs=rep.key?`rep_key=${encodeURIComponent(rep.key)}`:"";
-    const r=await fetch("/api/stock/bookings?"+qs);
-    const j=await r.json();
-    // when rep has no key (free-typed), filter client-side by name
-    MINE=(j.bookings||[]).filter(b=>rep.key?true:(b.rep_name||"").toLowerCase()===rep.name.toLowerCase());
-  }catch{ MINE=[]; }
-  renderMine();
-}
-const STLABEL={confirmed:"Terkonfirmasi",overbooked:"Menunggu Verifikasi",approved:"Disetujui (overbook)",rejected:"Ditolak",cancelled:"Dibatalkan",completed:"Selesai",outstanding:"Outstanding"};
-function itemName(id){ const i=SUMMARY.items.find(x=>eq(x.id,id)); return i?i.name:("#"+id); }
-function renderMine(){
-  $("#mineCount").textContent=MINE.length;
-  if(MINE.length===0){ $("#mineBody").innerHTML=`<div class="empty">Belum ada booking.</div>`; return; }
-  $("#mineBody").innerHTML=`<div style="overflow-x:auto"><table>
-    <thead><tr><th>Produk</th><th>Qty</th><th>Customer</th><th>Status</th><th>Umur</th><th>Waktu</th><th></th></tr></thead>
-    <tbody>${MINE.map(b=>{
-      const cancellable=["confirmed","overbooked","approved","outstanding"].includes(b.status);
-      // sales page: neutral age chip only, NO lama styling (R14)
-      const ageTxt=b.running?dur(ageSec(b.created_at)):dur(b.duration_seconds);
-      // Outstanding = carried past a stock-check renewal. Nothing ever leaves
-      // this list on upload — it is the rep's own log (§7.1, issue #1).
-      const hint=b.status==="outstanding"
-        ? `<div class="sub2">Menunggu diproses PPIC terhadap stock check baru.</div>` : "";
+function commitTable(list,emptyMsg,withAge){
+  if(list.length===0) return `<div class="empty">${esc(emptyMsg)}</div>`;
+  return `<div style="overflow-x:auto"><table>
+    <thead><tr><th>SO</th><th>Customer</th><th>Sales</th><th>ETA</th><th style="text-align:right">Sisa Pesanan</th></tr></thead>
+    <tbody>${list.map(r=>{
+      const eta=pick(r,"estimate_delivery","eta");
+      const d=toDate(eta);
+      let age="";
+      if(withAge && d){
+        const days=Math.floor((Date.now()-d.getTime())/86400000);
+        if(days>0){
+          const tier=days>365?" ancient":days>180?" old":"";
+          age=` <span class="chip umur${tier}">${num(days)} hari</span>`;
+        }
+      }
       return `<tr>
-        <td>${esc(b.item_name||itemName(b.item_id))}${hint}</td>
-        <td>${NF.format(b.qty)} ${esc(b.item_unit||"")}</td>
-        <td>${esc(b.customer_name)}${b.so_number?`<div class="sub2">SO ${esc(b.so_number)}</div>`:""}</td>
-        <td><span class="chip st-${b.status}">${STLABEL[b.status]||b.status}</span></td>
-        <td><span class="chip age" data-age="${b.running?b.created_at:''}" data-dur="${b.running?'':b.duration_seconds}">${ageTxt}</span></td>
-        <td>${wib(b.created_at)}</td>
-        <td>${cancellable?`<button class="btn danger mini" data-cancel="${b.id}">Batalkan</button>`:""}</td>
+        <td>${esc(pick(r,"so_number","no_so")||"—")}</td>
+        <td>${esc(pick(r,"customer_name_text","customer_name","customer")||"—")}</td>
+        <td>${esc(pick(r,"sales_name_text","sales_name")||"—")}</td>
+        <td>${esc(wibShort(eta))}${age}</td>
+        <td class="sisa">${num(pick(r,"qty_balance","qty"))}</td>
       </tr>`;
     }).join("")}</tbody></table></div>`;
-  $("#mineBody").querySelectorAll("[data-cancel]").forEach(btn=>btn.addEventListener("click",()=>cancelMine(btn.getAttribute("data-cancel"))));
-}
-async function cancelMine(id){
-  const rep=selectedRep(); if(!rep) return;
-  if(!confirm("Batalkan booking ini?")) return;
-  try{
-    const r=await fetch(`/api/stock/bookings/${id}/cancel`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({actor:rep.name})});
-    const j=await r.json();
-    if(!r.ok){ toast(j.error||"Gagal.","err"); loadMine(); return; }
-    toast("Booking dibatalkan.","ok");
-    await loadSummary(); await loadMine();
-  }catch{ toast("Gagal terhubung.","err"); }
 }
 
-// ── Riwayat Produk modal (shared component — R16) ─────────────────────────────
-async function openRiwayat(itemId){
-  $("#rwModal").innerHTML=`<div class="empty">Memuat riwayat…</div>`;
-  $("#rwBg").classList.add("on");
-  try{
-    const r=await fetch(`/api/stock/items/${itemId}/riwayat`);
-    const j=await r.json();
-    if(!r.ok){ $("#rwModal").innerHTML=`<div class="empty">${esc(j.error||"Gagal.")}</div>`; return; }
-    $("#rwModal").innerHTML=renderRiwayat(j);
-    $("#rwClose").addEventListener("click",()=>$("#rwBg").classList.remove("on"));
-  }catch{ $("#rwModal").innerHTML=`<div class="empty">Gagal terhubung.</div>`; }
-}
-$("#rwBg").addEventListener("click",e=>{ if(e.target.id==="rwBg") $("#rwBg").classList.remove("on"); });
-// Shared render — identical on both pages
-function renderRiwayat(j){
-  const periodLabel=j.upload && j.upload.status==="active" ? "Periode aktif" : (j.upload?`Diarsipkan ${wib(j.upload.archived_at)}`:"—");
-  const active=j.upload && j.upload.status==="active";
-  const rows=j.events.map(ev=>{
-    if(ev.type==="upload"){
-      return `<tr><td colspan="4"><b>Stok awal</b> · ${wib(ev.at)}</td><td class="sisa">${NF.format(ev.sisa)}</td></tr>`;
-    }
-    const b=ev.booking;
-    const stamps=[b.completed_at?`selesai ${wib(b.completed_at)}`:"",b.verified_at?`verif ${wib(b.verified_at)}`:"",b.cancelled_at?`batal ${wib(b.cancelled_at)}`:""].filter(Boolean).join(" · ");
-    const ageChip=b.running
-      ? `<span class="chip age">${dur(b.duration_seconds)}</span>`
-      : `<span class="chip age">${dur(b.duration_seconds)}</span>`;
-    const cls=ev.reversed?"rev":"";
-    return `<tr class="${cls}">
-      <td>${esc(b.rep_name)}${stamps?`<div class="sub2">${esc(stamps)}</div>`:""}</td>
-      <td>−${NF.format(b.qty)}</td>
-      <td>${esc(b.customer_name||"—")}</td>
-      <td><span class="chip st-${b.status}">${STLABEL[b.status]||b.status}</span> ${ageChip}</td>
-      <td class="sisa">${NF.format(ev.sisa)}</td>
-    </tr>`;
-  }).join("");
-  return `
-    <h3>${esc(j.item.name)}</h3>
-    <p class="mp">${periodLabel}${j.upload&&j.upload.filename?` · ${esc(j.upload.filename)}`:""}</p>
+function renderDetail(j,local,skuKey){
+  const it=(j&&typeof j.item==="object"&&j.item)||local||{};
+  const atp=N(it.atp), unit=it.unit||"";
+
+  const live =pickArr(j,"live_commitments","live","commitments");
+  const stale=pickArr(j,"stale_commitments","stale");
+  const adj  =pickArr(j,"adjustments");
+  const onh  =pickArr(j,"on_hand_rows","on_hand_detail","fg_rows");
+
+  const sub=[`Fisik ${num(it.on_hand)}`,`Dipesan ${num(it.committed)}`];
+  if(N(it.adjustment)!==0) sub.push(`Penyesuaian ${N(it.adjustment)>0?"+":"−"}${num(Math.abs(N(it.adjustment)))}`);
+
+  const onhBlock=onh.length?`<h3 style="font-size:13px;margin:18px 0 6px">Stok Fisik per Lokasi</h3>
     <div style="overflow-x:auto"><table>
-      <thead><tr><th>Sales</th><th>Qty</th><th>Customer</th><th>Status</th><th style="text-align:right">Sisa</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table></div>
-    ${active?`<div class="foot">Sisa akhir = Tersedia saat ini.</div>`:""}
-    <div class="actions"><button class="btn" id="rwClose">Tutup</button></div>`;
-}
+      <thead><tr><th>Lokasi</th><th>SN</th><th style="text-align:right">Jumlah</th></tr></thead>
+      <tbody>${onh.map(r=>`<tr>
+        <td>${esc(pick(r,"lokasi","location")||"—")}</td>
+        <td>${esc(pick(r,"sn_fg","sn")||"—")}</td>
+        <td class="sisa">${num(pick(r,"qty","qty_balance"))}</td>
+      </tr>`).join("")}</tbody></table></div>`:"";
 
-// ── live age tick (every 60s, no refetch — R14) ───────────────────────────────
-setInterval(()=>{
-  document.querySelectorAll(".chip.age[data-age]").forEach(el=>{
-    const iso=el.getAttribute("data-age");
-    if(iso) el.textContent=dur(ageSec(iso));
-  });
-},60000);
+  const adjBlock=adj.length?`<h3 style="font-size:13px;margin:18px 0 6px">Penyesuaian</h3>
+    <div style="overflow-x:auto"><table>
+      <thead><tr><th>Waktu</th><th>Alasan</th><th>Petugas</th><th style="text-align:right">Jumlah</th></tr></thead>
+      <tbody>${adj.map(r=>{
+        const d=N(pick(r,"qty_delta","delta"));
+        return `<tr>
+          <td>${esc(wib(pick(r,"created_at","at")))}</td>
+          <td>${esc(pick(r,"reason")||"—")}</td>
+          <td>${esc(pick(r,"actor")||"—")}</td>
+          <td class="sisa">${d>0?"+":""}${num(d)}</td>
+        </tr>`;
+      }).join("")}</tbody></table></div>`:"";
+
+  return `
+    <h3>${esc(it.name||it.warna||skuKey)}</h3>
+    <p class="mp">${esc([it.kode_barang,specText(it)].filter(Boolean).join(" · ")||"—")}<br>Kode SKU ${esc(skuKey)}</p>
+    <div style="display:flex;gap:10px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap">
+      <div>
+        ${stateChip(it.state,true)}
+        <div class="atp-note" style="max-width:280px">${esc(stateNote(it))}</div>
+      </div>
+      <div style="text-align:right">
+        <div class="atp ${atp<0?"neg":""}" aria-label="Bisa dijual ${esc(num(atp))} ${esc(unit)}">${esc(num(atp))}<span class="un">${esc(unit)}</span></div>
+        ${it.atp_m2!=null?`<div class="atp-m2">≈ ${num(it.atp_m2)} m²</div>`:""}
+        <div class="atp-sub">${esc(sub.join(" · "))}</div>
+      </div>
+    </div>
+    <h3 style="font-size:13px;margin:18px 0 6px">Sales Order yang Mengikat Stok Ini</h3>
+    ${commitTable(live,"Belum ada Sales Order aktif untuk SKU ini.",false)}
+    <h3 style="font-size:13px;margin:18px 0 6px">Pesanan Lama</h3>
+    <div class="hint">Tidak dihitung dalam Bisa Dijual. Menunggu ditinjau Petugas PPIC.</div>
+    ${commitTable(stale,"Tidak ada pesanan lama.",true)}
+    ${onhBlock}
+    ${adjBlock}
+    <div class="foot">Halaman ini hanya menampilkan angka. Untuk memesan, buat Sales Order di ERP seperti biasa.</div>
+    <div class="actions"><button class="btn tap" id="dtClose">Tutup</button></div>`;
+}
 
 // ── poll every 30s (R10) ──────────────────────────────────────────────────────
-loadReps();
+renderAll();
 loadSummary();
 setInterval(loadSummary,30000);
 </script>

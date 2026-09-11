@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Stok — PPIC</title>
 <style>
+  /* Token block + component classes carried over verbatim from the 1.0 pages.
+     No new colour is introduced here — every value below already existed. */
   :root{
     --bg:#f2f4f7; --card:#fff; --ink:#17233b; --muted:#6b7280; --line:#e5e7eb;
     --accent:#157a46; --danger:#c03c2b;
@@ -20,48 +22,77 @@
   header a.pplink{color:#ffd27a;text-decoration:none;font-size:13px;font-weight:600;white-space:nowrap}
   .wrap{max-width:1000px;margin:0 auto;padding:14px 16px}
   label.fld{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted);font-weight:600}
-  select,input[type=text],input[type=number],input[type=file],textarea{font:inherit;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink);min-height:44px}
+  select,input[type=text],input[type=number],input[type=search],textarea{font:inherit;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink);min-height:44px;width:100%;max-width:100%}
+  textarea{min-height:72px;resize:vertical}
   .card{background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden;margin-bottom:14px}
   .card h2{font-size:14px;margin:0;padding:12px 14px;border-bottom:1px solid var(--line);background:#fafbfc;display:flex;justify-content:space-between;align-items:center;gap:8px}
   .card .body{padding:14px}
   table{width:100%;border-collapse:collapse;font-size:13px}
   th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
-  th{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:700;background:#fafbfc}
-  tr.itemrow{cursor:pointer}tr.itemrow:hover{background:#f7fafc}
+  th{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:700;background:#fafbfc;white-space:nowrap}
   .sub2{color:var(--muted);font-size:11px;margin-top:2px}
+  .num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
   .avail{font-weight:800;white-space:nowrap}.avail.neg{color:var(--danger)}
-  .badge{display:inline-block;font-size:10px;font-weight:800;padding:2px 6px;border-radius:6px;margin-left:6px;background:#ede9fe;color:#6d28d9}
+  .big{font-size:19px;font-weight:800;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .big.neg{color:var(--danger)}
   .chip{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;white-space:nowrap}
   .chip.age{background:#f3f4f6;color:#6b7280}
-  .chip.lama{background:#fef3c7;color:#b45309;margin-left:4px}
-  .st-confirmed{background:#dcfce7;color:#15803d}.st-overbooked{background:#fef3c7;color:#b45309}
-  .st-approved{background:#ede9fe;color:#6d28d9}.st-rejected{background:#fee2e2;color:#b91c1c}
-  .st-cancelled{background:#f3f4f6;color:#6b7280}.st-completed{background:#dbeafe;color:#1d4ed8}
-  .st-outstanding{background:#ffedd5;color:#c2410c}
+  .chip.mute{background:#f3f4f6;color:#6b7280}
+  .chip.good{background:#dcfce7;color:#15803d}
+  .chip.warn{background:#fef3c7;color:#b45309}
+  .chip.bad{background:#fee2e2;color:#b91c1c}
+  .chip.info{background:#dbeafe;color:#1d4ed8}
+  .chip.hot{background:#ffedd5;color:#c2410c}
+  .chip.plum{background:#ede9fe;color:#6d28d9}
   button.btn{background:var(--accent);color:#fff;border:none;border-radius:10px;padding:0 14px;min-height:40px;font-weight:700;font-size:13px;cursor:pointer}
   button.btn:disabled{opacity:.55;cursor:default}
   button.btn.ghost{background:#fff;color:var(--ink);border:1px solid var(--line)}
   button.btn.danger{background:#fff;color:var(--danger);border:1px solid #f3c9c2}
-  button.btn.approve{background:#6d28d9}
+  button.btn.solidwarn{background:#b45309}
   button.mini{padding:0 10px;min-height:34px;font-size:12px;border-radius:8px}
   .empty{padding:22px 16px;text-align:center;color:var(--muted);font-size:14px;line-height:1.5}
   .warnbox{background:#fef2f2;border:1px solid #fbcaca;color:#991b1b;border-radius:10px;padding:10px 12px;font-size:13px;margin:10px 0;font-weight:600}
   .warnbox.amber{background:#fffbeb;border-color:#fde68a;color:#92400e}
-  .metaline{font-size:12px;color:var(--muted);margin:6px 0}
+  .warnbox.info{background:#fafbfc;border-color:var(--line);color:var(--muted)}
+  .metaline{font-size:12px;color:var(--muted);margin:6px 0;line-height:1.5}
   .counts{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
   .countchip{background:#f3f4f6;border-radius:8px;padding:4px 10px;font-size:12px;font-weight:700;color:#374151}
   .fltchips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
   .fchip{border:1px solid var(--line);background:#fff;border-radius:999px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;color:var(--muted)}
   .fchip.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+  /* Tab bar — same chip language, sticky under the header so it survives long lists. */
+  .tabs{position:sticky;top:60px;z-index:15;background:var(--bg);padding:10px 0 6px;display:flex;gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .tab{border:1px solid var(--line);background:#fff;border-radius:999px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;color:var(--muted);white-space:nowrap;min-height:40px}
+  .tab.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .tab .tc{font-size:11px;font-weight:800;margin-left:6px;opacity:.85}
+  .panel{display:none}.panel.on{display:block}
+  .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px}
+  .toolbar label.fld{flex:1 1 160px;min-width:0}
+  .toolbar .grow{flex:2 1 240px}
+  .pager{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:10px 14px;border-top:1px solid var(--line);background:#fafbfc;font-size:12px;color:var(--muted);font-weight:600}
+  .pager .pbtns{display:flex;gap:8px}
+  /* Stale queue rows — a list, not a table: it carries a checkbox, two lines of
+     context and an action, and must stay usable at 380px (ST-R18). */
+  .srow{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-bottom:1px solid var(--line)}
+  .srow:last-child{border-bottom:none}
+  .srow.sel{background:#fafbfc}
+  .srow input[type=checkbox]{width:20px;height:20px;margin:10px 0 0;flex:none}
+  .srow .main{flex:1 1 auto;min-width:0}
+  .srow .nm{font-weight:700;font-size:13px;word-break:break-word}
+  .srow .meta{color:var(--muted);font-size:11px;margin-top:3px;line-height:1.5;word-break:break-word}
+  .srow .right{flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:6px}
+  .srow .qty{font-weight:800;font-size:15px;font-variant-numeric:tabular-nums}
+  .selbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 12px;background:#fafbfc;border-bottom:1px solid var(--line);font-size:12px;font-weight:700;color:var(--muted)}
+  .undobar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:#fffbeb;border:1px solid #fde68a;color:#92400e;border-radius:10px;padding:10px 12px;font-size:13px;font-weight:600;margin-bottom:10px}
+  .undobar .sp{flex:1 1 auto;min-width:0}
   .modal-bg{position:fixed;inset:0;background:rgba(15,23,42,.5);display:none;align-items:flex-end;justify-content:center;z-index:50}
   .modal-bg.on{display:flex}
   .modal{background:#fff;width:100%;max-width:640px;border-radius:16px 16px 0 0;max-height:92vh;overflow:auto;padding:16px}
   @media(min-width:640px){.modal-bg{align-items:center;padding:16px}.modal{border-radius:16px}}
-  .modal h3{margin:0 0 4px;font-size:17px}.modal .mp{color:var(--muted);font-size:12px;margin:0 0 14px}
+  .modal h3{margin:0 0 4px;font-size:17px}.modal .mp{color:var(--muted);font-size:12px;margin:0 0 14px;line-height:1.5}
   .modal .actions{display:flex;gap:10px;margin-top:16px}.modal .actions .btn{flex:1;min-height:46px}
-  .rev{text-decoration:line-through;opacity:.6}
-  .sisa{text-align:right;font-weight:700;white-space:nowrap}
-  .foot{font-size:12px;color:var(--muted);padding:10px 4px 0}
+  .err{color:var(--danger);font-size:12px;font-weight:700;margin-top:4px}
+  .foot{font-size:12px;color:var(--muted);padding:10px 14px;line-height:1.5}
   .scrollx{overflow-x:auto}
   #toast{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:80;display:flex;flex-direction:column;gap:8px;width:calc(100% - 32px);max-width:440px}
   .toast{background:var(--ink);color:#fff;padding:12px 14px;border-radius:12px;font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,.2);animation:tin .25s ease}
@@ -70,7 +101,11 @@
   @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
   .spin{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.5);border-top-color:#fff;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px;margin-right:6px}
   @keyframes sp{to{transform:rotate(360deg)}}
-  .reddot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--danger);margin-left:5px;vertical-align:middle}
+  @media(max-width:520px){
+    .tabs{top:58px}
+    th,td{padding:8px 10px}
+    .toolbar label.fld{flex:1 1 100%}
+  }
 </style>
 </head>
 <body>
@@ -85,757 +120,1055 @@
 </header>
 
 <div class="wrap">
+  <div id="freshBox"></div>
+
   <label class="fld" style="margin-bottom:12px;max-width:280px">Petugas PPIC
-    <input type="text" id="actor" placeholder="Nama Anda" />
+    <input type="text" id="actor" placeholder="Nama Anda" autocomplete="off" />
   </label>
 
-  <!-- Card 1 — Upload -->
-  <div class="card">
-    <h2>Upload Stok</h2>
-    <div class="body">
-      <input type="file" id="file" accept=".xlsx,.xls,.csv" />
-      <div id="parseErr" class="warnbox" style="display:none"></div>
-      <div id="preview"></div>
-    </div>
-  </div>
+  <div class="tabs" id="tabs"></div>
 
-  <!-- Card 1b — End of day: export movements + new stock check -->
-  <div class="card">
-    <h2>Akhir Hari <span class="chip age" id="eodMeta">—</span></h2>
-    <div class="body">
-      <p class="metaline">Tutup hari: <b>export laporan pergerakan</b> (Ringkasan + Pergerakan stok + daftar Booking, satu file Excel) untuk arsip,
-        lalu <b>buat file stock check baru</b> berisi sisa stok saat ini — sesuaikan dengan hitungan fisik (mis. produksi baru dari pabrik) lalu upload untuk memulai periode baru.</p>
-      <div style="display:flex;gap:10px;flex-wrap:wrap">
-        <button class="btn ghost" id="expEod">⬇ Export Laporan Akhir Hari (XLSX)</button>
-        <button class="btn" id="genCheck">＋ Buat Stock Check Baru (XLSX)</button>
+  <!-- ══ Tab 1 · Shortfall (ST-R11) ══════════════════════════════════════════ -->
+  <section class="panel" id="p-shortfall">
+    <div class="card">
+      <h2>Kekurangan Stok <span class="chip warn" id="sfCount">—</span></h2>
+      <div class="body" style="padding-bottom:0">
+        <p class="metaline">SKU dengan komitmen SO aktif melebihi stok fisik. Diurutkan dari defisit terbesar,
+          lalu tenggat pengiriman terdekat — baris teratas adalah yang paling mendesak untuk diproduksi.</p>
+        <div class="toolbar">
+          <label class="fld grow">Cari SKU
+            <input type="search" id="sfQ" placeholder="Kode barang, warna, nama…" />
+          </label>
+          <button class="btn ghost" id="sfReload" style="min-height:44px">Muat ulang</button>
+        </div>
       </div>
-      <p class="metaline" style="margin-top:10px">File stock check baru memakai format PPIC yang sama (BRAND/WARNA/…/SALDO AKHIR) sehingga langsung bisa di-upload kembali di kartu di atas.</p>
+      <div id="sfBody" class="scrollx"></div>
+      <div id="sfPager"></div>
     </div>
-  </div>
+  </section>
 
-  <!-- Card 2 — Verify queue -->
-  <div class="card">
-    <h2>Antrean Verifikasi <span class="chip st-overbooked" id="vqCount">0</span></h2>
-    <div id="vqBody" class="scrollx"></div>
-  </div>
-
-  <!-- Card 3 — Booking Outstanding (R17) -->
-  <div class="card">
-    <h2>Booking Outstanding <span class="chip st-outstanding" id="outCount">0</span></h2>
-    <div id="outBody" class="scrollx"></div>
-    <div class="foot" style="padding:0 14px 12px">Booking yang terbawa dari stock check sebelumnya — belum memotong stok aktif sampai dipenuhi.</div>
-  </div>
-
-  <!-- Card 4 — Tracker -->
-  <div class="card">
-    <h2>Tracker Booking per Sales</h2>
-    <div id="trackBody" class="scrollx"></div>
-    <div class="foot" style="padding:0 14px 12px">Lama = durasi &gt; 24 jam · dihitung dari semua periode.</div>
-  </div>
-
-  <!-- Card 5 — All bookings -->
-  <div class="card">
-    <h2>Semua Booking (periode aktif)</h2>
-    <div class="body">
-      <div class="fltchips" id="stFilters"></div>
-      <div id="allBody" class="scrollx"></div>
+  <!-- ══ Tab 2 · Stale commitments (ST-R18) — the centrepiece ════════════════ -->
+  <section class="panel" id="p-stale">
+    <div class="card">
+      <h2>Tinjau Komitmen Kedaluwarsa <span class="chip warn" id="stCount">—</span></h2>
+      <div class="body" style="padding-bottom:0">
+        <p class="metaline">Baris SO yang saldonya masih terbuka di ERP tetapi tenggat kirimnya sudah lewat jauh.
+          Baris ini <b>tidak</b> mengurangi stok yang bisa dijanjikan. Tutup bila memang sudah selesai atau batal;
+          aktifkan kembali bila pesanannya masih berjalan. Semua tindakan tercatat dan bisa dibatalkan.</p>
+        <div id="stUndo"></div>
+        <div class="fltchips" id="stViewChips"></div>
+        <div class="toolbar">
+          <label class="fld grow">Cari
+            <input type="search" id="stQ" placeholder="SKU, pelanggan, no. SO…" />
+          </label>
+          <label class="fld">Umur
+            <select id="stAge">
+              <option value="0">Semua kedaluwarsa</option>
+              <option value="180">Lebih dari 6 bulan</option>
+              <option value="365">Lebih dari 1 tahun</option>
+              <option value="730">Lebih dari 2 tahun</option>
+            </select>
+          </label>
+          <label class="fld">Status SO
+            <select id="stStatus"><option value="">Semua status</option></select>
+          </label>
+          <label class="fld">Urutkan
+            <select id="stSort">
+              <option value="eta_asc">Tenggat terlama</option>
+              <option value="eta_desc">Tenggat terbaru</option>
+              <option value="qty_desc">Saldo terbesar</option>
+              <option value="sku_asc">SKU A→Z</option>
+            </select>
+          </label>
+          <label class="fld">Per halaman
+            <select id="stLimit"><option>50</option><option selected>100</option><option>200</option></select>
+          </label>
+        </div>
+        <label class="fld" style="margin-bottom:12px">Alasan default untuk tombol Tutup (satu ketuk)
+          <select id="stReasonPreset"></select>
+        </label>
+      </div>
+      <div id="stSelBar"></div>
+      <div id="stBody"></div>
+      <div id="stPager"></div>
     </div>
-  </div>
+  </section>
 
-  <!-- Card 6 — Upload history -->
-  <div class="card">
-    <h2>Riwayat Upload</h2>
-    <div id="histBody" class="scrollx"></div>
-    <div id="archivePanel"></div>
-  </div>
+  <!-- ══ Tab 3 · Exceptions (ST-R5.3) ════════════════════════════════════════ -->
+  <section class="panel" id="p-exceptions">
+    <div class="card">
+      <h2>SKU Belum Cocok <span class="chip info" id="exCount">—</span></h2>
+      <div class="body" style="padding-bottom:0">
+        <p class="metaline">Permintaan SO yang SKU-nya belum punya baris stok FG di ERP — misalnya barang
+          dibuat sesuai pesanan, SKU baru, atau satuan yang belum bisa disamakan. Permintaannya tetap nyata:
+          untuk SKU ini <b>produksi diperlukan</b>. Tidak ada yang hilang dan tidak ada yang salah dicatat.</p>
+        <div class="toolbar">
+          <label class="fld grow">Cari
+            <input type="search" id="exQ" placeholder="SKU, pelanggan, no. SO…" />
+          </label>
+          <label class="fld">Per halaman
+            <select id="exLimit"><option selected>50</option><option>100</option><option>200</option></select>
+          </label>
+          <button class="btn ghost" id="exReload" style="min-height:44px">Muat ulang</button>
+        </div>
+      </div>
+      <div id="exBody" class="scrollx"></div>
+      <div id="exPager"></div>
+    </div>
+  </section>
+
+  <!-- ══ Tab 4 · Adjustments (ST-R12 / ST-R20) ═══════════════════════════════ -->
+  <section class="panel" id="p-adjustments">
+    <div class="card">
+      <h2>Penyesuaian Baru</h2>
+      <div class="body">
+        <p class="metaline">Koreksi hasil stok opname, barang rusak, atau penerimaan yang belum tercatat.
+          Penyesuaian bersifat <b>tambahan</b> — nilainya dijumlahkan ke stok ERP dan tidak pernah menimpanya.
+          Gunakan angka negatif untuk mengurangi.</p>
+        <label class="fld" style="margin-bottom:10px">SKU
+          <input type="text" id="adjSku" list="skuList" placeholder="Contoh: ACP-4MM|004|0.3|4880|1220" autocomplete="off" />
+        </label>
+        <datalist id="skuList"></datalist>
+        <div id="adjSkuHint" class="metaline"></div>
+        <label class="fld" style="margin-bottom:10px">Selisih qty (lembar) — boleh negatif, tidak boleh 0
+          <input type="number" id="adjDelta" step="any" placeholder="mis. -12 atau 40" />
+        </label>
+        <label class="fld" style="margin-bottom:10px">Alasan (wajib)
+          <textarea id="adjReason" placeholder="mis. Selisih opname 2026-09-11 — 12 lembar rusak di gudang B"></textarea>
+        </label>
+        <div id="adjErr" class="err" style="display:none"></div>
+        <div style="margin-top:12px"><button class="btn" id="adjSubmit">Simpan Penyesuaian</button></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Riwayat Penyesuaian <span class="chip mute" id="adjCount">—</span></h2>
+      <div class="body" style="padding-bottom:0">
+        <div class="toolbar">
+          <label class="fld grow">Cari
+            <input type="search" id="adjQ" placeholder="SKU, petugas, alasan…" />
+          </label>
+          <label class="fld">Per halaman
+            <select id="adjLimit"><option selected>50</option><option>100</option><option>200</option></select>
+          </label>
+        </div>
+      </div>
+      <div id="adjBody" class="scrollx"></div>
+      <div id="adjPager"></div>
+    </div>
+  </section>
+
+  <!-- ══ Tab 5 · Sync status ═════════════════════════════════════════════════ -->
+  <section class="panel" id="p-sync">
+    <div class="card">
+      <h2>Status Sinkronisasi ERP <span class="chip mute" id="syState">—</span></h2>
+      <div class="body">
+        <div id="syTop"></div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
+          <button class="btn" id="syKick">Jalankan Sinkronisasi Sekarang</button>
+          <button class="btn ghost" id="syReload">Muat ulang status</button>
+        </div>
+        <p class="metaline" style="margin-top:10px">Sinkronisasi berjalan otomatis di latar belakang. Tombol ini hanya
+          mempercepat; bila satu proses sedang berjalan, permintaan baru diabaikan dengan aman.</p>
+      </div>
+      <div id="syBody" class="scrollx"></div>
+    </div>
+  </section>
 </div>
 
-<div class="modal-bg" id="rwBg"><div class="modal" id="rwModal"></div></div>
+<div class="modal-bg" id="mBg"><div class="modal" id="mBox"></div></div>
 <div id="toast"></div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
 "use strict";
+/* ════════════════════════════════════════════════════════════════════════════
+   /stock-ppic — Available-to-Promise control room (Stock 2.0, WP-6).
+   Tabs: Shortfall (ST-R11) · Stale (ST-R18) · Exceptions (ST-R5.3) ·
+         Adjustments (ST-R12/R20) · Sync status (ST-R6/R7).
+   Every response shape consumed here is CONTRACTS.md §4. Where §4.2 names an
+   endpoint but not its body, we read a tolerant envelope (rows/items/data/bare
+   array) and derive missing display fields locally — see readRows()/normStale().
+   ════════════════════════════════════════════════════════════════════════════ */
 const $ = (s,r=document)=>r.querySelector(s);
+const $$ = (s,r=document)=>Array.from(r.querySelectorAll(s));
 const NF = new Intl.NumberFormat("id-ID",{maximumFractionDigits:2});
-const eq=(a,b)=>String(a)===String(b);
-function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
-function wib(iso){ if(!iso) return "—"; return new Intl.DateTimeFormat("id-ID",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",hour12:false,timeZone:"Asia/Jakarta"}).format(new Date(iso)).replace(/\./g,":"); }
-function dur(sec){ sec=Math.max(0,Math.floor(sec)); const d=Math.floor(sec/86400),h=Math.floor((sec%86400)/3600),m=Math.floor((sec%3600)/60); if(d>0)return `${d}h ${h}j`; if(h>0)return `${h}j`; return `${m}m`; }
-function ageSec(iso){ return (Date.now()-Date.parse(iso))/1000; }
-function round2(n){ return Math.round((Number(n)||0)*100)/100; }
-function dateStamp(){ return new Intl.DateTimeFormat("en-CA",{year:"numeric",month:"2-digit",day:"2-digit",timeZone:"Asia/Jakarta"}).format(new Date()); } // yyyy-mm-dd WIB
-function nowWib(){ return wib(new Date().toISOString()); }
-function toast(msg,kind){ const t=document.createElement("div"); t.className="toast"+(kind?(" "+kind):""); t.textContent=msg; $("#toast").appendChild(t); setTimeout(()=>t.remove(),3500); }
-const STLABEL={confirmed:"Terkonfirmasi",overbooked:"Menunggu Verifikasi",approved:"Disetujui (overbook)",rejected:"Ditolak",cancelled:"Dibatalkan",completed:"Selesai",outstanding:"Outstanding"};
-const DEDUCTING_SET=new Set(["confirmed","overbooked","approved","completed"]); // count against stock; outstanding deducts nowhere (R17)
+const esc = s => String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const n = v => { const x=Number(v); return isFinite(x)?x:0; };
+const nOrNull = v => { if(v==null||v==="") return null; const x=Number(v); return isFinite(x)?x:null; };
 
-// petugas persist
+function wib(iso){ if(!iso) return "—";
+  const d=new Date(iso); if(isNaN(d)) return "—";
+  return new Intl.DateTimeFormat("id-ID",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",hour12:false,timeZone:"Asia/Jakarta"}).format(d).replace(/\./g,":"); }
+function wibClock(iso){ if(!iso) return "—";
+  const d=new Date(iso); if(isNaN(d)) return "—";
+  return new Intl.DateTimeFormat("id-ID",{hour:"2-digit",minute:"2-digit",hour12:false,timeZone:"Asia/Jakarta"}).format(d).replace(/\./g,":"); }
+function tgl(d){ if(!d) return "—";
+  const dt=new Date(String(d).length<=10?String(d)+"T00:00:00Z":d); if(isNaN(dt)) return String(d);
+  return new Intl.DateTimeFormat("id-ID",{day:"2-digit",month:"short",year:"numeric",timeZone:"UTC"}).format(dt); }
+function todayUtcMs(){ const t=new Date(); return Date.UTC(t.getFullYear(),t.getMonth(),t.getDate()); }
+// Days between a YYYY-MM-DD ETA and today. Positive = the deadline has passed.
+function daysPast(dateStr){ if(!dateStr) return null;
+  const dt=new Date(String(dateStr).slice(0,10)+"T00:00:00Z"); if(isNaN(dt)) return null;
+  return Math.floor((todayUtcMs()-dt.getTime())/86400000); }
+function fmtAge(days){ if(days==null) return "—";
+  if(days<0) return `${NF.format(-days)} hari lagi`;
+  if(days>=365){ const y=Math.floor(days/365), m=Math.floor((days%365)/30); return m?`${y} th ${m} bl`:`${y} th`; }
+  if(days>=30) return `${Math.floor(days/30)} bl`;
+  return `${days} hari`; }
+function toast(msg,kind){ const t=document.createElement("div"); t.className="toast"+(kind?(" "+kind):""); t.textContent=msg; $("#toast").appendChild(t); setTimeout(()=>t.remove(),4000); }
+
+// ── fetch wrapper ────────────────────────────────────────────────────────────
+// Never throws. Callers branch on .ok / .netfail so every surface can render an
+// honest failure state instead of an empty one.
+async function api(path,opts){
+  try{
+    const r=await fetch(path,opts);
+    let j=null; try{ j=await r.json(); }catch{ j=null; }
+    return { ok:r.ok, status:r.status, json:j||{}, netfail:false };
+  }catch{ return { ok:false, status:0, json:{}, netfail:true }; }
+}
+function errText(res,fallback){
+  if(res.netfail) return "Gagal terhubung ke server.";
+  if(res.status===503) return (res.json&&res.json.error)||"Database tidak tersedia.";
+  return (res.json&&res.json.error)||fallback||"Terjadi kesalahan.";
+}
+// CONTRACTS §4.2 does not spell the list envelopes; accept the plausible set.
+function readRows(j){
+  if(Array.isArray(j)) return j;
+  for(const k of ["rows","items","data","results","lines","commitments","exceptions","adjustments","shortfall"]){
+    if(Array.isArray(j&&j[k])) return j[k];
+  }
+  return [];
+}
+function readTotal(j,rows){
+  if(!j||Array.isArray(j)) return null;
+  for(const k of ["total","count","total_rows","total_count"]){ const v=nOrNull(j[k]); if(v!=null) return v; }
+  return null;
+}
+function pick(o,...keys){ for(const k of keys){ if(o&&o[k]!=null&&o[k]!=="") return o[k]; } return null; }
+
+// ── actor (audit: every write carries it) ────────────────────────────────────
 $("#actor").value=localStorage.getItem("stk_actor")||"";
 $("#actor").addEventListener("input",()=>localStorage.setItem("stk_actor",$("#actor").value.trim()));
 function actor(){ return $("#actor").value.trim(); }
-function requireActor(){ if(!actor()){ toast("Isi nama petugas PPIC dulu.","warn"); $("#actor").focus(); return false; } return true; }
+function requireActor(){ if(!actor()){ toast("Isi nama petugas PPIC dulu — setiap tindakan dicatat atas nama Anda.","warn"); $("#actor").focus(); return false; } return true; }
 
-// ══ R9 · client-side Excel parsing ════════════════════════════════════════════
-const norm=s=>String(s==null?"":s).replace(/\s+/g," ").trim().toUpperCase();
-// Recognizable headers (primary set + generic synonyms) for header-row detection.
-const KNOWN=new Set(["BRAND","WARNA","BATCH WARNA","COATING","TH","MM","P","L",
-  "SALDO AKHIR (LBR)","SALDO AKHIR (M2)","NAMA PRODUK","NAMA","PRODUK","PRODUCT","NAME","ITEM",
-  "LINI","LINE","KATEGORI","CATEGORY","SATUAN","UNIT","UOM","QTY","JUMLAH","STOK","STOCK","QUANTITY"]);
-function headerScore(row){
-  let n=0; for(const c of row){ const k=norm(c); if(!k) continue;
-    if(KNOWN.has(k)) n++;
-    else if(k.includes("SALDO AKHIR")) n++; }
-  return n;
-}
-// A row is a header if it has ≥3 known headers (R9 — skips title blocks), OR it
-// pairs a name/warna column with a qty/saldo column — so a minimal generic file
-// (just "Nama Produk" + "Qty", 2 columns) is still recognized (decision log).
-const NAME_HDRS=new Set(["WARNA","NAMA PRODUK","NAMA","PRODUK","PRODUCT","NAME","ITEM"]);
-const QTY_HDRS=new Set(["QTY","JUMLAH","STOK","STOCK","QUANTITY","SALDO AKHIR (LBR)"]);
-function looksLikeHeader(row){
-  if(headerScore(row)>=3) return true;
-  let hasName=false, hasQty=false;
-  for(const c of row){ const k=norm(c); if(!k) continue;
-    if(NAME_HDRS.has(k)) hasName=true;
-    if(QTY_HDRS.has(k)||k.includes("SALDO AKHIR")) hasQty=true; }
-  return hasName&&hasQty;
-}
-// Locate a column index by trying a list of exact normalized names, then a contains test.
-function findCol(headers,exacts,contains){
-  for(let i=0;i<headers.length;i++){ if(exacts.includes(norm(headers[i]))) return i; }
-  if(contains){ for(let i=0;i<headers.length;i++){ const k=norm(headers[i]); if(contains.every(t=>k.includes(t))) return i; } }
-  return -1;
-}
-function toNum(v){
-  // id-locale (PRD §8.4): dot = thousands, comma = decimal. Kept byte-identical
-  // in logic to the server's num() so client preview === server re-validation.
-  if(v==null||v==="") return null;
-  if(typeof v==="number") return isFinite(v)?v:null;
-  let s=String(v).trim(); if(!s) return null;
-  const neg=/^-/.test(s), hasComma=s.includes(","), hasDot=s.includes(".");
-  if(hasComma&&hasDot){ if(s.lastIndexOf(",")>s.lastIndexOf(".")) s=s.replace(/\./g,"").replace(",","."); else s=s.replace(/,/g,""); }
-  else if(hasComma){ const parts=s.split(","); const after=parts[parts.length-1].length; s=(parts.length>2||after===3)?s.replace(/,/g,""):s.replace(",","."); }
-  else if(hasDot){ const parts=s.split("."); const after=parts[parts.length-1].length; if(parts.length>2||after===3) s=s.replace(/\./g,""); }
-  s=s.replace(/[^0-9.]/g,""); const n=Number(s); if(!isFinite(n)) return null; return neg?-n:n;
-}
-// Parse one sheet's 2D rows → structured result, or null if no header detected.
-function parseSheet(rows){
-  let hdrIdx=-1;
-  for(let i=0;i<Math.min(10,rows.length);i++){ if(looksLikeHeader(rows[i]||[])){ hdrIdx=i; break; } }
-  if(hdrIdx<0) return null;
-  const headers=rows[hdrIdx]||[];
-  const col={
-    brand:findCol(headers,["BRAND"]),
-    warna:findCol(headers,["WARNA"]),
-    batch:findCol(headers,["BATCH WARNA"]),
-    coating:findCol(headers,["COATING"]),
-    th:findCol(headers,["TH"]),
-    mm:findCol(headers,["MM"]),
-    p:findCol(headers,["P"]),
-    l:findCol(headers,["L"]),
-    qtyLbr:findCol(headers,["SALDO AKHIR (LBR)"],["SALDO AKHIR","LBR"]),
+// ── modal ────────────────────────────────────────────────────────────────────
+function openModal(html){ $("#mBox").innerHTML=html; $("#mBg").classList.add("on"); }
+function closeModal(){ $("#mBg").classList.remove("on"); $("#mBox").innerHTML=""; }
+$("#mBg").addEventListener("click",e=>{ if(e.target.id==="mBg") closeModal(); });
+document.addEventListener("keydown",e=>{ if(e.key==="Escape") closeModal(); });
+
+/* ════════════════════════════════════════════════════════════════════════════
+   Summary + freshness (CONTRACTS §4.1). Three freshness conditions, three
+   treatments: disconnected · stale · fresh.
+   ════════════════════════════════════════════════════════════════════════════ */
+let SUMMARY={freshness:{last_ok_at:null,stale:false,erp_connected:false},totals:{},items:[]};
+let SUMMARY_ERR=null;
+
+async function loadSummary(){
+  const res=await api("/api/stock/summary");
+  if(!res.ok){ SUMMARY_ERR=errText(res,"Gagal memuat ringkasan."); renderFreshness(); renderTabs(); return; }
+  SUMMARY_ERR=null;
+  const j=res.json||{};
+  SUMMARY={
+    freshness:Object.assign({last_ok_at:null,stale:false,erp_connected:false},j.freshness||{}),
+    totals:j.totals||{},
+    items:Array.isArray(j.items)?j.items:[],
   };
-  const primary = col.warna>-1 && col.qtyLbr>-1;
-  let mapType, dataRows=[], brands=new Set();
-  let zero=0,skipped=0;
-  const merge=new Map();
+  renderFreshness(); renderTabs(); renderSkuList();
+}
 
-  if(primary){
-    mapType="primary";
-    for(let i=hdrIdx+1;i<rows.length;i++){
-      const r=rows[i]||[];
-      const warna=String(r[col.warna]==null?"":r[col.warna]).trim();
-      const qty=toNum(r[col.qtyLbr]);
-      if(!warna || qty==null || qty<0){ if(warna||r.some(x=>x!=null&&String(x).trim()!=="")) skipped++; continue; }
-      if(qty===0) zero++;
-      const brand=col.brand>-1?String(r[col.brand]==null?"":r[col.brand]).trim():"";
-      if(brand) brands.add(brand);
-      const item={
-        brand:brand||null, warna,
-        batch_warna:col.batch>-1?(String(r[col.batch]==null?"":r[col.batch]).trim()||null):null,
-        coating:col.coating>-1?(String(r[col.coating]==null?"":r[col.coating]).trim()||null):null,
-        th:col.th>-1?toNum(r[col.th]):null, mm:col.mm>-1?toNum(r[col.mm]):null,
-        p:col.p>-1?toNum(r[col.p]):null, l:col.l>-1?toNum(r[col.l]):null,
-        qty,
-      };
-      const key=structKey(item);
-      if(merge.has(key)){ merge.get(key).qty+=qty; merge.get(key)._merged=true; }
-      else merge.set(key,item);
-    }
+function renderFreshness(){
+  const f=SUMMARY.freshness||{};
+  const box=$("#freshBox"); const sub=$("#dataPer");
+  if(SUMMARY_ERR){
+    sub.textContent="Data tidak dapat dimuat";
+    box.innerHTML=`<div class="warnbox">${esc(SUMMARY_ERR)} <button class="btn ghost mini" id="frRetry" style="margin-left:8px">Coba lagi</button></div>`;
+    const b=$("#frRetry"); if(b) b.addEventListener("click",refreshActive);
+    return;
+  }
+  if(f.erp_connected===false){
+    sub.textContent="ERP tidak terhubung";
+    box.innerHTML=`<div class="warnbox">ERP tidak terhubung. Angka di halaman ini berasal dari data terakhir yang tersimpan dan
+      <b>tidak diperbarui</b>. Hubungi tim IT untuk menyambungkan kembali sebelum mengambil keputusan produksi.</div>`;
+    return;
+  }
+  const per=f.last_ok_at?`Data ERP per ${wibClock(f.last_ok_at)} WIB`:"Data ERP: belum pernah sinkron";
+  sub.textContent=per;
+  if(f.stale){
+    box.innerHTML=`<div class="warnbox amber">Data mungkin tertinggal — sinkronisasi terakhir berhasil
+      ${f.last_ok_at?`<b>${esc(wib(f.last_ok_at))} WIB</b>`:"belum pernah"}. Periksa tab <b>Sinkronisasi</b>.</div>`;
   }else{
-    mapType="generic";
-    const gc={
-      name:findCol(headers,["NAMA PRODUK","NAMA","PRODUK","PRODUCT","NAME","ITEM"]),
-      line:findCol(headers,["LINI","LINE","KATEGORI","CATEGORY"]),
-      unit:findCol(headers,["SATUAN","UNIT","UOM"]),
-      qty:findCol(headers,["QTY","JUMLAH","STOK","STOCK","QUANTITY"]),
-    };
-    if(gc.name<0||gc.qty<0) return null;
-    for(let i=hdrIdx+1;i<rows.length;i++){
-      const r=rows[i]||[];
-      const name=String(r[gc.name]==null?"":r[gc.name]).trim();
-      const qty=toNum(r[gc.qty]);
-      if(!name || qty==null || qty<0){ if(name||r.some(x=>x!=null&&String(x).trim()!=="")) skipped++; continue; }
-      if(qty===0) zero++;
-      const line=gc.line>-1?(String(r[gc.line]==null?"":r[gc.line]).trim()||null):null;
-      if(line) brands.add(line);
-      const item={ name, product_line:line, unit:gc.unit>-1?(String(r[gc.unit]==null?"":r[gc.unit]).trim()||"pcs"):"pcs", qty };
-      const key=genKey(item);
-      if(merge.has(key)){ merge.get(key).qty+=qty; merge.get(key)._merged=true; }
-      else merge.set(key,item);
-    }
+    box.innerHTML="";
   }
-  dataRows=[...merge.values()];
-  const merged=dataRows.filter(x=>x._merged).length;
-  dataRows.forEach(x=>delete x._merged);
-  return { mapType, headerRow:hdrIdx+1, rows:dataRows, brands, zero, skipped, merged, valid:dataRows.length };
-}
-function structKey(it){ return ["s",it.brand,it.warna,it.batch_warna,it.coating,it.th,it.mm,it.p,it.l].map(v=>String(v==null?"":v).trim().toLowerCase()).join("|"); }
-function genKey(it){ return ["g",it.name,it.product_line].map(v=>String(v==null?"":v).trim().toLowerCase()).join("|"); }
-// Same key derived from a live summary item, for reconciliation matching.
-function itemKey(i){
-  if(i.warna!=null) return ["s",i.product_line,i.warna,i.batch_warna,i.coating,i.th,i.mm,i.p,i.l].map(v=>String(v==null?"":v).trim().toLowerCase()).join("|");
-  return ["g",i.name,i.product_line].map(v=>String(v==null?"":v).trim().toLowerCase()).join("|");
 }
 
-// ── upload flow state ─────────────────────────────────────────────────────────
-let PARSED=null;     // { filename, sheets:[{name,result}] }
-let SELSHEET=null;   // selected sheet name
-let LIVEKEYS={};     // key → available (from summary), for reconciliation
+function renderSkuList(){
+  $("#skuList").innerHTML=SUMMARY.items.map(i=>
+    `<option value="${esc(i.sku_key)}">${esc(i.name||i.sku_key)}</option>`).join("");
+}
+function skuByKey(k){ return SUMMARY.items.find(i=>String(i.sku_key)===String(k))||null; }
+function skuName(k,fallback){ const i=skuByKey(k); return i&&i.name?i.name:(fallback||k||"—"); }
 
-$("#file").addEventListener("change",async e=>{
-  const f=e.target.files[0]; if(!f) return;
-  $("#parseErr").style.display="none"; $("#preview").innerHTML=`<div class="empty">Membaca file…</div>`;
-  try{
-    const buf=await f.arrayBuffer();
-    const wb=XLSX.read(buf,{type:"array"});
-    const sheets=[];
-    for(const name of wb.SheetNames){
-      // Keep blank rows so the detected header row number matches the real
-      // spreadsheet (the sample's master header genuinely sits on row 5, R9);
-      // all-null rows are harmlessly skipped and never counted as invalid.
-      const rows=XLSX.utils.sheet_to_json(wb.Sheets[name],{header:1,defval:null,blankrows:true});
-      const result=parseSheet(rows);
-      if(result) sheets.push({name,result});
-    }
-    if(sheets.length===0){
-      $("#preview").innerHTML="";
-      $("#parseErr").style.display=""; $("#parseErr").textContent="File tidak dikenali. Pastikan ada kolom BRAND/WARNA/SALDO AKHIR atau Nama Produk/Qty.";
-      PARSED=null; return;
-    }
-    PARSED={ filename:f.name, sheets };
-    // default = most distinct brands, ties → most rows (R9)
-    sheets.sort((a,b)=> (b.result.brands.size-a.result.brands.size) || (b.result.valid-a.result.valid));
-    SELSHEET=sheets[0].name;
-    renderPreview();
-  }catch(err){
-    $("#preview").innerHTML="";
-    $("#parseErr").style.display=""; $("#parseErr").textContent="File tidak bisa dibaca. Pastikan format .xlsx/.xls/.csv.";
-    PARSED=null;
+/* ════════════════════════════════════════════════════════════════════════════
+   Tabs
+   ════════════════════════════════════════════════════════════════════════════ */
+const TABS=[
+  {id:"shortfall",  label:"Kekurangan", count:t=>t.perlu_produksi},
+  {id:"stale",      label:"Kedaluwarsa",count:t=>t.stale_commitments},
+  {id:"exceptions", label:"Belum Cocok",count:t=>t.exceptions},
+  {id:"adjustments",label:"Penyesuaian",count:()=>null},
+  {id:"sync",       label:"Sinkronisasi",count:()=>null},
+];
+let TAB=(location.hash||"").replace("#","");
+if(!TABS.some(t=>t.id===TAB)) TAB="shortfall";
+const LOADED={};
+
+function renderTabs(){
+  const t=SUMMARY.totals||{};
+  $("#tabs").innerHTML=TABS.map(x=>{
+    const c=x.count(t);
+    return `<button class="tab ${TAB===x.id?"on":""}" data-tab="${x.id}">${esc(x.label)}${c!=null?`<span class="tc">${NF.format(n(c))}</span>`:""}</button>`;
+  }).join("");
+  $$("#tabs [data-tab]").forEach(b=>b.addEventListener("click",()=>selectTab(b.getAttribute("data-tab"))));
+  TABS.forEach(x=>$("#p-"+x.id).classList.toggle("on",TAB===x.id));
+  const tt=SUMMARY.totals||{};
+  $("#sfCount").textContent=tt.perlu_produksi!=null?NF.format(n(tt.perlu_produksi)):"—";
+  $("#stCount").textContent=tt.stale_commitments!=null?NF.format(n(tt.stale_commitments)):"—";
+  $("#exCount").textContent=tt.exceptions!=null?NF.format(n(tt.exceptions)):"—";
+}
+function selectTab(id){
+  TAB=id; location.hash=id; renderTabs();
+  if(!LOADED[id]){ LOADED[id]=true; loadTab(id); }
+}
+function loadTab(id){
+  if(id==="shortfall") loadShortfall();
+  else if(id==="stale") loadStale();
+  else if(id==="exceptions") loadExceptions();
+  else if(id==="adjustments") loadAdjustments();
+  else if(id==="sync") loadSync();
+}
+function refreshActive(){ loadSummary(); loadTab(TAB); }
+
+/* ── shared paging helper ─────────────────────────────────────────────────────
+   The stale queue is ~4,158 rows on day one, so nothing here ever renders a
+   whole result set. We always ASK for a page (?page=&limit=). If the server
+   honours it we page server-side; if it answers with the whole set we detect
+   that and page the cached array client-side. Either way the DOM only ever
+   holds one page. */
+function detectPaging(j,rows,limit){
+  const total=readTotal(j,rows);
+  if(rows.length>limit) return {mode:"client",total:rows.length};
+  if(total!=null) return {mode:"server",total};
+  return rows.length===limit?{mode:"server",total:null}:{mode:"client",total:rows.length};
+}
+function renderPager(el,st,onGo){
+  const pages=st.total!=null?Math.max(1,Math.ceil(st.total/st.limit)):null;
+  const from=st.total===0?0:(st.page-1)*st.limit+1;
+  const to=st.total!=null?Math.min(st.total,st.page*st.limit):(st.page-1)*st.limit+st.shown;
+  const canPrev=st.page>1;
+  const canNext=pages!=null?st.page<pages:st.shown===st.limit;
+  el.innerHTML=`<div class="pager">
+    <span>${st.total!=null?`${NF.format(from)}–${NF.format(to)} dari ${NF.format(st.total)} baris`:`Baris ${NF.format(from)}–${NF.format(to)}`}${pages!=null?` · halaman ${NF.format(st.page)} dari ${NF.format(pages)}`:""}</span>
+    <span class="pbtns">
+      <button class="btn ghost mini" data-go="prev" ${canPrev?"":"disabled"}>‹ Sebelumnya</button>
+      <button class="btn ghost mini" data-go="next" ${canNext?"":"disabled"}>Berikutnya ›</button>
+    </span></div>`;
+  $$("[data-go]",el).forEach(b=>b.addEventListener("click",()=>{
+    const d=b.getAttribute("data-go")==="prev"?-1:1;
+    onGo(Math.max(1,st.page+d));
+  }));
+}
+function loadingBox(el,msg){ el.innerHTML=`<div class="empty">${esc(msg||"Memuat…")}</div>`; }
+function failBox(el,msg,retryFn){
+  el.innerHTML=`<div class="empty">${esc(msg)}<div style="margin-top:12px"><button class="btn ghost" id="rt_${el.id}">Coba lagi</button></div></div>`;
+  const b=$("#rt_"+el.id); if(b) b.addEventListener("click",retryFn);
+}
+function matches(q,fields){
+  if(!q) return true;
+  const hay=fields.map(v=>String(v==null?"":v)).join(" ").toLowerCase();
+  return q.toLowerCase().split(/\s+/).filter(Boolean).every(t=>hay.includes(t));
+}
+function debounce(fn,ms){ let h; return (...a)=>{ clearTimeout(h); h=setTimeout(()=>fn(...a),ms||300); }; }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   TAB 1 · Shortfall (ST-R11)
+   GET /api/stock/shortfall → rows ranked deficit desc, then nearest ETA asc.
+   The eye must land on two things: the deficit, and the deadline.
+   ════════════════════════════════════════════════════════════════════════════ */
+const SF={page:1,limit:50,q:"",mode:"client",total:null,all:[],shown:0};
+function normShortfall(r){
+  const on_hand=n(pick(r,"on_hand","onhand","qty_on_hand"));
+  const committed=n(pick(r,"committed","open_commitment","commitment"));
+  const adjustment=n(r.adjustment);
+  const atp=r.atp!=null?n(r.atp):(on_hand+adjustment-committed);
+  const deficit=r.deficit!=null?n(r.deficit):Math.max(0,committed-(on_hand+adjustment));
+  return {
+    sku_key:String(pick(r,"sku_key","sku")||""),
+    name:pick(r,"name","nama")||null,
+    kode_barang:pick(r,"kode_barang"), warna:pick(r,"warna"),
+    unit:pick(r,"unit")||"lembar",
+    on_hand, committed, adjustment, atp, deficit,
+    stale_committed:n(r.stale_committed),
+    nearest_eta:pick(r,"nearest_eta","estimate_delivery","eta"),
+    lines:nOrNull(pick(r,"lines","line_count","open_lines")),
+  };
+}
+async function loadShortfall(){
+  const el=$("#sfBody"); loadingBox(el);
+  const res=await api(`/api/stock/shortfall?page=${SF.page}&limit=${SF.limit}${SF.q?`&q=${encodeURIComponent(SF.q)}`:""}`);
+  if(!res.ok){ $("#sfPager").innerHTML=""; failBox(el,errText(res,"Gagal memuat daftar kekurangan."),loadShortfall); return; }
+  const raw=readRows(res.json).map(normShortfall);
+  const det=detectPaging(res.json,raw,SF.limit);
+  SF.mode=det.mode; SF.total=det.total; SF.all=raw;
+  renderShortfall();
+}
+function renderShortfall(){
+  const el=$("#sfBody");
+  let rows=SF.all;
+  // Apply the text filter locally too: if the server honoured ?q= this is a
+  // no-op, if it ignored it the user still sees a filtered list.
+  if(SF.q) rows=rows.filter(r=>matches(SF.q,[r.sku_key,r.name,r.kode_barang,r.warna]));
+  let total=SF.mode==="server"?SF.total:rows.length;
+  if(SF.mode==="client"){
+    rows=rows.slice((SF.page-1)*SF.limit,SF.page*SF.limit);
   }
+  SF.shown=rows.length;
+  if(rows.length===0){
+    el.innerHTML=`<div class="empty">${SF.q?"Tidak ada SKU yang cocok dengan pencarian.":"Tidak ada kekurangan stok. Semua komitmen aktif masih tertutup oleh stok fisik. 👍"}</div>`;
+    $("#sfPager").innerHTML=""; return;
+  }
+  el.innerHTML=`<table><thead><tr>
+      <th>SKU</th><th class="num">Kurang</th><th>Tenggat terdekat</th>
+      <th class="num">Stok</th><th class="num">Komitmen</th><th class="num">ATP</th>
+    </tr></thead><tbody>${rows.map(r=>{
+      const d=daysPast(r.nearest_eta);
+      const dueChip=r.nearest_eta==null?`<span class="chip mute">tanpa tenggat</span>`
+        : d>0?`<span class="chip bad">telat ${esc(fmtAge(d))}</span>`
+        : d===0?`<span class="chip hot">hari ini</span>`
+        : (-d)<=7?`<span class="chip warn">${esc(fmtAge(d))}</span>`
+        : `<span class="chip mute">${esc(fmtAge(d))}</span>`;
+      return `<tr>
+        <td><b>${esc(r.name||r.sku_key)}</b><div class="sub2">${esc(r.sku_key)}${r.lines!=null?` · ${NF.format(r.lines)} baris SO`:""}</div></td>
+        <td class="num"><span class="big neg">−${NF.format(r.deficit)}</span><div class="sub2">${esc(r.unit)}</div></td>
+        <td>${dueChip}<div class="sub2">${esc(tgl(r.nearest_eta))}</div></td>
+        <td class="num">${NF.format(r.on_hand)}${r.adjustment?`<div class="sub2">penyesuaian ${r.adjustment>0?"+":""}${NF.format(r.adjustment)}</div>`:""}</td>
+        <td class="num">${NF.format(r.committed)}${r.stale_committed?`<div class="sub2">+${NF.format(r.stale_committed)} kedaluwarsa</div>`:""}</td>
+        <td class="num"><span class="avail ${r.atp<0?"neg":""}">${NF.format(r.atp)}</span></td>
+      </tr>`;
+    }).join("")}</tbody></table>`;
+  renderPager($("#sfPager"),{page:SF.page,limit:SF.limit,total,shown:SF.shown},p=>{
+    SF.page=p; if(SF.mode==="server") loadShortfall(); else renderShortfall();
+  });
+}
+$("#sfQ").addEventListener("input",debounce(e=>{ SF.q=e.target.value.trim(); SF.page=1; if(SF.mode==="server") loadShortfall(); else renderShortfall(); }));
+$("#sfReload").addEventListener("click",()=>{ SF.page=1; loadShortfall(); });
+
+/* ════════════════════════════════════════════════════════════════════════════
+   TAB 2 · Stale commitments (ST-R18 / ST-R21) — the centrepiece.
+
+   The triage problem: ~4,158 rows on day one, 95% of them phantoms from as far
+   back as 2020. The design answer, in order of importance:
+     1. Never render the whole set — always one page (50/100/200), server-paged
+        when the server supports it, client-paged over the cached array if not.
+     2. Narrow before acting — free text, age bucket, status_order, sort.
+     3. One-tap close: pick a default reason once at the top of the tab, then
+        every row's "Tutup" is a single tap that posts {actor, reason}.
+     4. Bulk close only within the visible page, behind a confirmation that
+        states exactly how many lines and how much qty_balance it frees.
+     5. Every close is undoable — immediately from the undo bar, and later from
+        the "Sudah ditutup" view, which reinstates by so_line_id.
+   ════════════════════════════════════════════════════════════════════════════ */
+const REASONS=[
+  "Sudah dikirim, belum ditutup di ERP",
+  "Pesanan dibatalkan pelanggan",
+  "Duplikat / salah input",
+  "Tidak akan dikirim lagi — saldo sisa bertahun-tahun",
+];
+const ST={view:"open",page:1,limit:100,q:"",age:0,status:"",sort:"eta_asc",
+          mode:"client",total:null,all:[],shown:0,sel:new Set(),busy:false};
+let CLOSED_LOG=[];     // local audit mirror: lets undo work even if the server cannot list closed rows
+let LAST_BATCH=null;   // { ids:[], reason, actor, at }
+
+try{ CLOSED_LOG=JSON.parse(localStorage.getItem("stk_ppic_closed_log")||"[]")||[]; }catch{ CLOSED_LOG=[]; }
+function saveLog(){ try{ localStorage.setItem("stk_ppic_closed_log",JSON.stringify(CLOSED_LOG.slice(0,300))); }catch{} }
+
+function normStale(r){
+  const eta=pick(r,"estimate_delivery","eta","tanggal_kirim");
+  const age=r.age_days!=null?n(r.age_days):daysPast(eta);
+  return {
+    so_line_id:String(pick(r,"so_line_id","id","line_id")||""),
+    sku_key:String(pick(r,"sku_key","sku")||""),
+    name:pick(r,"name","nama"),
+    kode_barang:pick(r,"kode_barang"), warna:pick(r,"warna"),
+    so_number:pick(r,"so_number","no_so"),
+    customer:pick(r,"customer_name","customer_name_text","customer","pelanggan"),
+    sales:pick(r,"sales_name","sales_name_text","sales"),
+    qty_balance:n(pick(r,"qty_balance","qty","saldo")),
+    status_order:pick(r,"status_order","status"),
+    approval:pick(r,"approval"),
+    estimate_delivery:eta,
+    age_days:age,
+    state:pick(r,"state")||((r.override&&r.override.state)||null),
+    ov_actor:(r.override&&r.override.actor)||pick(r,"override_actor","actor"),
+    ov_reason:(r.override&&r.override.reason)||pick(r,"override_reason","reason"),
+    ov_at:(r.override&&(r.override.updated_at||r.override.created_at))||pick(r,"override_at","updated_at"),
+  };
+}
+function renderStaleChrome(){
+  $("#stViewChips").innerHTML=[["open","Perlu ditinjau"],["closed","Sudah ditutup"]].map(([v,l])=>
+    `<span class="fchip ${ST.view===v?"on":""}" data-v="${v}">${l}</span>`).join("");
+  $$("#stViewChips [data-v]").forEach(c=>c.addEventListener("click",()=>{
+    ST.view=c.getAttribute("data-v"); ST.page=1; ST.sel.clear(); renderStaleChrome(); loadStale();
+  }));
+  if(!$("#stReasonPreset").options.length){
+    $("#stReasonPreset").innerHTML=`<option value="">— pilih dulu, agar tombol Tutup cukup satu ketuk —</option>`+
+      REASONS.map(r=>`<option value="${esc(r)}">${esc(r)}</option>`).join("");
+    const saved=localStorage.getItem("stk_ppic_reason")||"";
+    if(saved && REASONS.includes(saved)) $("#stReasonPreset").value=saved;
+  }
+}
+async function loadStale(){
+  const el=$("#stBody"); loadingBox(el,"Memuat antrean…"); $("#stSelBar").innerHTML=""; $("#stPager").innerHTML="";
+  const p=new URLSearchParams();
+  p.set("page",String(ST.page)); p.set("limit",String(ST.limit));
+  if(ST.q) p.set("q",ST.q);
+  if(ST.age) p.set("min_age_days",String(ST.age));
+  if(ST.status) p.set("status_order",ST.status);
+  if(ST.sort) p.set("sort",ST.sort);
+  if(ST.view==="closed") p.set("state","closed");
+  const res=await api("/api/stock/stale-commitments?"+p.toString());
+  if(!res.ok){
+    if(ST.view==="closed"){ ST.mode="local"; renderStale(); return; }   // fall back to the local close log
+    failBox(el,errText(res,"Gagal memuat antrean komitmen kedaluwarsa."),loadStale); return;
+  }
+  const raw=readRows(res.json).map(normStale);
+  const det=detectPaging(res.json,raw,ST.limit);
+  ST.mode=det.mode; ST.total=det.total; ST.all=raw;
+  // Status filter options are discovered from the data (OQ-1: the enum is not frozen).
+  const seen=new Set(raw.map(r=>r.status_order).filter(Boolean));
+  const sel=$("#stStatus"); const cur=sel.value;
+  const known=new Set($$("option",sel).map(o=>o.value));
+  let added=false;
+  seen.forEach(s=>{ if(!known.has(s)){ const o=document.createElement("option"); o.value=s; o.textContent=s; sel.appendChild(o); added=true; } });
+  if(added) sel.value=cur;
+  // The closed view may be unsupported server-side; if it answered with rows
+  // that are not marked closed, prefer the local log so undo is never lost.
+  if(ST.view==="closed" && raw.length && !raw.some(r=>r.state==="closed")) ST.mode="local";
+  renderStale();
+}
+function localClosedRows(){
+  return CLOSED_LOG.map(e=>Object.assign({},e.row,{state:"closed",ov_actor:e.actor,ov_reason:e.reason,ov_at:e.at}));
+}
+function staleWorkingSet(){
+  let rows=ST.mode==="local"?localClosedRows():ST.all;
+  if(ST.q) rows=rows.filter(r=>matches(ST.q,[r.sku_key,r.name,r.customer,r.so_number,r.sales,r.kode_barang,r.warna]));
+  if(ST.age) rows=rows.filter(r=>r.age_days!=null&&r.age_days>=ST.age);
+  if(ST.status) rows=rows.filter(r=>String(r.status_order||"")===ST.status);
+  const cmp={
+    eta_asc:(a,b)=>String(a.estimate_delivery||"9999").localeCompare(String(b.estimate_delivery||"9999")),
+    eta_desc:(a,b)=>String(b.estimate_delivery||"0000").localeCompare(String(a.estimate_delivery||"0000")),
+    qty_desc:(a,b)=>b.qty_balance-a.qty_balance,
+    sku_asc:(a,b)=>String(a.sku_key).localeCompare(String(b.sku_key)),
+  }[ST.sort];
+  if(cmp && ST.mode!=="server") rows=rows.slice().sort(cmp);
+  return rows;
+}
+function renderStale(){
+  const el=$("#stBody");
+  renderUndoBar();
+  let rows=staleWorkingSet();
+  const total=ST.mode==="server"?ST.total:rows.length;
+  if(ST.mode!=="server") rows=rows.slice((ST.page-1)*ST.limit,ST.page*ST.limit);
+  ST.shown=rows.length;
+  const closedView=ST.view==="closed";
+
+  if(rows.length===0){
+    el.innerHTML=`<div class="empty">${closedView
+      ? (ST.mode==="local"
+          ? "Belum ada komitmen yang Anda tutup dari perangkat ini."
+          : "Belum ada komitmen yang ditutup.")
+      : (ST.q||ST.age||ST.status
+          ? "Tidak ada baris yang cocok dengan filter."
+          : "Antrean bersih — tidak ada komitmen kedaluwarsa yang perlu ditinjau. 👍")}</div>`;
+    $("#stSelBar").innerHTML=""; $("#stPager").innerHTML="";
+    return;
+  }
+
+  // Selection bar (open view only). Selection is page-scoped on purpose: a bulk
+  // action must never reach rows the user has not seen.
+  if(!closedView){
+    const pageIds=rows.map(r=>r.so_line_id);
+    const selHere=pageIds.filter(id=>ST.sel.has(id)).length;
+    const selQty=rows.filter(r=>ST.sel.has(r.so_line_id)).reduce((s,r)=>s+r.qty_balance,0);
+    $("#stSelBar").innerHTML=`<div class="selbar">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:700">
+        <input type="checkbox" id="stAll" style="width:20px;height:20px" ${selHere===pageIds.length?"checked":""} />
+        Pilih semua di halaman ini
+      </label>
+      <span>${selHere?`${NF.format(selHere)} dipilih · ${NF.format(selQty)} lembar`:"Belum ada yang dipilih"}</span>
+      <span style="flex:1"></span>
+      ${selHere?`<button class="btn ghost mini" id="stClear">Bersihkan</button>
+                 <button class="btn solidwarn mini" id="stBulk">Tutup ${NF.format(selHere)} komitmen</button>`:""}
+    </div>`;
+    $("#stAll").addEventListener("change",e=>{
+      if(e.target.checked) pageIds.forEach(id=>ST.sel.add(id)); else pageIds.forEach(id=>ST.sel.delete(id));
+      renderStale();
+    });
+    const c=$("#stClear"); if(c) c.addEventListener("click",()=>{ ST.sel.clear(); renderStale(); });
+    const b=$("#stBulk"); if(b) b.addEventListener("click",()=>askBulkClose(rows.filter(r=>ST.sel.has(r.so_line_id))));
+  }else{
+    $("#stSelBar").innerHTML=ST.mode==="local"
+      ? `<div class="selbar">Ditampilkan dari catatan perangkat ini. Daftar resmi tersimpan di server.</div>`:"";
+  }
+
+  el.innerHTML=rows.map(r=>{
+    const sel=ST.sel.has(r.so_line_id);
+    const ageChip=r.age_days==null?`<span class="chip mute">tanpa tenggat</span>`
+      : r.age_days>=730?`<span class="chip bad">${esc(fmtAge(r.age_days))}</span>`
+      : r.age_days>=365?`<span class="chip hot">${esc(fmtAge(r.age_days))}</span>`
+      : `<span class="chip warn">${esc(fmtAge(r.age_days))}</span>`;
+    const meta=[
+      r.customer?esc(r.customer):"Pelanggan tidak tercatat",
+      r.so_number?`SO ${esc(r.so_number)}`:"",
+      r.sales?esc(r.sales):"",
+    ].filter(Boolean).join(" · ");
+    const line2=[
+      `Tenggat ${esc(tgl(r.estimate_delivery))}`,
+      r.status_order?`Status ${esc(r.status_order)}`:"",
+      esc(r.sku_key),
+    ].filter(Boolean).join(" · ");
+    const closedInfo=closedView
+      ? `<div class="meta">Ditutup ${esc(r.ov_at?wib(r.ov_at):"—")}${r.ov_actor?` oleh ${esc(r.ov_actor)}`:""}${r.ov_reason?` — ${esc(r.ov_reason)}`:""}</div>`
+      : "";
+    return `<div class="srow ${sel?"sel":""}">
+      ${closedView?"":`<input type="checkbox" data-sel="${esc(r.so_line_id)}" ${sel?"checked":""} aria-label="Pilih baris" />`}
+      <div class="main">
+        <div class="nm">${esc(r.name||r.sku_key)}</div>
+        <div class="meta">${meta}</div>
+        <div class="meta">${line2}</div>
+        ${closedInfo}
+      </div>
+      <div class="right">
+        <span class="qty">${NF.format(r.qty_balance)}</span>
+        ${ageChip}
+        ${closedView
+          ? `<button class="btn ghost mini" data-reinstate="${esc(r.so_line_id)}">Aktifkan lagi</button>`
+          : `<button class="btn ghost mini" data-close="${esc(r.so_line_id)}">Tutup</button>`}
+      </div>
+    </div>`;
+  }).join("");
+
+  $$("[data-sel]",el).forEach(cb=>cb.addEventListener("change",()=>{
+    const id=cb.getAttribute("data-sel");
+    if(cb.checked) ST.sel.add(id); else ST.sel.delete(id);
+    renderStale();
+  }));
+  $$("[data-close]",el).forEach(b=>b.addEventListener("click",()=>{
+    const id=b.getAttribute("data-close");
+    const row=rows.find(r=>r.so_line_id===id);
+    const preset=$("#stReasonPreset").value;
+    if(preset) doClose([row],preset);        // one tap — undo bar appears immediately
+    else askBulkClose([row]);                // no default reason yet → ask once
+  }));
+  $$("[data-reinstate]",el).forEach(b=>b.addEventListener("click",()=>doReinstate([b.getAttribute("data-reinstate")])));
+
+  renderPager($("#stPager"),{page:ST.page,limit:ST.limit,total,shown:ST.shown},p=>{
+    ST.page=p; ST.sel.clear();
+    if(ST.mode==="server") loadStale(); else renderStale();
+  });
+}
+function renderUndoBar(){
+  const box=$("#stUndo");
+  if(!LAST_BATCH||!LAST_BATCH.ids.length){ box.innerHTML=""; return; }
+  box.innerHTML=`<div class="undobar">
+    <span class="sp">${NF.format(LAST_BATCH.ids.length)} komitmen ditutup oleh ${esc(LAST_BATCH.actor)} — ${esc(LAST_BATCH.reason)}</span>
+    <button class="btn ghost mini" id="undoGo">Urungkan</button>
+    <button class="btn ghost mini" id="undoDismiss">Tutup pesan</button>
+  </div>`;
+  $("#undoGo").addEventListener("click",()=>{ const ids=LAST_BATCH.ids.slice(); LAST_BATCH=null; doReinstate(ids); });
+  $("#undoDismiss").addEventListener("click",()=>{ LAST_BATCH=null; renderUndoBar(); });
+}
+function askBulkClose(rows){
+  if(!rows.length) return;
+  if(!requireActor()) return;
+  const qty=rows.reduce((s,r)=>s+r.qty_balance,0);
+  const skus=new Set(rows.map(r=>r.sku_key)).size;
+  const preset=$("#stReasonPreset").value;
+  openModal(`<h3>Tutup ${NF.format(rows.length)} komitmen?</h3>
+    <p class="mp">Total <b>${NF.format(qty)} lembar</b> pada <b>${NF.format(skus)} SKU</b> akan berhenti dihitung sebagai komitmen.
+      Ini <b>menambah</b> stok yang bisa dijanjikan sales. Tindakan tercatat atas nama <b>${esc(actor())}</b> dan bisa diaktifkan kembali kapan saja.</p>
+    <label class="fld">Alasan (wajib)
+      <select id="mReasonSel">${REASONS.map(r=>`<option ${r===preset?"selected":""} value="${esc(r)}">${esc(r)}</option>`).join("")}<option value="__lain">Alasan lain…</option></select>
+    </label>
+    <div id="mOtherWrap" style="margin-top:10px;display:none">
+      <label class="fld">Tulis alasan<input type="text" id="mReasonTxt" placeholder="mis. Sudah diganti SO baru nomor …" /></label>
+    </div>
+    <div id="mErr" class="err" style="display:none"></div>
+    <div class="actions">
+      <button class="btn ghost" id="mCancel">Batal</button>
+      <button class="btn solidwarn" id="mOk">Tutup ${NF.format(rows.length)} komitmen</button>
+    </div>`);
+  $("#mReasonSel").addEventListener("change",e=>{
+    $("#mOtherWrap").style.display=e.target.value==="__lain"?"":"none";
+  });
+  $("#mCancel").addEventListener("click",closeModal);
+  $("#mOk").addEventListener("click",()=>{
+    const v=$("#mReasonSel").value;
+    const reason=v==="__lain"?$("#mReasonTxt").value.trim():v;
+    if(reason.length<3){ const e=$("#mErr"); e.style.display=""; e.textContent="Alasan wajib diisi (minimal 3 karakter)."; return; }
+    closeModal(); doClose(rows,reason);
+  });
+}
+// Sequential-with-small-concurrency so a 100-row batch cannot flood the server,
+// and so one failure is reported per line instead of aborting the batch.
+async function runBatch(items,worker,onProgress){
+  const out=[]; let i=0; const CONC=4;
+  async function lane(){
+    while(i<items.length){
+      const idx=i++;
+      out[idx]=await worker(items[idx]);
+      if(onProgress) onProgress(out.filter(Boolean).length,items.length);
+    }
+  }
+  await Promise.all(Array.from({length:Math.min(CONC,items.length)},lane));
+  return out;
+}
+async function doClose(rows,reason){
+  rows=rows.filter(Boolean);
+  if(!rows.length||ST.busy) return;
+  if(!requireActor()) return;
+  ST.busy=true;
+  const who=actor();
+  const many=rows.length>1;
+  if(many) loadingBox($("#stBody"),`Menutup 0 dari ${NF.format(rows.length)}…`);
+  const res=await runBatch(rows,async r=>{
+    const x=await api(`/api/stock/stale-commitments/${encodeURIComponent(r.so_line_id)}/close`,{
+      method:"POST",headers:{"content-type":"application/json"},
+      body:JSON.stringify({actor:who,reason}),
+    });
+    return {row:r,ok:x.ok,msg:x.ok?null:errText(x,"Gagal menutup.")};
+  },(done,tot)=>{ if(many) loadingBox($("#stBody"),`Menutup ${NF.format(done)} dari ${NF.format(tot)}…`); });
+  ST.busy=false;
+  const ok=res.filter(x=>x&&x.ok).map(x=>x.row);
+  const bad=res.filter(x=>x&&!x.ok);
+  ok.forEach(r=>{
+    ST.sel.delete(r.so_line_id);
+    CLOSED_LOG.unshift({so_line_id:r.so_line_id,row:r,actor:who,reason,at:new Date().toISOString()});
+  });
+  CLOSED_LOG=CLOSED_LOG.slice(0,300); saveLog();
+  if(ok.length) LAST_BATCH={ids:ok.map(r=>r.so_line_id),reason,actor:who,at:Date.now()};
+  if(bad.length) toast(`${NF.format(ok.length)} ditutup, ${NF.format(bad.length)} gagal — ${bad[0].msg}`,"err");
+  else toast(`${NF.format(ok.length)} komitmen ditutup. Bisa diurungkan.`,"ok");
+  await loadSummary(); await loadStale();
+}
+async function doReinstate(ids){
+  ids=(ids||[]).filter(Boolean);
+  if(!ids.length||ST.busy) return;
+  if(!requireActor()) return;
+  ST.busy=true;
+  const who=actor();
+  if(ids.length>1) loadingBox($("#stBody"),`Mengaktifkan kembali 0 dari ${NF.format(ids.length)}…`);
+  const res=await runBatch(ids,async id=>{
+    const x=await api(`/api/stock/stale-commitments/${encodeURIComponent(id)}/reinstate`,{
+      method:"POST",headers:{"content-type":"application/json"},
+      body:JSON.stringify({actor:who}),
+    });
+    return {id,ok:x.ok,msg:x.ok?null:errText(x,"Gagal mengaktifkan kembali.")};
+  },(done,tot)=>{ if(ids.length>1) loadingBox($("#stBody"),`Mengaktifkan kembali ${NF.format(done)} dari ${NF.format(tot)}…`); });
+  ST.busy=false;
+  const ok=res.filter(x=>x&&x.ok).map(x=>x.id);
+  const bad=res.filter(x=>x&&!x.ok);
+  const okSet=new Set(ok);
+  CLOSED_LOG=CLOSED_LOG.filter(e=>!okSet.has(e.so_line_id)); saveLog();
+  if(LAST_BATCH){ LAST_BATCH.ids=LAST_BATCH.ids.filter(i=>!okSet.has(i)); if(!LAST_BATCH.ids.length) LAST_BATCH=null; }
+  if(bad.length) toast(`${NF.format(ok.length)} diaktifkan, ${NF.format(bad.length)} gagal — ${bad[0].msg}`,"err");
+  else toast(`${NF.format(ok.length)} komitmen aktif kembali dan dihitung ulang.`,"ok");
+  await loadSummary(); await loadStale();
+}
+$("#stQ").addEventListener("input",debounce(e=>{ ST.q=e.target.value.trim(); ST.page=1; ST.sel.clear(); if(ST.mode==="server") loadStale(); else renderStale(); }));
+$("#stAge").addEventListener("change",e=>{ ST.age=n(e.target.value); ST.page=1; ST.sel.clear(); loadStale(); });
+$("#stStatus").addEventListener("change",e=>{ ST.status=e.target.value; ST.page=1; ST.sel.clear(); loadStale(); });
+$("#stSort").addEventListener("change",e=>{ ST.sort=e.target.value; ST.page=1; ST.sel.clear(); loadStale(); });
+$("#stLimit").addEventListener("change",e=>{ ST.limit=n(e.target.value)||100; ST.page=1; ST.sel.clear(); loadStale(); });
+$("#stReasonPreset").addEventListener("change",e=>{ try{ localStorage.setItem("stk_ppic_reason",e.target.value); }catch{} });
+
+/* ════════════════════════════════════════════════════════════════════════════
+   TAB 3 · Exceptions (ST-R5.3)
+   Demand whose SKU has no matching FG row. Not an error the user caused —
+   the copy says what it is and what it implies: produksi diperlukan.
+   ════════════════════════════════════════════════════════════════════════════ */
+const EX={page:1,limit:50,q:"",mode:"client",total:null,all:[],shown:0};
+function normException(r){
+  const eta=pick(r,"estimate_delivery","eta");
+  return {
+    so_line_id:String(pick(r,"so_line_id","id","line_id")||""),
+    sku_key:String(pick(r,"sku_key","sku")||""),
+    name:pick(r,"name","nama"),
+    kode_barang:pick(r,"kode_barang"), warna:pick(r,"warna"),
+    so_number:pick(r,"so_number","no_so"),
+    customer:pick(r,"customer_name","customer_name_text","customer"),
+    sales:pick(r,"sales_name","sales_name_text","sales"),
+    qty_balance:n(pick(r,"qty_balance","qty")),
+    status_order:pick(r,"status_order","status"),
+    estimate_delivery:eta,
+    reason:pick(r,"reason","exception_reason","kind"),
+  };
+}
+const EX_REASON={
+  no_fg_row:"Tidak ada baris stok FG untuk SKU ini",
+  uom_unreconciled:"Satuan belum bisa disamakan ke lembar",
+  unmatched_sku:"SKU belum cocok dengan stok FG",
+};
+async function loadExceptions(){
+  const el=$("#exBody"); loadingBox(el);
+  const res=await api(`/api/stock/exceptions?page=${EX.page}&limit=${EX.limit}${EX.q?`&q=${encodeURIComponent(EX.q)}`:""}`);
+  if(!res.ok){ $("#exPager").innerHTML=""; failBox(el,errText(res,"Gagal memuat daftar SKU belum cocok."),loadExceptions); return; }
+  const raw=readRows(res.json).map(normException);
+  const det=detectPaging(res.json,raw,EX.limit);
+  EX.mode=det.mode; EX.total=det.total; EX.all=raw;
+  renderExceptions();
+}
+function renderExceptions(){
+  const el=$("#exBody");
+  let rows=EX.all;
+  if(EX.q) rows=rows.filter(r=>matches(EX.q,[r.sku_key,r.name,r.customer,r.so_number,r.kode_barang,r.warna]));
+  const total=EX.mode==="server"?EX.total:rows.length;
+  if(EX.mode!=="server") rows=rows.slice((EX.page-1)*EX.limit,EX.page*EX.limit);
+  EX.shown=rows.length;
+  if(rows.length===0){
+    el.innerHTML=`<div class="empty">${EX.q?"Tidak ada baris yang cocok dengan pencarian.":"Semua permintaan SO sudah punya SKU stok yang cocok. 👍"}</div>`;
+    $("#exPager").innerHTML=""; return;
+  }
+  el.innerHTML=`<table><thead><tr>
+      <th>SKU diminta</th><th class="num">Permintaan</th><th>Tenggat</th><th>Pelanggan</th><th>Keterangan</th>
+    </tr></thead><tbody>${rows.map(r=>{
+      const d=daysPast(r.estimate_delivery);
+      return `<tr>
+        <td><b>${esc(r.name||r.sku_key)}</b><div class="sub2">${esc(r.sku_key)}</div></td>
+        <td class="num"><b>${NF.format(r.qty_balance)}</b><div class="sub2">lembar</div></td>
+        <td>${esc(tgl(r.estimate_delivery))}<div class="sub2">${d!=null&&d>0?`telat ${esc(fmtAge(d))}`:esc(fmtAge(d))}</div></td>
+        <td>${esc(r.customer||"—")}${r.so_number?`<div class="sub2">SO ${esc(r.so_number)}</div>`:""}</td>
+        <td><span class="chip info">produksi diperlukan</span>
+          <div class="sub2">${esc(EX_REASON[r.reason]||r.reason||"SKU ini belum ada di stok FG")}</div></td>
+      </tr>`;
+    }).join("")}</tbody></table>`;
+  renderPager($("#exPager"),{page:EX.page,limit:EX.limit,total,shown:EX.shown},p=>{
+    EX.page=p; if(EX.mode==="server") loadExceptions(); else renderExceptions();
+  });
+}
+$("#exQ").addEventListener("input",debounce(e=>{ EX.q=e.target.value.trim(); EX.page=1; if(EX.mode==="server") loadExceptions(); else renderExceptions(); }));
+$("#exLimit").addEventListener("change",e=>{ EX.limit=n(e.target.value)||50; EX.page=1; loadExceptions(); });
+$("#exReload").addEventListener("click",()=>{ EX.page=1; loadExceptions(); });
+
+/* ════════════════════════════════════════════════════════════════════════════
+   TAB 4 · Adjustments (ST-R12 / ST-R20)
+   Client-side validation mirrors the server rule exactly: reason required,
+   qty_delta must parse and must not be zero. Nothing leaves the page until both
+   hold, so the user never learns about it from a 400.
+   ════════════════════════════════════════════════════════════════════════════ */
+const ADJ={page:1,limit:50,q:"",mode:"client",total:null,all:[],shown:0};
+function normAdj(r){
+  return {
+    id:String(pick(r,"id")||""),
+    sku_key:String(pick(r,"sku_key","sku")||""),
+    name:pick(r,"name","nama"),
+    qty_delta:n(pick(r,"qty_delta","delta","qty")),
+    reason:pick(r,"reason")||"—",
+    actor:pick(r,"actor","created_by")||"—",
+    created_at:pick(r,"created_at","at"),
+  };
+}
+function adjError(){
+  const sku=$("#adjSku").value.trim();
+  const raw=$("#adjDelta").value.trim();
+  const reason=$("#adjReason").value.trim();
+  if(!sku) return "Pilih SKU yang ingin disesuaikan.";
+  const delta=Number(raw.replace(",","."));
+  if(!raw||!isFinite(delta)) return "Selisih qty harus berupa angka.";
+  if(delta===0) return "Selisih qty tidak boleh 0 — tidak ada yang berubah.";
+  if(!reason) return "Alasan wajib diisi.";
+  if(reason.length<3) return "Alasan terlalu pendek — tulis minimal 3 karakter.";
+  return null;
+}
+function showAdjErr(msg){
+  const e=$("#adjErr");
+  if(!msg){ e.style.display="none"; e.textContent=""; return; }
+  e.style.display=""; e.textContent=msg;
+}
+function renderAdjHint(){
+  const k=$("#adjSku").value.trim();
+  const it=skuByKey(k);
+  const box=$("#adjSkuHint");
+  if(!k){ box.textContent=""; return; }
+  box.innerHTML=it
+    ? `<b>${esc(it.name||it.sku_key)}</b> · stok ERP ${NF.format(n(it.on_hand))} · penyesuaian berjalan ${n(it.adjustment)>0?"+":""}${NF.format(n(it.adjustment))} · ATP ${NF.format(n(it.atp))}`
+    : `SKU ini belum ada di ringkasan stok. Penyesuaian tetap bisa disimpan dan akan berlaku saat SKU-nya muncul.`;
+}
+$("#adjSku").addEventListener("input",()=>{ renderAdjHint(); showAdjErr(null); });
+$("#adjDelta").addEventListener("input",()=>showAdjErr(null));
+$("#adjReason").addEventListener("input",()=>showAdjErr(null));
+$("#adjSubmit").addEventListener("click",async ()=>{
+  if(!requireActor()) return;
+  const msg=adjError();
+  if(msg){ showAdjErr(msg); return; }
+  const body={
+    sku_key:$("#adjSku").value.trim(),
+    qty_delta:Number($("#adjDelta").value.trim().replace(",",".")),
+    reason:$("#adjReason").value.trim(),
+    actor:actor(),
+  };
+  const btn=$("#adjSubmit"); btn.disabled=true; btn.innerHTML=`<span class="spin"></span>Menyimpan`;
+  const res=await api("/api/stock/adjustments",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
+  btn.disabled=false; btn.textContent="Simpan Penyesuaian";
+  if(!res.ok){ showAdjErr(errText(res,"Gagal menyimpan penyesuaian.")); return; }
+  showAdjErr(null);
+  $("#adjDelta").value=""; $("#adjReason").value="";
+  toast(`Penyesuaian tersimpan — ${body.qty_delta>0?"+":""}${NF.format(body.qty_delta)} lembar.`,"ok");
+  ADJ.page=1; await loadSummary(); renderAdjHint(); loadAdjustments();
+});
+async function loadAdjustments(){
+  const el=$("#adjBody"); loadingBox(el);
+  const res=await api(`/api/stock/adjustments?page=${ADJ.page}&limit=${ADJ.limit}${ADJ.q?`&q=${encodeURIComponent(ADJ.q)}`:""}`);
+  if(!res.ok){ $("#adjPager").innerHTML=""; failBox(el,errText(res,"Gagal memuat riwayat penyesuaian."),loadAdjustments); return; }
+  const raw=readRows(res.json).map(normAdj);
+  const det=detectPaging(res.json,raw,ADJ.limit);
+  ADJ.mode=det.mode; ADJ.total=det.total; ADJ.all=raw;
+  renderAdjustments();
+}
+function renderAdjustments(){
+  const el=$("#adjBody");
+  let rows=ADJ.all;
+  if(ADJ.q) rows=rows.filter(r=>matches(ADJ.q,[r.sku_key,r.name,r.actor,r.reason]));
+  const total=ADJ.mode==="server"?ADJ.total:rows.length;
+  if(ADJ.mode!=="server") rows=rows.slice((ADJ.page-1)*ADJ.limit,ADJ.page*ADJ.limit);
+  ADJ.shown=rows.length;
+  $("#adjCount").textContent=total!=null?NF.format(total):"—";
+  if(rows.length===0){
+    el.innerHTML=`<div class="empty">${ADJ.q?"Tidak ada penyesuaian yang cocok.":"Belum ada penyesuaian. Stok mengikuti ERP sepenuhnya."}</div>`;
+    $("#adjPager").innerHTML=""; return;
+  }
+  el.innerHTML=`<table><thead><tr>
+      <th>Waktu</th><th>SKU</th><th class="num">Selisih</th><th>Alasan</th><th>Petugas</th>
+    </tr></thead><tbody>${rows.map(r=>`<tr>
+      <td>${esc(wib(r.created_at))}</td>
+      <td><b>${esc(r.name||skuName(r.sku_key))}</b><div class="sub2">${esc(r.sku_key)}</div></td>
+      <td class="num"><span class="avail ${r.qty_delta<0?"neg":""}">${r.qty_delta>0?"+":""}${NF.format(r.qty_delta)}</span></td>
+      <td>${esc(r.reason)}</td>
+      <td>${esc(r.actor)}</td>
+    </tr>`).join("")}</tbody></table>`;
+  renderPager($("#adjPager"),{page:ADJ.page,limit:ADJ.limit,total,shown:ADJ.shown},p=>{
+    ADJ.page=p; if(ADJ.mode==="server") loadAdjustments(); else renderAdjustments();
+  });
+}
+$("#adjQ").addEventListener("input",debounce(e=>{ ADJ.q=e.target.value.trim(); ADJ.page=1; if(ADJ.mode==="server") loadAdjustments(); else renderAdjustments(); }));
+$("#adjLimit").addEventListener("change",e=>{ ADJ.limit=n(e.target.value)||50; ADJ.page=1; loadAdjustments(); });
+
+/* ════════════════════════════════════════════════════════════════════════════
+   TAB 5 · Sync status (ST-R6 / ST-R7)
+   The manual kick is idempotent and returns immediately when a run is already
+   in flight — we reflect that state instead of spinning forever.
+   ════════════════════════════════════════════════════════════════════════════ */
+const TABLE_LABEL={live_fg:"Stok FG (Live FG)",so_line:"Baris Sales Order",so_header:"Header Sales Order"};
+let SY_POLL=null;
+function normSyncTable(r){
+  return {
+    table_name:String(pick(r,"table_name","table","name")||"—"),
+    cursor_value:pick(r,"cursor_value","cursor"),
+    last_ok_at:pick(r,"last_ok_at","last_success_at"),
+    last_error:pick(r,"last_error","error"),
+    last_error_at:pick(r,"last_error_at","error_at"),
+    rows_synced:n(pick(r,"rows_synced","rows")),
+    running:Boolean(r.running),
+  };
+}
+function syncTables(j){
+  if(Array.isArray(j&&j.tables)) return j.tables.map(normSyncTable);
+  if(j&&j.tables&&typeof j.tables==="object")
+    return Object.keys(j.tables).map(k=>normSyncTable(Object.assign({table_name:k},j.tables[k])));
+  const rows=readRows(j);
+  return rows.map(normSyncTable);
+}
+async function loadSync(){
+  const el=$("#syBody"); loadingBox(el);
+  const res=await api("/api/stock/sync-status");
+  if(!res.ok){ $("#syTop").innerHTML=""; failBox(el,errText(res,"Gagal memuat status sinkronisasi."),loadSync); return; }
+  const j=res.json||{};
+  const f=Object.assign({},SUMMARY.freshness,j.freshness||{});
+  const tables=syncTables(j);
+  const running=Boolean(j.running)||tables.some(t=>t.running);
+  const badge=$("#syState");
+  if(f.erp_connected===false){ badge.className="chip bad"; badge.textContent="Tidak terhubung"; }
+  else if(running){ badge.className="chip info"; badge.textContent="Sedang berjalan"; }
+  else if(f.stale){ badge.className="chip warn"; badge.textContent="Tertinggal"; }
+  else { badge.className="chip good"; badge.textContent="Normal"; }
+
+  const anyErr=tables.find(t=>t.last_error);
+  $("#syTop").innerHTML=
+    (f.erp_connected===false
+      ? `<div class="warnbox">ERP tidak terhubung — alamat server ERP belum diatur. Sinkronisasi tidak berjalan dan data di bawah adalah yang terakhir tersimpan.</div>`
+      : f.stale
+        ? `<div class="warnbox amber">Belum ada sinkronisasi berhasil dalam beberapa siklus terakhir. Data yang tampil masih bisa dipakai, tetapi mungkin tertinggal.</div>`
+        : `<div class="warnbox info">Sinkronisasi terakhir berhasil ${esc(f.last_ok_at?wib(f.last_ok_at)+" WIB":"—")}.</div>`)
+    + (anyErr?`<div class="warnbox">Kesalahan terakhir pada <b>${esc(TABLE_LABEL[anyErr.table_name]||anyErr.table_name)}</b>
+        ${anyErr.last_error_at?`(${esc(wib(anyErr.last_error_at))} WIB)`:""}: ${esc(anyErr.last_error)}</div>`:"")
+    + `<div class="counts">
+        <span class="countchip">Interval ${j.interval_ms?NF.format(Math.round(n(j.interval_ms)/60000))+" menit":"—"}</span>
+        <span class="countchip">Total baris tersinkron ${NF.format(tables.reduce((s,t)=>s+t.rows_synced,0))}</span>
+       </div>`;
+
+  $("#syKick").disabled=running||f.erp_connected===false;
+  $("#syKick").textContent=running?"Sinkronisasi sedang berjalan…":"Jalankan Sinkronisasi Sekarang";
+
+  el.innerHTML=tables.length===0
+    ? `<div class="empty">Belum ada catatan sinkronisasi.</div>`
+    : `<table><thead><tr><th>Tabel</th><th>Status</th><th>Berhasil terakhir</th><th>Posisi kursor</th><th class="num">Baris</th><th>Kesalahan terakhir</th></tr></thead>
+       <tbody>${tables.map(t=>`<tr>
+         <td><b>${esc(TABLE_LABEL[t.table_name]||t.table_name)}</b><div class="sub2">${esc(t.table_name)}</div></td>
+         <td>${t.running?`<span class="chip info">berjalan</span>`:(t.last_error?`<span class="chip bad">gagal</span>`:`<span class="chip good">siap</span>`)}</td>
+         <td>${esc(t.last_ok_at?wib(t.last_ok_at):"—")}</td>
+         <td>${esc(t.cursor_value?wib(t.cursor_value):"—")}</td>
+         <td class="num">${NF.format(t.rows_synced)}</td>
+         <td>${t.last_error?`${esc(t.last_error)}<div class="sub2">${esc(t.last_error_at?wib(t.last_error_at):"")}</div>`:"—"}</td>
+       </tr>`).join("")}</tbody></table>`;
+
+  // Poll only while a run is in flight, and only while this tab is visible.
+  clearTimeout(SY_POLL);
+  if(running && TAB==="sync") SY_POLL=setTimeout(loadSync,5000);
+}
+$("#syReload").addEventListener("click",loadSync);
+$("#syKick").addEventListener("click",async ()=>{
+  const btn=$("#syKick"); btn.disabled=true; btn.innerHTML=`<span class="spin"></span>Meminta…`;
+  const res=await api("/api/stock/sync",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({actor:actor()||null})});
+  if(!res.ok && res.status!==409){
+    btn.disabled=false; btn.textContent="Jalankan Sinkronisasi Sekarang";
+    toast(errText(res,"Gagal memulai sinkronisasi."),"err");
+    return;
+  }
+  const j=res.json||{};
+  const already=res.status===409||j.started===false||(j.running===true&&j.started!==true);
+  toast(already?"Sinkronisasi sudah berjalan — permintaan diabaikan.":"Sinkronisasi dimulai.",already?"warn":"ok");
+  loadSync();
 });
 
-function currentSheet(){ return PARSED?PARSED.sheets.find(s=>s.name===SELSHEET):null; }
-function renderPreview(){
-  const cs=currentSheet(); if(!cs){ $("#preview").innerHTML=""; return; }
-  const res=cs.result;
-  const active=SUMMARY&&SUMMARY.upload;
-  const mapLabel=res.mapType==="primary"?"Format PPIC (BRAND/WARNA/…)":"Format umum (Nama/Qty)";
-  const sheetOpts=PARSED.sheets.map(s=>`<option ${s.name===SELSHEET?"selected":""} value="${esc(s.name)}">${esc(s.name)} — ${s.result.valid} baris · ${s.result.brands.size} brand</option>`).join("");
-  const over=res.valid>2000;
-  const first=res.rows.slice(0,15);
-  const isPrimary=res.mapType==="primary";
-  const rowsHtml=first.map(r=>{
-    const liveKey=itemKeyFromParsed(r); // reconciliation match against the active period
-    const avail=LIVEKEYS[liveKey];
-    const availTxt=avail==null?"":NF.format(avail);
-    if(isPrimary){
-      return `<tr><td>${esc(r.brand||"")}</td><td>${esc(r.warna)}<div class="sub2">${esc([r.batch_warna,r.coating].filter(Boolean).join(" · "))}</div></td>
-        <td>${[r.th,r.mm?r.mm+"mm":"",r.p&&r.l?r.p+"×"+r.l:""].filter(Boolean).map(esc).join(" · ")}</td>
-        <td style="text-align:right">${NF.format(r.qty)}</td><td style="text-align:right">${availTxt}</td></tr>`;
-    }
-    return `<tr><td>${esc(r.product_line||"")}</td><td>${esc(r.name)}</td><td>${esc(r.unit)}</td>
-      <td style="text-align:right">${NF.format(r.qty)}</td><td style="text-align:right">${availTxt}</td></tr>`;
-  }).join("");
-  const head=isPrimary
-    ? `<tr><th>Brand</th><th>Warna</th><th>Spec</th><th style="text-align:right">Qty</th><th style="text-align:right">Tersedia sekarang</th></tr>`
-    : `<tr><th>Lini</th><th>Nama</th><th>Satuan</th><th style="text-align:right">Qty</th><th style="text-align:right">Tersedia sekarang</th></tr>`;
-  $("#preview").innerHTML=`
-    <label class="fld" style="margin-top:12px;max-width:100%">Sheet
-      <select id="sheetSel">${sheetOpts}</select>
-    </label>
-    <div class="metaline">Kolom terpetakan: <b>${mapLabel}</b> · header baris ${res.headerRow}</div>
-    <div class="counts">
-      <span class="countchip">${res.valid} baris valid</span>
-      <span class="countchip">${res.zero} stok 0</span>
-      <span class="countchip">${res.skipped} dilewati</span>
-      <span class="countchip">${res.merged} duplikat digabung</span>
-    </div>
-    ${over?`<div class="warnbox">Terlalu banyak baris (${res.valid}). Maksimal 2000.</div>`:""}
-    ${active?`<div class="warnbox amber">Upload baru akan MENGGANTI stok. ${openNow()} booking aktif akan menjadi OUTSTANDING — tidak memotong stok baru sampai dipenuhi PPIC.</div>`:""}
-    <div class="scrollx"><table><thead>${head}</thead><tbody>${rowsHtml}</tbody></table></div>
-    <div class="metaline">Menampilkan ${first.length} dari ${res.valid} baris.</div>
-    <label class="fld" style="margin-top:8px;max-width:100%">Catatan (opsional)<input type="text" id="upNote" placeholder="—"/></label>
-    <div style="margin-top:12px"><button class="btn" id="doUpload" ${over?"disabled":""}>Konfirmasi Upload</button></div>`;
-  $("#sheetSel").addEventListener("change",e=>{ SELSHEET=e.target.value; renderPreview(); });
-  $("#doUpload").addEventListener("click",doUpload);
-}
-function itemKeyFromParsed(r){
-  if(r.warna!=null) return ["s",r.brand,r.warna,r.batch_warna,r.coating,r.th,r.mm,r.p,r.l].map(v=>String(v==null?"":v).trim().toLowerCase()).join("|");
-  return ["g",r.name,r.product_line].map(v=>String(v==null?"":v).trim().toLowerCase()).join("|");
-}
-
-async function doUpload(){
-  if(!requireActor()) return;
-  const cs=currentSheet(); if(!cs) return;
-  const res=cs.result;
-  if(res.valid>2000){ toast("Maksimal 2000 baris.","err"); return; }
-  if(res.valid===0){ toast("File tidak berisi baris stok yang valid.","err"); return; }
-  const active=SUMMARY&&SUMMARY.upload;
-  if(!confirm(active?`Upload akan mengganti stok. ${openNow()} booking aktif menjadi OUTSTANDING. Lanjut?`:"Konfirmasi upload periode baru?")) return;
-  const items=res.rows.map(r=> res.mapType==="primary"
-    ? {brand:r.brand,warna:r.warna,batch_warna:r.batch_warna,coating:r.coating,th:r.th,mm:r.mm,p:r.p,l:r.l,qty:r.qty}
-    : {name:r.name,product_line:r.product_line,unit:r.unit,qty:r.qty});
-  const btn=$("#doUpload"); btn.disabled=true; btn.innerHTML=`<span class="spin"></span>Mengupload`;
-  try{
-    const r=await fetch("/api/stock/uploads",{method:"POST",headers:{"content-type":"application/json"},
-      body:JSON.stringify({filename:PARSED.filename,sheet_name:SELSHEET,uploaded_by:actor(),note:$("#upNote").value.trim()||null,items})});
-    const j=await r.json();
-    if(!r.ok){ toast(j.error||"Gagal upload.","err"); btn.disabled=false; btn.textContent="Konfirmasi Upload"; if((j.error||"").includes("Muat ulang")) refreshAll(); return; }
-    toast(`Upload berhasil — ${j.upload.row_count} baris.`+(j.carried_outstanding?` ${j.carried_outstanding} booking jadi outstanding.`:""),"ok");
-    $("#file").value=""; $("#preview").innerHTML=""; PARSED=null;
-    refreshAll();
-  }catch{ toast("Gagal terhubung.","err"); btn.disabled=false; btn.textContent="Konfirmasi Upload"; }
-}
-
-// ══ Akhir Hari — export movements report + generate a fresh stock check ════════
-// Both use the same SheetJS framework as the upload (client-side, zero server
-// deps). The export is a single workbook with three sheets:
-//   Ringkasan   — period header, totals, and a per-item stok awal/terbooking/
-//                 tersedia table (the summary that ties everything together).
-//   Pergerakan  — the elaborated movement ledger: per product, a Stok Awal row
-//                 then every booking as a signed qty with a running Sisa (mirror
-//                 of the per-product riwayat; final Sisa === Tersedia).
-//   Booking     — the flat booking list with timers, outcomes, and stamps.
-function xlsxReady(){ if(typeof XLSX==="undefined"){ toast("Library Excel belum siap. Muat ulang halaman.","err"); return false; } return true; }
-function setCols(ws,widths){ ws["!cols"]=widths.map(w=>({wch:w})); }
-
-async function exportEndOfDay(){
-  if(!xlsxReady()) return;
-  if(!SUMMARY.upload){ toast("Belum ada periode aktif untuk diexport.","warn"); return; }
-  const btn=$("#expEod"); btn.disabled=true; const label=btn.textContent; btn.innerHTML=`<span class="spin"></span>Menyiapkan`;
-  try{
-    // Pull every booking of the active period (all statuses, with timer fields).
-    let bookings=[];
-    try{ const r=await fetch("/api/stock/bookings"); bookings=(await r.json()).bookings||[]; }catch{ toast("Gagal ambil data booking.","err"); btn.disabled=false; btn.textContent=label; return; }
-    const items=SUMMARY.items, t=SUMMARY.totals||{}, u=SUMMARY.upload;
-
-    // ── Sheet: Ringkasan ──────────────────────────────────────────────────────
-    const bytStatus={}; for(const b of bookings){ bytStatus[b.status]=(bytStatus[b.status]||0)+1; }
-    const sumAoa=[
-      ["RINGKASAN AKHIR HARI — STOK BOOKING"],
-      ["Periode (file)", u.filename||"—"],
-      ["Sheet", u.sheet_name||"—"],
-      ["Data per (WIB)", wib(u.created_at)],
-      ["Diekspor (WIB)", nowWib()],
-      ["Petugas", actor()||"—"],
-      [],
-      ["TOTAL"],
-      ["Total item", items.length],
-      ["Item tersedia (>0)", t.items_available||0],
-      ["Total qty terbooking", round2(t.booked_total||0)],
-      ["Total booking", bookings.length],
-      ["— Terkonfirmasi", bytStatus.confirmed||0],
-      ["— Menunggu verifikasi (overbook)", bytStatus.overbooked||0],
-      ["— Outstanding (menunggu Penuhi)", bytStatus.outstanding||0],
-      ["— Disetujui (overbook)", bytStatus.approved||0],
-      ["— Selesai", bytStatus.completed||0],
-      ["— Dibatalkan", bytStatus.cancelled||0],
-      ["— Ditolak", bytStatus.rejected||0],
-      ["Booking terbuka > 24 jam (LAMA)", t.active_long||0],
-      [],
-      ["RINGKASAN PER PRODUK"],
-      ["Brand","Produk","Warna","Satuan","Stok Awal","Terbooking","Tersedia","Tersedia (M2)","Overbooked?","Menunggu Verifikasi"],
-    ];
-    for(const i of items){
-      sumAoa.push([
-        i.product_line||"", i.name, i.warna||"", i.unit,
-        round2(i.qty_initial), round2(i.booked), round2(i.available),
-        i.available_m2==null?"":round2(i.available_m2),
-        i.available<0?"YA":"", i.pending_verifications||0,
-      ]);
-    }
-    const wsSum=XLSX.utils.aoa_to_sheet(sumAoa);
-    setCols(wsSum,[16,30,18,8,10,10,10,13,11,18]);
-
-    // ── Sheet: Pergerakan (movement ledger) ───────────────────────────────────
-    const byItem=new Map();
-    // Effective item = where the qty actually counts (R17): a booking Penuhi'd
-    // into this period deducts from fulfilled_item_id, not its origin item.
-    for(const b of bookings){
-      const eff=b.fulfilled_item_id||b.item_id;
-      if(!byItem.has(eff)) byItem.set(eff,[]); byItem.get(eff).push(b);
-    }
-    for(const arr of byItem.values()) arr.sort((a,b)=>Date.parse(a.created_at)-Date.parse(b.created_at)||(String(a.id)<String(b.id)?-1:1));
-    const movAoa=[["Produk","Brand","Waktu (WIB)","Tipe","Sales","Customer","No. SO","Qty (±)","Status","Hasil","Durasi (jam)","Sisa","Catatan"]];
-    for(const i of items){
-      let sisa=round2(i.qty_initial);
-      movAoa.push([i.name, i.product_line||"", wib(u.created_at), "Stok Awal", "", "", "", round2(i.qty_initial), "", "", "", sisa, ""]);
-      const arr=byItem.get(i.id)||[];
-      for(const b of arr){
-        const deduct=DEDUCTING_SET.has(b.status);
-        if(deduct) sisa=round2(sisa-Number(b.qty));
-        const via=b.fulfilled_item_id&&!eq(b.fulfilled_item_id,b.item_id);
-        movAoa.push([
-          i.name, i.product_line||"", wib(via?(b.completed_at||b.created_at):b.created_at),
-          via?"Booking (Penuhi)":"Booking", b.rep_name, b.customer_name, b.so_number||"",
-          deduct? -round2(b.qty) : 0, STLABEL[b.status]||b.status, b.outcome,
-          round2(b.duration_seconds/3600), sisa, b.note||"",
-        ]);
-      }
-    }
-    const wsMov=XLSX.utils.aoa_to_sheet(movAoa);
-    setCols(wsMov,[30,14,16,10,14,20,16,10,20,10,12,10,24]);
-
-    // ── Sheet: Booking (flat detail) ──────────────────────────────────────────
-    const bkAoa=[["Produk","Brand","Sales","Qty","Satuan","Customer","No. SO","Status","Hasil","Durasi (jam)","Lama?","Waktu Booking (WIB)","Diverifikasi (WIB)","Selesai (WIB)","Dibatalkan (WIB)","Catatan"]];
-    for(const b of bookings){
-      const it=itemById(b.item_id);
-      bkAoa.push([
-        it?it.name:("#"+b.item_id), it?(it.product_line||""):"", b.rep_name, round2(b.qty),
-        it?it.unit:"", b.customer_name, b.so_number||"", STLABEL[b.status]||b.status, b.outcome,
-        round2(b.duration_seconds/3600), b.long?"LAMA":"",
-        wib(b.created_at), b.verified_at?wib(b.verified_at):"", b.completed_at?wib(b.completed_at):"",
-        b.cancelled_at?wib(b.cancelled_at):"", b.note||"",
-      ]);
-    }
-    const wsBk=XLSX.utils.aoa_to_sheet(bkAoa);
-    setCols(wsBk,[30,14,14,8,8,20,16,20,10,12,7,18,18,18,18,24]);
-
-    const wb=XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb,wsSum,"Ringkasan");
-    XLSX.utils.book_append_sheet(wb,wsMov,"Pergerakan");
-    XLSX.utils.book_append_sheet(wb,wsBk,"Booking");
-    XLSX.writeFile(wb,`laporan-akhir-hari-${dateStamp()}.xlsx`);
-    toast("Laporan akhir hari diunduh.","ok");
-  }finally{ btn.disabled=false; btn.textContent=label; }
-}
-
-// Generate a fresh STOCK_CHECK file seeded with current remaining stock, in the
-// exact primary format (or generic when the period is generic) so PPIC adjusts
-// it against the physical count and re-uploads it to open the next period.
-function generateNewStockCheck(){
-  if(!xlsxReady()) return;
-  if(!SUMMARY.upload){ toast("Belum ada periode aktif.","warn"); return; }
-  const items=SUMMARY.items;
-  if(items.length===0){ toast("Tidak ada item untuk dibuat.","warn"); return; }
-  const structured=items.some(i=>i.warna!=null);
-  let aoa;
-  if(structured){
-    aoa=[["BRAND","WARNA","BATCH WARNA","COATING","TH","MM","P","L","SALDO AKHIR (Lbr)","SALDO AKHIR (M2)"]];
-    for(const i of items){
-      const qty=Math.max(0,round2(i.available)); // carry forward remaining stock (a count can't be negative)
-      const m2=(i.p!=null&&i.l!=null)?round2(qty*i.p*i.l/1e6):"";
-      aoa.push([i.product_line||"", i.warna||i.name||"", i.batch_warna||"", i.coating||"",
-        i.th==null?"":i.th, i.mm==null?"":i.mm, i.p==null?"":i.p, i.l==null?"":i.l, qty, m2]);
-    }
-  }else{
-    aoa=[["Nama Produk","Kategori","Satuan","Qty"]];
-    for(const i of items){ aoa.push([i.name||"", i.product_line||"", i.unit||"pcs", Math.max(0,round2(i.available))]); }
-  }
-  const ws=XLSX.utils.aoa_to_sheet(aoa);
-  setCols(ws, structured?[16,20,14,10,7,6,8,8,16,16]:[30,16,10,10]);
-  const wb=XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb,ws,"STOCK CHECK");
-  XLSX.writeFile(wb,`stock-check-baru-${dateStamp()}.xlsx`);
-  toast("File stock check baru dibuat — sesuaikan dengan hitungan fisik lalu upload.","ok");
-}
-
-// ══ summary + cards ═══════════════════════════════════════════════════════════
-let SUMMARY={upload:null,items:[],totals:{}};
-async function loadSummary(){
-  try{ const r=await fetch("/api/stock/summary"); if(r.status===503){toast("Database tidak tersedia.","err");return;} SUMMARY=await r.json(); }catch{ return; }
-  // build reconciliation key map
-  LIVEKEYS={};
-  for(const i of SUMMARY.items){ LIVEKEYS[itemKey(i)]=i.available; }
-  const u=SUMMARY.upload;
-  $("#dataPer").textContent=u?`Data per ${wib(u.created_at)} · ${u.filename||"tanpa nama"}${u.sheet_name?` · ${u.sheet_name}`:""}`:"Belum ada data stok";
-  const t=SUMMARY.totals||{};
-  $("#eodMeta").textContent=u?`${t.items||0} item · ${round2(t.booked_total||0)} terbooking`:"—";
-  const dis=!u;
-  $("#expEod").disabled=dis; $("#genCheck").disabled=dis;
-  if(PARSED) renderPreview(); // refresh reconciliation column
-}
-function itemById(id){ return SUMMARY.items.find(x=>eq(x.id,id)); }
-// Bookings that would flip to OUTSTANDING if a new stock check landed now (R1).
-function openNow(){ const t=SUMMARY.totals||{}; return (t.confirmed||0)+(t.pending_overbooked||0)+(t.approved||0); }
-function availOf(id){ const i=itemById(id); return i?i.available:null; }
-
-// Card 2 — verify queue
-async function loadQueue(){
-  let rows=[];
-  try{ const r=await fetch("/api/stock/bookings?status=overbooked"); rows=(await r.json()).bookings||[]; }catch{}
-  $("#vqCount").textContent=rows.length;
-  if(rows.length===0){ $("#vqBody").innerHTML=`<div class="empty">Tidak ada yang menunggu verifikasi. 👍</div>`; return; }
-  $("#vqBody").innerHTML=`<table><thead><tr><th>Produk</th><th>Sales</th><th>Qty</th><th>Customer</th><th>Tersedia</th><th>Umur</th><th>Waktu</th><th></th></tr></thead>
-    <tbody>${rows.map(b=>{
-      const av=availOf(b.item_id);
-      const lama=b.long?`<span class="chip lama">LAMA</span>`:"";
-      const age=b.running?dur(ageSec(b.created_at)):dur(b.duration_seconds);
-      return `<tr>
-        <td>${esc(b.item_name||nameOf(b.item_id))}</td><td>${esc(b.rep_name)}</td><td>${NF.format(b.qty)}</td><td>${esc(b.customer_name)}${b.so_number?`<div class="sub2">SO ${esc(b.so_number)}</div>`:""}</td>
-        <td class="avail ${av!=null&&av<0?"neg":""}">${av!=null?NF.format(av):"—"}</td>
-        <td><span class="chip age" data-age="${b.running?b.created_at:''}">${age}</span>${lama}</td>
-        <td>${wib(b.created_at)}</td>
-        <td style="white-space:nowrap">
-          <button class="btn approve mini" data-approve="${b.id}">Setujui</button>
-          <button class="btn danger mini" data-reject="${b.id}">Tolak</button>
-        </td></tr>`;
-    }).join("")}</tbody></table>`;
-  $("#vqBody").querySelectorAll("[data-approve]").forEach(x=>x.addEventListener("click",()=>verify(x.getAttribute("data-approve"),"approve")));
-  $("#vqBody").querySelectorAll("[data-reject]").forEach(x=>x.addEventListener("click",()=>verify(x.getAttribute("data-reject"),"reject")));
-}
-function nameOf(id){ const i=itemById(id); return i?i.name:("#"+id); }
-async function verify(id,action){
-  if(!requireActor()) return;
-  if(!confirm(action==="approve"?"Setujui booking overbook ini?":"Tolak booking ini? Stok akan dikembalikan.")) return;
-  try{
-    const r=await fetch(`/api/stock/bookings/${id}/verify`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action,actor:actor()})});
-    const j=await r.json();
-    if(!r.ok){ toast(j.error||"Gagal.","err"); refreshAll(); return; }
-    toast(action==="approve"?"Disetujui.":"Ditolak — stok dikembalikan.","ok");
-    refreshAll();
-  }catch{ toast("Gagal terhubung.","err"); }
-}
-
-// Card 3 — Booking Outstanding (R17). Placed right under the verification queue
-// so it prompts on every visit. The match line is resolved server-side against
-// the CURRENTLY active period, so it shows exactly what Penuhi would do.
-let OUTSTANDING=[];
-async function loadOutstanding(){
-  let rows=[];
-  try{ const r=await fetch("/api/stock/bookings?status=outstanding"); rows=(await r.json()).bookings||[]; }catch{}
-  OUTSTANDING=rows;
-  const badge=$("#outCount"); badge.textContent=rows.length;
-  badge.className="chip "+(rows.length>0?"st-outstanding":"age");
-  if(rows.length===0){ $("#outBody").innerHTML=`<div class="empty">Tidak ada booking outstanding. 👍</div>`; return; }
-  $("#outBody").innerHTML=`<table><thead><tr><th>Produk asal</th><th>Sales</th><th>Qty</th><th>Customer</th><th>Umur</th><th>Periode asal</th><th>Cocok di stok aktif</th><th></th></tr></thead>
-    <tbody>${rows.map(b=>{
-      const lama=b.long?`<span class="chip lama">LAMA</span>`:"";
-      const age=b.running?dur(ageSec(b.created_at)):dur(b.duration_seconds);
-      const m=b.match;
-      const matchLine=m
-        ? `→ ${esc(m.name)}<div class="sub2">Tersedia <b class="${m.available<0?"avail neg":""}">${NF.format(m.available)}</b> ${esc(m.unit)}</div>`
-        : `<span style="color:var(--danger);font-weight:700">Produk tidak ada di stock check aktif</span>`;
-      return `<tr>
-        <td>${esc(b.item_name)}${b.item_product_line?`<div class="sub2">${esc(b.item_product_line)}</div>`:""}</td>
-        <td>${esc(b.rep_name)}</td>
-        <td>${NF.format(b.qty)} ${esc(b.item_unit||"")}</td>
-        <td>${esc(b.customer_name)}${b.so_number?`<div class="sub2">SO ${esc(b.so_number)}</div>`:""}</td>
-        <td><span class="chip age" data-age="${b.running?b.created_at:''}">${age}</span>${lama}</td>
-        <td>${esc(b.origin_period||"—")}<div class="sub2">${wib(b.created_at)}</div></td>
-        <td>${matchLine}</td>
-        <td style="white-space:nowrap">
-          <button class="btn mini" data-fulfil="${b.id}">Penuhi</button>
-          <button class="btn danger mini" data-reject="${b.id}">Tolak</button>
-        </td></tr>`;
-    }).join("")}</tbody></table>`;
-  $("#outBody").querySelectorAll("[data-fulfil]").forEach(x=>x.addEventListener("click",()=>fulfil(x.getAttribute("data-fulfil"))));
-  $("#outBody").querySelectorAll("[data-reject]").forEach(x=>x.addEventListener("click",()=>verify(x.getAttribute("data-reject"),"reject")));
-}
-// Penuhi: matched → deducts from the active period (may go negative, R4);
-// unmatched → needs an explicit no-deduction confirmation (R17).
-async function fulfil(id){
-  if(!requireActor()) return;
-  const b=OUTSTANDING.find(x=>eq(x.id,id));
-  const m=b&&b.match;
-  const msg=m
-    ? `Potong ${NF.format(b.qty)} ${m.unit} dari stok aktif?`
-    : `Produk tidak ada di stock check aktif — tandai selesai tanpa memotong stok?`;
-  if(!confirm(msg)) return;
-  try{
-    const body={actor:actor()};
-    if(!m) body.confirm_no_deduct=true;
-    const r=await fetch(`/api/stock/bookings/${id}/fulfill`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
-    const j=await r.json();
-    if(!r.ok){ toast(j.error||"Gagal.","err"); refreshAll(); return; }
-    toast(j.matched_item?`Dipenuhi — stok ${j.matched_item.name} kini ${NF.format(j.available_after)}.`:"Ditandai selesai tanpa potongan stok.","ok");
-    refreshAll();
-  }catch{ toast("Gagal terhubung.","err"); }
-}
-
-// Card 4 — tracker
-async function loadTracker(){
-  let d={reps:[]};
-  try{ const r=await fetch("/api/stock/rep-stats"); d=await r.json(); }catch{}
-  if(!d.reps||d.reps.length===0){ $("#trackBody").innerHTML=`<div class="empty">Belum ada booking untuk dianalisis.</div>`; return; }
-  $("#trackBody").innerHTML=`<table><thead><tr><th>Sales</th><th>Total</th><th>Lama</th><th>Rata² Durasi</th><th>Selesai</th><th>Batal/Tolak</th><th>Terbuka</th></tr></thead>
-    <tbody>${d.reps.map(r=>{
-      const lamaCls=r.long_count>0?'style="color:#b45309;font-weight:800"':"";
-      // red dot when ANY open booking (aktif or outstanding) is already lama
-      const openLama=(r.active_long_now+(r.outstanding_long_now||0))>0?`<span class="reddot"></span>`:"";
-      const outs=r.outstanding_now||0;
-      return `<tr>
-        <td>${esc(r.rep_name)}</td><td>${r.total}</td>
-        <td ${lamaCls}>${r.long_count} · ${NF.format(r.long_pct)}%</td>
-        <td>${NF.format(r.avg_duration_hours)} j</td>
-        <td>${r.outcomes.selesai}</td>
-        <td>${r.outcomes.dibatalkan+r.outcomes.ditolak}</td>
-        <td>${r.active_now}+${outs}${openLama}<div class="sub2">aktif+outstanding</div></td></tr>`;
-    }).join("")}</tbody></table>`;
-}
-
-// Card 4 — all bookings
-let ALLFILTER="";
-const STATUSES=["confirmed","overbooked","approved","outstanding","rejected","cancelled","completed"];
-function renderStFilters(){
-  $("#stFilters").innerHTML=[["","Semua"],...STATUSES.map(s=>[s,STLABEL[s]])].map(([v,l])=>
-    `<span class="fchip ${ALLFILTER===v?"on":""}" data-f="${v}">${l}</span>`).join("");
-  $("#stFilters").querySelectorAll("[data-f]").forEach(c=>c.addEventListener("click",()=>{ ALLFILTER=c.getAttribute("data-f"); renderStFilters(); loadAll(); }));
-}
-async function loadAll(){
-  let rows=[];
-  try{ const r=await fetch("/api/stock/bookings"+(ALLFILTER?`?status=${ALLFILTER}`:"")); rows=(await r.json()).bookings||[]; }catch{}
-  if(rows.length===0){ $("#allBody").innerHTML=`<div class="empty">Tidak ada booking.</div>`; return; }
-  $("#allBody").innerHTML=`<table><thead><tr><th>Produk</th><th>Sales</th><th>Qty</th><th>Customer</th><th>Status</th><th>Umur/Durasi</th><th>Waktu</th><th></th></tr></thead>
-    <tbody>${rows.map(b=>{
-      const canDone=["confirmed","approved"].includes(b.status);
-      const canFulfil=b.status==="outstanding";
-      const canCancel=["confirmed","overbooked","approved","outstanding"].includes(b.status);
-      const lama=b.long?`<span class="chip lama">LAMA</span>`:"";
-      const ageTxt=b.running?dur(ageSec(b.created_at)):`${dur(b.duration_seconds)} · ${b.outcome}`;
-      return `<tr>
-        <td>${esc(b.item_name||nameOf(b.item_id))}</td><td>${esc(b.rep_name)}</td><td>${NF.format(b.qty)}</td><td>${esc(b.customer_name)}${b.so_number?`<div class="sub2">SO ${esc(b.so_number)}</div>`:""}</td>
-        <td><span class="chip st-${b.status}">${STLABEL[b.status]||b.status}</span></td>
-        <td><span class="chip age" data-age="${b.running?b.created_at:''}">${ageTxt}</span>${lama}</td>
-        <td>${wib(b.created_at)}</td>
-        <td style="white-space:nowrap">
-          ${canDone?`<button class="btn mini" data-done="${b.id}">Selesai</button>`:""}
-          ${canFulfil?`<button class="btn mini" data-fulfil="${b.id}">Penuhi</button>`:""}
-          ${canCancel?`<button class="btn danger mini" data-cancel="${b.id}">Batalkan</button>`:""}
-        </td></tr>`;
-    }).join("")}</tbody></table>`;
-  $("#allBody").querySelectorAll("[data-done]").forEach(x=>x.addEventListener("click",()=>complete(x.getAttribute("data-done"))));
-  $("#allBody").querySelectorAll("[data-fulfil]").forEach(x=>x.addEventListener("click",()=>fulfil(x.getAttribute("data-fulfil"))));
-  $("#allBody").querySelectorAll("[data-cancel]").forEach(x=>x.addEventListener("click",()=>cancelBk(x.getAttribute("data-cancel"))));
-}
-async function complete(id){
-  if(!requireActor()) return;
-  if(!confirm("Tandai selesai — pesanan sudah dikirim?")) return;
-  try{
-    const r=await fetch(`/api/stock/bookings/${id}/complete`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({actor:actor()})});
-    const j=await r.json(); if(!r.ok){ toast(j.error||"Gagal.","err"); refreshAll(); return; }
-    toast("Ditandai selesai.","ok"); refreshAll();
-  }catch{ toast("Gagal terhubung.","err"); }
-}
-async function cancelBk(id){
-  if(!requireActor()) return;
-  if(!confirm("Batalkan booking ini? Stok dikembalikan.")) return;
-  try{
-    const r=await fetch(`/api/stock/bookings/${id}/cancel`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({actor:actor()})});
-    const j=await r.json(); if(!r.ok){ toast(j.error||"Gagal.","err"); refreshAll(); return; }
-    toast("Dibatalkan.","ok"); refreshAll();
-  }catch{ toast("Gagal terhubung.","err"); }
-}
-
-// Card 5 — upload history + archived view
-async function loadHistory(){
-  let rows=[];
-  try{ const r=await fetch("/api/stock/uploads?limit=20"); rows=(await r.json()).uploads||[]; }catch{}
-  if(rows.length===0){ $("#histBody").innerHTML=`<div class="empty">Belum ada upload.</div>`; return; }
-  $("#histBody").innerHTML=`<table><thead><tr><th>File</th><th>Sheet</th><th>Oleh</th><th>Waktu</th><th>Baris</th><th>Status</th><th></th></tr></thead>
-    <tbody>${rows.map(u=>`<tr>
-      <td>${esc(u.filename||"—")}</td><td>${esc(u.sheet_name||"—")}</td><td>${esc(u.uploaded_by||"—")}</td>
-      <td>${wib(u.created_at)}</td><td>${u.row_count}</td>
-      <td><span class="chip ${u.status==="active"?"st-confirmed":"st-cancelled"}">${u.status==="active"?"Aktif":"Diarsipkan"}</span></td>
-      <td>${u.status==="archived"?`<button class="btn ghost mini" data-view="${u.id}">Lihat</button>`:""}</td>
-    </tr>`).join("")}</tbody></table>`;
-  $("#histBody").querySelectorAll("[data-view]").forEach(x=>x.addEventListener("click",()=>viewArchive(x.getAttribute("data-view"))));
-}
-async function viewArchive(id){
-  $("#archivePanel").innerHTML=`<div class="empty">Memuat periode…</div>`;
-  try{
-    const r=await fetch(`/api/stock/uploads/${id}`); const j=await r.json();
-    if(!r.ok){ $("#archivePanel").innerHTML=`<div class="empty">${esc(j.error||"Gagal.")}</div>`; return; }
-    ARCHIVE_ITEMS=j.items;
-    const itemsHtml=j.items.map(i=>{
-      const neg=i.available<0;
-      return `<tr class="itemrow" data-riw="${i.id}">
-        <td>${esc(i.product_line||"—")}</td><td>${esc(i.warna||i.name)}</td>
-        <td style="text-align:right">${NF.format(i.qty_initial)}</td>
-        <td style="text-align:right"><span class="avail ${neg?"neg":""}">${NF.format(i.available)}</span>${neg?'<span class="badge">OVERBOOKED</span>':""}</td></tr>`;
-    }).join("");
-    const bkHtml=j.bookings.map(b=>`<tr class="${["cancelled","rejected"].includes(b.status)?"rev":""}">
-      <td>${esc(archName(b.item_id))}</td><td>${esc(b.rep_name)}</td><td>${NF.format(b.qty)}</td><td>${esc(b.customer_name)}</td>
-      <td><span class="chip st-${b.status}">${STLABEL[b.status]||b.status}</span></td>
-      <td>${dur(b.duration_seconds)} · ${b.outcome}</td><td>${wib(b.created_at)}</td></tr>`).join("");
-    $("#archivePanel").innerHTML=`
-      <div class="body" style="border-top:1px solid var(--line)">
-        <div class="metaline"><b>${esc(j.upload.filename||"—")}</b> · diarsipkan ${wib(j.upload.archived_at)} · read-only</div>
-        <div class="scrollx"><table><thead><tr><th>Brand</th><th>Produk</th><th style="text-align:right">Stok awal</th><th style="text-align:right">Sisa akhir</th></tr></thead><tbody>${itemsHtml}</tbody></table></div>
-        <h2 style="background:none;border:none;padding:14px 0 6px;font-size:13px">Booking periode ini</h2>
-        <div class="scrollx"><table><thead><tr><th>Produk</th><th>Sales</th><th>Qty</th><th>Customer</th><th>Status</th><th>Durasi</th><th>Waktu</th></tr></thead><tbody>${bkHtml||`<tr><td colspan="7" class="empty">Tidak ada booking.</td></tr>`}</tbody></table></div>
-        <div style="margin-top:10px"><button class="btn ghost" id="closeArch">Tutup periode</button></div>
-      </div>`;
-    $("#closeArch").addEventListener("click",()=>$("#archivePanel").innerHTML="");
-    $("#archivePanel").querySelectorAll("[data-riw]").forEach(x=>x.addEventListener("click",()=>openRiwayat(x.getAttribute("data-riw"))));
-  }catch{ $("#archivePanel").innerHTML=`<div class="empty">Gagal terhubung.</div>`; }
-}
-let ARCHIVE_ITEMS=[];
-function archName(id){ const i=ARCHIVE_ITEMS.find(x=>eq(x.id,id)); return i?(i.name||i.warna):("#"+id); }
-
-// ── Riwayat modal (shared render — identical to sales page) ────────────────────
-async function openRiwayat(itemId){
-  $("#rwModal").innerHTML=`<div class="empty">Memuat riwayat…</div>`; $("#rwBg").classList.add("on");
-  try{
-    const r=await fetch(`/api/stock/items/${itemId}/riwayat`); const j=await r.json();
-    if(!r.ok){ $("#rwModal").innerHTML=`<div class="empty">${esc(j.error||"Gagal.")}</div>`; return; }
-    $("#rwModal").innerHTML=renderRiwayat(j);
-    $("#rwClose").addEventListener("click",()=>$("#rwBg").classList.remove("on"));
-  }catch{ $("#rwModal").innerHTML=`<div class="empty">Gagal terhubung.</div>`; }
-}
-$("#rwBg").addEventListener("click",e=>{ if(e.target.id==="rwBg") $("#rwBg").classList.remove("on"); });
-function renderRiwayat(j){
-  const active=j.upload&&j.upload.status==="active";
-  const periodLabel=active?"Periode aktif":(j.upload?`Diarsipkan ${wib(j.upload.archived_at)}`:"—");
-  const rows=j.events.map(ev=>{
-    if(ev.type==="upload") return `<tr><td colspan="4"><b>Stok awal</b> · ${wib(ev.at)}</td><td class="sisa">${NF.format(ev.sisa)}</td></tr>`;
-    const b=ev.booking;
-    const stamps=[b.completed_at?`selesai ${wib(b.completed_at)}`:"",b.verified_at?`verif ${wib(b.verified_at)}`:"",b.cancelled_at?`batal ${wib(b.cancelled_at)}`:""].filter(Boolean).join(" · ");
-    const lama=b.long?`<span class="chip lama">LAMA</span>`:"";
-    // R16 markers: where a booking's qty went, when it no longer counts here.
-    const mark=ev.moved==="outstanding"
-      ? `<div class="sub2" style="color:#c2410c">→ outstanding</div>`
-      : ev.moved==="fulfilled"
-        ? `<div class="sub2" style="color:#1d4ed8">→ dipenuhi di periode ${esc(ev.moved_period||"—")}</div>`
-        : ev.via_penuhi
-          ? `<div class="sub2" style="color:#1d4ed8">via Penuhi · dari ${esc(ev.origin_period||"—")}</div>`
-          : "";
-    return `<tr class="${ev.reversed?"rev":""}">
-      <td>${esc(b.rep_name)}${mark}${stamps?`<div class="sub2">${esc(stamps)}</div>`:""}</td>
-      <td>−${NF.format(b.qty)}</td><td>${esc(b.customer_name||"—")}${b.so_number?`<div class="sub2">SO ${esc(b.so_number)}</div>`:""}</td>
-      <td><span class="chip st-${b.status}">${STLABEL[b.status]||b.status}</span> <span class="chip age">${dur(b.duration_seconds)}</span>${lama}</td>
-      <td class="sisa">${NF.format(ev.sisa)}</td></tr>`;
-  }).join("");
-  return `<h3>${esc(j.item.name)}</h3><p class="mp">${periodLabel}${j.upload&&j.upload.filename?` · ${esc(j.upload.filename)}`:""}</p>
-    <div class="scrollx"><table><thead><tr><th>Sales</th><th>Qty</th><th>Customer</th><th>Status</th><th style="text-align:right">Sisa</th></tr></thead><tbody>${rows}</tbody></table></div>
-    ${active?`<div class="foot">Sisa akhir = Tersedia saat ini.</div>`:""}
-    <div class="actions"><button class="btn" id="rwClose">Tutup</button></div>`;
-}
-
-// live age tick
-setInterval(()=>{ document.querySelectorAll(".chip.age[data-age]").forEach(el=>{ const iso=el.getAttribute("data-age"); if(iso) el.textContent=dur(ageSec(iso)); }); },60000);
-
-// ── Akhir Hari buttons ────────────────────────────────────────────────────────
-$("#expEod").addEventListener("click",exportEndOfDay);
-$("#genCheck").addEventListener("click",generateNewStockCheck);
-
-// ── refresh all + poll ────────────────────────────────────────────────────────
-async function refreshAll(){ await loadSummary(); await Promise.all([loadQueue(),loadOutstanding(),loadTracker(),loadAll(),loadHistory()]); }
-renderStFilters();
-refreshAll();
-setInterval(refreshAll,30000);
+/* ════════════════════════════════════════════════════════════════════════════
+   Boot + poll
+   Summary polls every 60s for freshness and the tab counters. Lists are NOT
+   auto-refreshed: a refresh mid-triage would move rows under the user's finger
+   and drop a selection. Each tab has its own explicit reload.
+   ════════════════════════════════════════════════════════════════════════════ */
+renderStaleChrome();
+renderTabs();
+(async function boot(){
+  await loadSummary();
+  LOADED[TAB]=true;
+  loadTab(TAB);
+})();
+setInterval(loadSummary,60000);
+window.addEventListener("hashchange",()=>{
+  const h=(location.hash||"").replace("#","");
+  if(TABS.some(t=>t.id===h) && h!==TAB) selectTab(h);
+});
 </script>
 </body>
 </html>
