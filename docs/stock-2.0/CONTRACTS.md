@@ -1007,3 +1007,42 @@ no-op. **Do not restore a `po_date` fallback**; the age basis is
 - `totals.autoclosed_commitments` measures **review work removed, never stock
   released** — and the undated count that would have been the alarming number is
   structurally always zero, pinned by a test.
+
+
+## Tripwire — "Tinjau Pesanan" now holds two incompatible kinds of thing
+
+**Raised by the front-end package on AMENDMENT 20, and upheld as a real
+observation — deliberately not acted on yet.**
+
+Three of that tab's four segments are a **work queue**: rows a human owes a
+decision on. The fourth, `Ditutup Otomatis`, is an **audit log of work that will
+never be done**. The tab is named for the first meaning and now contains both.
+
+It is patched by copy rather than structure — the auto-closed count is kept out
+of the badge (the badge counts decisions a person owes, and inflating it at the
+moment the queue shrank would tell the opposite story), and the subtitle and
+footer carry the distinction. That is proportionate **while there is exactly one
+machine rule**.
+
+**The tripwire: when a second machine-decided population ships, resolve this
+structurally rather than adding more copy.** The shape proposed, and the one to
+start from, is a `Keputusan Sistem` surface on the Sinkronisasi tab — *what the
+machine did to your data, and how to undo it* — leaving `Tinjau Pesanan` holding
+only what a human owes a decision on. Two such populations sharing a
+review-shaped tab is where the ambiguity stops being cosmetic.
+
+## Accepted limits on AMENDMENT 20
+
+- **There is no `autoclosed_at`.** A human close records `override.created_at`; a
+  machine close records nothing, because `autoclosed` is a **derived predicate**,
+  not a stored decision — consistent with ST-R3's derive-never-store rule, which
+  is also what lets the threshold change without a backfill. The row states its
+  **grounds** (the qualifying status and the age) rather than a moment. If an
+  auditor ever needs *when*, that requires storing the decision, and storing it
+  means a backfill on every threshold change — a trade worth making only if
+  someone actually asks.
+- **The rule's parameters are not on the wire**, so the screen says "its ETA is
+  long past" rather than "older than 180 days". Correct as a default — the page
+  must never re-spell a server-side rule — but it means the UI cannot answer
+  *"why 180?"*. Exposing the two config values read-only on `/summary` would let
+  the copy state the real rule without hard-coding it. Small, unbuilt.
