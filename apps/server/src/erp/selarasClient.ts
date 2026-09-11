@@ -322,23 +322,161 @@ function asText(v: unknown): string | null {
   return null;
 }
 
-/**
- * Tolerant numeric parse. JSON numbers and plain numeric strings are the assumed
- * wire form (A16); `1,234.5` grouping is stripped only when it is unambiguously
- * thousands-grouped. A value we cannot read becomes null rather than NaN — NaN
- * would reach Postgres as the literal `NaN` and poison a `numeric` column.
- */
-function asNumber(v: unknown): number | null {
-  if (typeof v === "number") return Number.isFinite(v) ? v : null;
-  if (typeof v !== "string") return null;
-  let s = v.trim();
-  if (s === "") return null;
-  if (/^-?\d{1,3}(,\d{3})+(\.\d+)?$/.test(s)) s = s.replace(/,/g, "");
-  const n = Number(s);
-  return Number.isFinite(n) ? n : null;
+// ── Numeric parsing, and the separator ambiguity (A22) ──────────────────────
+//
+// THE PROBLEM, and why there is no clever parser that solves it:
+//
+//   "1.234"  means 1234 in Indonesian notation and 1.234 in English notation.
+//   "0.350"  is a genuine thickness of 0.35 that the Indonesian rule reads as 350.
+//
+// Both strings are ambiguous in isolation. This is not hypothetical for this
+// company: `num()` in `routes/stock.ts` parses PPIC's own Excel as id-locale
+// ("dot = thousands separator, comma = decimal", PRD §8.4) and getting it wrong
+// was a real bug, fixed in fc4ab5a. If Selaras emits the same convention and we
+// read it as English, a stock quantity is wrong BY A FACTOR OF 1000, silently,
+// with no error anywhere — the worst failure this module can produce.
+//
+// So the shape is classified structurally (locale-independent) and only then
+// resolved by the declared `SELARAS_NUMBER_FORMAT`:
+//
+//   both '.' and ',' present  → the LAST separator is the decimal in either
+//                               convention. Unambiguous.
+//   one separator, repeated   → must be grouping. Unambiguous.
+//   one separator, once, and
+//     exactly 3 digits after
+//     and 1-3 digits before   → could be grouping OR a decimal. AMBIGUOUS.
+//   anything else             → cannot be grouping. Decimal. Unambiguous.
+//
+// Under `auto` an ambiguous string is REFUSED (null, or 0 for the two not-null
+// columns), counted, and logged. A refused quantity reserves nothing; a guessed
+// one can over- or under-promise by 1000×. Under `id` or `en` the operator has
+// told us the emitter and the value is read accordingly.
+
+export type NumberFormat = "auto" | "id" | "en";
+
+export interface NumberReading {
+  value: number | null;
+  /** True only when the string was genuinely ambiguous AND the mode is `auto`. */
+  ambiguous: boolean;
 }
 
-/** Numeric with a floor: `qty` / `qty_balance` are `not null` in the schema. */
+const UNAMBIGUOUS: NumberReading = { value: null, ambiguous: false };
+
+function finite(n: number, neg: boolean): NumberReading {
+  if (!Number.isFinite(n)) return UNAMBIGUOUS;
+  return { value: neg ? -n : n, ambiguous: false };
+}
+
+function countOf(s: string, ch: string): number {
+  let n = 0;
+  for (const c of s) if (c === ch) n += 1;
+  return n;
+}
+
+/**
+ * Read one numeric token. Exported because the ambiguity rule is the whole point
+ * of A22 and deserves to be tested directly, mode by mode, rather than only
+ * through an adapter.
+ *
+ * Returns `null` rather than `NaN` for anything unreadable: `NaN` would reach
+ * Postgres as the literal `NaN` and poison a `numeric` column.
+ */
+export function parseErpNumber(v: unknown, mode: NumberFormat = config.selarasNumberFormat): NumberReading {
+  if (typeof v === "number") return Number.isFinite(v) ? { value: v, ambiguous: false } : UNAMBIGUOUS;
+  if (typeof v !== "string") return UNAMBIGUOUS;
+
+  let s = v.trim();
+  if (s === "") return UNAMBIGUOUS;
+  let neg = false;
+  const sign = s.charAt(0);
+  if (sign === "+" || sign === "-") {
+    neg = sign === "-";
+    s = s.slice(1);
+  }
+
+  const dots = countOf(s, ".");
+  const commas = countOf(s, ",");
+
+  // No separator at all — including exponent forms. Nothing to disambiguate.
+  if (dots === 0 && commas === 0) return finite(Number(s), neg);
+
+  // Both separators present: the last one is the decimal and the other is
+  // grouping, in BOTH conventions. "1.234,50" and "1,234.50" are both 1234.5.
+  if (dots > 0 && commas > 0) {
+    const decSep = s.lastIndexOf(".") > s.lastIndexOf(",") ? "." : ",";
+    const grpSep = decSep === "." ? "," : ".";
+    if (countOf(s, decSep) !== 1) return UNAMBIGUOUS; // two decimal points: malformed
+    const normalized = s.split(grpSep).join("").replace(decSep, ".");
+    if (!/^\d*\.\d+$/.test(normalized)) return UNAMBIGUOUS;
+    return finite(Number(normalized), neg);
+  }
+
+  const sep = dots > 0 ? "." : ",";
+  const parts = s.split(sep);
+
+  // Repeated separator ⇒ it can only be grouping ("1.234.567").
+  if (parts.length > 2) {
+    const head = parts[0] ?? "";
+    const valid = /^\d{1,3}$/.test(head) && parts.slice(1).every((p) => /^\d{3}$/.test(p));
+    return valid ? finite(Number(parts.join("")), neg) : UNAMBIGUOUS;
+  }
+
+  const head = parts[0] ?? "";
+  const tail = parts[1] ?? "";
+  if (!/^\d*$/.test(head) || !/^\d+$/.test(tail)) return UNAMBIGUOUS; // e.g. "1.2a"
+
+  // Grouping is always exactly three digits after a separator, and at most three
+  // before it. Fail either and the separator can only be a decimal point.
+  const couldBeGrouping = /^\d{1,3}$/.test(head) && tail.length === 3;
+  if (!couldBeGrouping) return finite(Number(`${head || "0"}.${tail}`), neg);
+
+  // Genuinely ambiguous. Only a declared locale resolves it.
+  switch (mode) {
+    case "id":
+      // id: dot = thousands, comma = decimal. "1.234" → 1234, "1,234" → 1.234.
+      return sep === "." ? finite(Number(head + tail), neg) : finite(Number(`${head || "0"}.${tail}`), neg);
+    case "en":
+      // en: comma = thousands, dot = decimal. "1,234" → 1234, "1.234" → 1.234.
+      return sep === "," ? finite(Number(head + tail), neg) : finite(Number(`${head || "0"}.${tail}`), neg);
+    case "auto":
+      return { value: null, ambiguous: true };
+  }
+}
+
+/**
+ * Per-page tally of refused-because-ambiguous tokens. A module-level collector is
+ * safe because adaptation is a single synchronous loop inside `fetchPage()` —
+ * it is installed and torn down around that loop, never held across an await.
+ */
+export interface AmbiguityTally {
+  count: number;
+  /** Up to three raw tokens, redacted. Never a whole row. */
+  samples: string[];
+}
+
+const MAX_AMBIGUITY_SAMPLES = 3;
+let tally: AmbiguityTally | null = null;
+
+function noteAmbiguous(raw: unknown): void {
+  if (!tally) return;
+  tally.count += 1;
+  const token = redactSecrets(typeof raw === "string" ? raw : String(raw)).slice(0, 40);
+  if (tally.samples.length < MAX_AMBIGUITY_SAMPLES && !tally.samples.includes(token)) {
+    tally.samples.push(token);
+  }
+}
+
+/** Nullable numeric column. An ambiguous token is refused, not guessed (A22). */
+function asNumber(v: unknown): number | null {
+  const read = parseErpNumber(v);
+  if (read.ambiguous) noteAmbiguous(v);
+  return read.value;
+}
+
+/**
+ * Numeric with a floor: `qty` / `qty_balance` are `not null` in the schema, and
+ * 0 is the safe refusal — it reserves nothing and promises nothing.
+ */
 function asNumberOr(v: unknown, fallback: number): number {
   return asNumber(v) ?? fallback;
 }
@@ -530,6 +668,12 @@ export interface SelarasPage<T> {
   rawCount: number;
   /** Rows dropped by the adapter because they had no usable primary key. */
   dropped: number;
+  /**
+   * Numeric strings refused as ambiguous under `SELARAS_NUMBER_FORMAT=auto`
+   * (A22). The worker sums these across a table's pages and logs once per run —
+   * that one line turns "ATP is mysteriously 1000× off" into a 30-second fix.
+   */
+  ambiguousNumbers: AmbiguityTally;
   page: number;
   /** Null when the ERP did not tell us; then paging stops on a short page. */
   totalPages: number | null;
@@ -670,21 +814,35 @@ export async function fetchPage<K extends SelarasTable>(
       const adapt = ADAPTERS[table];
       const rows: SelarasRowByTable[K][] = [];
       let dropped = 0;
-      for (const raw of env.rows) {
-        let adapted: SelarasRowByTable[K] | null = null;
-        try {
-          adapted = adapt(raw);
-        } catch {
-          // An adapter is written not to throw; if one ever does, the row is
-          // dropped, not the page (invariant: a malformed row never kills a run).
-          adapted = null;
+      // Install the ambiguity collector around the SYNCHRONOUS adapt loop only.
+      const pageTally: AmbiguityTally = { count: 0, samples: [] };
+      tally = pageTally;
+      try {
+        for (const raw of env.rows) {
+          let adapted: SelarasRowByTable[K] | null = null;
+          try {
+            adapted = adapt(raw);
+          } catch {
+            // An adapter is written not to throw; if one ever does, the row is
+            // dropped, not the page (a malformed row never kills a run).
+            adapted = null;
+          }
+          if (adapted === null) dropped += 1;
+          else rows.push(adapted);
         }
-        if (adapted === null) dropped += 1;
-        else rows.push(adapted);
+      } finally {
+        tally = null;
       }
       return {
         ok: true,
-        page: { rows, rawCount: env.rows.length, dropped, page: opts.page, totalPages: env.totalPages },
+        page: {
+          rows,
+          rawCount: env.rows.length,
+          dropped,
+          ambiguousNumbers: pageTally,
+          page: opts.page,
+          totalPages: env.totalPages,
+        },
       };
     } catch (err) {
       // redactSecrets() is applied HERE, at the boundary, so no caller can

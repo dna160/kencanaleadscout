@@ -55,6 +55,7 @@ const {
   adaptSoLineRow,
   buildPageUrl,
   fetchPage,
+  parseErpNumber,
   readEnvelope,
   redactSecrets,
   resetShapeNotices,
@@ -320,6 +321,75 @@ describe("adapters — one per table, indifferent to casing (A2)", () => {
     expect(row?.estimate_delivery).toBeNull();
     expect(row?.erp_updated_at).toBeNull(); // ⇒ the cursor cannot advance on it
     expect(Number.isNaN(row?.qty_balance)).toBe(false);
+  });
+});
+
+describe("parseErpNumber — the separator ambiguity (A22)", () => {
+  // "1.234" is 1234 in Indonesian notation and 1.234 in English notation. This
+  // company's own stock data is documented id-locale (`num()` in routes/stock.ts,
+  // PRD §8.4) and reading it wrong was a real bug (fc4ab5a) — but "0.350" is a
+  // genuine 0.35 thickness that the id rule turns into 350. No parser is correct
+  // without knowing the emitter, so `auto` REFUSES rather than picking.
+  //
+  // token          | auto          | id      | en
+  const CASES: ReadonlyArray<readonly [string, number | "refused", number, number]> = [
+    ["1.234", "refused", 1234, 1.234],
+    ["1,234", "refused", 1.234, 1234],
+    ["0.350", "refused", 350, 0.35],
+    ["1.234,50", 1234.5, 1234.5, 1234.5], // both separators ⇒ last one is the decimal
+    ["1,234.50", 1234.5, 1234.5, 1234.5], // …in either convention. Unambiguous.
+    ["0,35", 0.35, 0.35, 0.35], // 2 digits after ⇒ cannot be grouping
+    ["1234", 1234, 1234, 1234], // no separator at all
+  ];
+
+  it.each(CASES)("reads %s as auto=%s id=%s en=%s", (token, auto, id, en) => {
+    const a = parseErpNumber(token, "auto");
+    if (auto === "refused") {
+      expect(a).toEqual({ value: null, ambiguous: true });
+    } else {
+      expect(a).toEqual({ value: auto, ambiguous: false });
+    }
+    expect(parseErpNumber(token, "id")).toEqual({ value: id, ambiguous: false });
+    expect(parseErpNumber(token, "en")).toEqual({ value: en, ambiguous: false });
+  });
+
+  it("REFUSES the ambiguous shapes under auto — it never picks a locale", () => {
+    for (const token of ["1.234", "1,234", "0.350", "12.345", "999,999"]) {
+      const read = parseErpNumber(token, "auto");
+      expect(read.ambiguous).toBe(true);
+      expect(read.value).toBeNull();
+    }
+  });
+
+  it("passes JSON numbers through untouched in every mode — they are unambiguous", () => {
+    for (const mode of ["auto", "id", "en"] as const) {
+      expect(parseErpNumber(1234, mode)).toEqual({ value: 1234, ambiguous: false });
+      expect(parseErpNumber(1.234, mode)).toEqual({ value: 1.234, ambiguous: false });
+      expect(parseErpNumber(0.35, mode)).toEqual({ value: 0.35, ambiguous: false });
+      expect(parseErpNumber(-2084, mode)).toEqual({ value: -2084, ambiguous: false });
+      expect(parseErpNumber(0, mode)).toEqual({ value: 0, ambiguous: false });
+    }
+  });
+
+  it("treats a repeated separator as grouping — it cannot be a decimal point", () => {
+    expect(parseErpNumber("1.234.567", "auto")).toEqual({ value: 1234567, ambiguous: false });
+    expect(parseErpNumber("1,234,567", "auto")).toEqual({ value: 1234567, ambiguous: false });
+  });
+
+  it("keeps signs, and refuses garbage as null rather than NaN", () => {
+    expect(parseErpNumber("-1234", "auto").value).toBe(-1234);
+    expect(parseErpNumber("-0,35", "auto").value).toBe(-0.35);
+    for (const junk of ["bukan angka", "", "  ", "1.2a", "1.2.3", null, undefined, {}]) {
+      const read = parseErpNumber(junk, "auto");
+      expect(read.value).toBeNull();
+      expect(read.ambiguous).toBe(false); // unreadable is not the same as ambiguous
+    }
+  });
+
+  it("resolves 4-digit heads as decimals: grouping is always exactly three digits", () => {
+    // "1234.567" cannot be grouping (that would be "1.234.567"), so it is decimal
+    // in both conventions and must NOT be refused.
+    expect(parseErpNumber("1234.567", "auto")).toEqual({ value: 1234.567, ambiguous: false });
   });
 });
 

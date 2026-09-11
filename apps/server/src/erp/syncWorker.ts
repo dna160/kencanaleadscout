@@ -85,6 +85,13 @@ export interface SyncTableResult {
   rows: number;
   /** Rows the ERP sent that no adapter could key. Dropped, never fatal. */
   dropped: number;
+  /**
+   * Numeric strings refused as ambiguous under `SELARAS_NUMBER_FORMAT=auto`
+   * (A22) — "1.234" is 1234 in id notation and 1.234 in en notation, so it is
+   * refused rather than guessed. Surfaced here so the manual-kick route can show
+   * it without a schema change.
+   */
+  ambiguousNumbers: number;
   error?: string;
   cursorBefore: Date | null;
   cursorAfter: Date | null;
@@ -379,9 +386,14 @@ async function syncTable(
     pages: 0,
     rows: 0,
     dropped: 0,
+    ambiguousNumbers: 0,
     cursorBefore,
     cursorAfter: cursorBefore,
   };
+  // Accumulated across every page of this table, then logged ONCE at the end of
+  // the pass (A22). One grep-able line per run is the entire point: it turns
+  // "ATP is mysteriously 1000× off" into a thirty-second diagnosis.
+  const ambiguousSamples: string[] = [];
 
   let previousSignature = "";
   for (let page = 1; page <= MAX_PAGES_PER_TABLE; page += 1) {
@@ -392,11 +404,16 @@ async function syncTable(
       result.error = res.error;
       await markTableError(db, table, res.error);
       log.error(`${table}: page ${page} failed — ${res.error}; cursor left at ${cursorBefore?.toISOString() ?? "null"}`);
+      reportAmbiguity(table, result, ambiguousSamples, log);
       return result;
     }
 
-    const { rows, rawCount, dropped, totalPages } = res.page;
+    const { rows, rawCount, dropped, ambiguousNumbers, totalPages } = res.page;
     result.dropped += dropped;
+    result.ambiguousNumbers += ambiguousNumbers.count;
+    for (const sample of ambiguousNumbers.samples) {
+      if (ambiguousSamples.length < 3 && !ambiguousSamples.includes(sample)) ambiguousSamples.push(sample);
+    }
     if (dropped > 0) {
       log.warn(`${table}: dropped ${dropped} of ${rawCount} rows on page ${page} (no usable primary key)`);
     }
@@ -432,7 +449,28 @@ async function syncTable(
   }
 
   if (result.pages === 0) await markTableOk(db, table);
+  reportAmbiguity(table, result, ambiguousSamples, log);
   return result;
+}
+
+/**
+ * The A22 line. Emitted once per table per run, only when something was actually
+ * refused, and carrying the raw TOKENS only — never a whole row, which could
+ * hold customer data. Names the config key so the fix is obvious from the log.
+ */
+function reportAmbiguity(
+  table: SelarasTable,
+  result: SyncTableResult,
+  samples: readonly string[],
+  log: SyncLogger,
+): void {
+  if (result.ambiguousNumbers === 0) return;
+  const examples = samples.length > 0 ? ` e.g. ${samples.map((s) => `"${s}"`).join(", ")}` : "";
+  log.warn(
+    `${table}: refused ${result.ambiguousNumbers} ambiguous numeric string(s)${examples} — ` +
+      `"1.234" is 1234 in id notation and 1.234 in en notation, so it was read as NULL/0 rather ` +
+      `than guessed (A22). Set SELARAS_NUMBER_FORMAT=id or =en once a real response body is known.`,
+  );
 }
 
 // ── Public surface ───────────────────────────────────────────────────────────
@@ -526,6 +564,7 @@ async function executeRun(deps: ErpSyncDeps): Promise<SyncRunResult> {
           pages: 0,
           rows: 0,
           dropped: 0,
+          ambiguousNumbers: 0,
           error: message,
           cursorBefore: null,
           cursorAfter: null,

@@ -3,7 +3,9 @@
     "WP-2 fixture — RAW Selaras live-FG rows (assumed shape only; nothing recorded).",
     "PascalCase ON PURPOSE (A2, casing unverified). The two ACP-4MM Black Galaxy rolls",
     "sum to 4,168 lembar, matching PRD §5A. Row 4 has an unreadable qty and row 5 has",
-    "no serial: both must degrade, never abort the page."
+    "no serial: both must degrade, never abort the page. Row 6 carries SEPARATOR-",
+    "AMBIGUOUS quantities (A22): '1.234' is 1234 in id notation and 1.234 in en, so",
+    "under SELARAS_NUMBER_FORMAT=auto it must be refused and counted, never guessed."
   ],
   "rows": [
     {
@@ -27,7 +29,7 @@
       "Th": "0.30",
       "P": "4880",
       "L": "1220",
-      "Qty": "2,084",
+      "Qty": "2084",
       "QtyM2": 12408.6,
       "BufferQty": 50,
       "BufferStatus": "BUFFER",
@@ -66,6 +68,19 @@
       "Qty": 7,
       "UpdatedAt": "2026-09-01T08:00:00Z",
       "_why": "no serial — unkeyable, dropped and counted"
+    },
+    {
+      "SnFg": "FG-0005",
+      "KodeBarang": "ACP-3MM",
+      "Warna": "118",
+      "Th": 0.21,
+      "P": 2440,
+      "L": 1220,
+      "Qty": "1.234",
+      "QtyM2": "2,500",
+      "Lokasi": "GD-03",
+      "UpdatedAt": "2026-09-01T09:00:00Z",
+      "_why": "A22: both quantities are separator-ambiguous. Under auto they are refused (qty -> 0, qty_m2 -> null), counted, and logged once per run."
     },
     null
   ]

@@ -701,7 +701,7 @@ function selectTab(id){
 }
 function loadTab(id){
   if(id==="kekurangan") loadShortfall();
-  else if(id==="lama"){ if(!LAMA_LOADED){ LAMA_LOADED=true; loadLama(); } else { renderLama(); renderTray(); } }
+  else if(id==="lama"){ if(!TINJAU_LOADED){ TINJAU_LOADED=true; loadLama(); } else { renderLama(); renderTray(); } }
   else if(id==="cocok") loadExceptions();
   else if(id==="penyesuaian") loadAdjustments();
   else if(id==="sinkron") loadSync();
@@ -779,7 +779,7 @@ function renderShortfall(){
                       One tap, composed reason, bulk close available.
      segment=undated  ETA null. These are LIVE and reserving. Closing RAISES ATP
                       by qty_balance. Inline confirm + typed reason every time,
-                      per-row consequence preview, NO bulk close at all.
+                      per-row "efek jika ditutup" in the row, NO bulk close at all.
      segment=closed   the recovery path once the session tray is gone.
 
    The ~4,158-row triage problem is solved by: server paging at limit=50 (one
@@ -796,7 +796,7 @@ const SEGTOTAL={stale:null,undated:null};
 const LM={seg:"stale",page:1,limit:50,q:"",age:0,status:"",onlyDo:false,
           rows:[],total:null,grand:null,loading:false,sel:new Set(),fail:false,
           changed:false,facets:false};
-let LAMA_LOADED=false, EXPANDED=null, TRAY=[];
+let TINJAU_LOADED=false, EXPANDED=null, TRAY=[];
 const TRAY_CAP=200;
 { const s=hashSeg(); if(s==="undated"||s==="closed") LM.seg=s; }
 

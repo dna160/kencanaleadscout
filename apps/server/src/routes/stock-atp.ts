@@ -326,13 +326,20 @@ function composeName(
 }
 
 /**
- * ST-R10 state, derived server-side exactly once, in the order CONTRACTS §4.1
- * gives — `kosong` first, then `perlu_produksi` (which outranks `habis`). The
- * front end renders what it is sent and never recomputes this.
+ * ST-R10 state, derived server-side exactly once. The front end renders what it
+ * is sent and never recomputes this.
+ *
+ * AMENDMENT 10 — `perlu_produksi` is tested FIRST, ahead of `kosong`. CONTRACTS
+ * §4.1 originally listed `kosong` first, which shadowed it: a SKU with no stock
+ * and 120 lembar of demand (atp −120) read as *Kosong* — "nothing here" — when
+ * PRD ST-R5.3 and ST-R10 both say unmatched demand must read *Perlu Produksi*.
+ * The distinction is the whole point of surfacing negative ATP: `kosong` is an
+ * absence nobody is waiting on, `perlu_produksi` is an absence somebody has
+ * already ordered against. Only a SKU with neither stock nor demand is `kosong`.
  */
 function deriveState(onHand: number, adjustment: number, atp: number): SkuState {
-  if (onHand + adjustment <= 0) return "kosong";
   if (atp < 0) return "perlu_produksi";
+  if (onHand + adjustment <= 0) return "kosong";
   if (atp <= 0 && onHand > 0) return "habis";
   if (atp > 0) return "tersedia";
   return "habis";
@@ -674,6 +681,9 @@ async function loadCommitments(db: Sql, o: CommitQueryOpts): Promise<{ rows: Com
   if (o.soLineId) where.push(db`c.id = ${o.soLineId}`);
   if (o.statusOrder) where.push(db`c.status_order = ${o.statusOrder}`);
   if (o.minAgeDays != null && o.minAgeDays > 0) {
+    // NOT the liveness window (§7.3) — that already ran, inside the view, to
+    // decide which rows exist here at all. This is the operator's "only show me
+    // lines older than N days" slider on top of the result.
     where.push(db`c.estimate_delivery <= current_date - ${o.minAgeDays}`);
   }
   if (o.unmatchedOnly) where.push(db`fg.sku_key is null`);

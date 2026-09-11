@@ -5,7 +5,9 @@
     "must be indifferent to it. Quantities follow the PRD §5A Black Galaxy example:",
     "319 lembar live against 4,168 on hand, with 1,810 quarantined as stale.",
     "Dates are absolute (2099 / 2020) so the fixture never depends on the wall clock.",
-    "Rows 6-8 are deliberately malformed: a run must survive all three."
+    "Rows 6-8 are deliberately malformed: a run must survive all three. Row 9 is",
+    "SEPARATOR-AMBIGUOUS (A22), which is a different failure from malformed: the",
+    "value is well-formed but unreadable without knowing the emitter's locale."
   ],
   "rows": [
     {
@@ -36,7 +38,7 @@
       "l": 1220,
       "qtyOrder": 1810,
       "qtyDelivered": 0,
-      "qtyBalance": "1,810",
+      "qtyBalance": "1810",
       "statusOrder": "Open",
       "approval": "Approved",
       "autoApproval": "N",
@@ -121,6 +123,22 @@
       "updatedAt": "bukan tanggal",
       "_why": "every field malformed — must degrade to nulls/0, never crash or write NaN"
     },
-    "ini bukan baris sama sekali"
+    "ini bukan baris sama sekali",
+    {
+      "id": "SOL-2008",
+      "soId": "SOH-1001",
+      "kodeBarang": "ACP-4MM",
+      "warna": "004",
+      "th": "0.350",
+      "p": 4880,
+      "l": 1220,
+      "qtyOrder": 1234,
+      "qtyBalance": "1.234",
+      "statusOrder": "Open",
+      "approval": "Approved",
+      "estimateDelivery": "2099-12-01",
+      "updatedAt": "2026-09-02T03:30:00Z",
+      "_why": "A22: th '0.350' is 0.35 (en) or 350 (id); qtyBalance '1.234' is 1.234 (en) or 1234 (id). Under auto BOTH are refused — a balance of 0 reserves nothing, where a wrong guess would reserve 1000x too much or too little."
+    }
   ]
 }

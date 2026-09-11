@@ -53,6 +53,22 @@ function bool(name: string, fallback: boolean): boolean {
   return fallback;
 }
 
+/**
+ * Enum env var: whitelisted against a fixed set, case-insensitively. An unknown
+ * value falls back rather than throwing — a typo in an env var must not stop the
+ * app booting (§7.7) — but it says so, because silently ignoring a deliberate
+ * setting is how a misconfiguration survives a deploy.
+ */
+function oneOf<T extends string>(name: string, allowed: readonly T[], fallback: T): T {
+  const v = process.env[name];
+  if (v === undefined || v.trim() === "") return fallback;
+  const s = v.trim().toLowerCase();
+  const hit = allowed.find((a) => a === s);
+  if (hit) return hit;
+  console.error(`[config] ${name}="${s}" is not one of ${allowed.join("|")} — falling back to "${fallback}"`);
+  return fallback;
+}
+
 /** Comma-separated list env var; blank entries dropped, empty list => fallback. */
 function csv(name: string, fallback: readonly string[]): readonly string[] {
   const v = process.env[name];
@@ -85,6 +101,25 @@ export const config = {
   selarasToken: str("SELARAS_TOKEN"),
   /** Per-request timeout against the ERP mirror. */
   selarasTimeoutMs: int("SELARAS_TIMEOUT_MS", 20_000),
+  /**
+   * How to read a numeric value that arrives as a STRING (A22). JSON numbers are
+   * never affected — they are unambiguous and pass through untouched.
+   *
+   * `"1.234"` means 1234 in Indonesian notation and 1.234 in English notation,
+   * and this company's stock data is documented as id-locale (`num()` in
+   * `routes/stock.ts`, PRD §8.4; a real bug, fixed in fc4ab5a). But `"0.350"` is
+   * a genuine thickness of 0.35 that the id rule would read as 350. No parser is
+   * correct without knowing the emitter, so:
+   *
+   *   auto — refuse an ambiguous string LOUDLY (null / 0, counted and logged)
+   *          rather than guess. A refused quantity reserves nothing; a guessed
+   *          one can be wrong by a factor of 1000, silently.
+   *   id   — dot = thousands, comma = decimal, last separator wins.
+   *   en   — comma = thousands, dot = decimal.
+   *
+   * Set this to `id` or `en` once a real Selaras response body has been seen.
+   */
+  selarasNumberFormat: oneOf("SELARAS_NUMBER_FORMAT", ["auto", "id", "en"] as const, "auto"),
   /**
    * Stock 2.0 tunables. Nested because the views in migrateErpStock.ts read
    * `config.stock.*` by name (CONTRACTS §2.3).

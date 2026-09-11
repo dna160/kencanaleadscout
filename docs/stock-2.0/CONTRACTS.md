@@ -626,3 +626,40 @@ degrades to a fallback and the status filter has to be honestly relabelled
 and the client must not re-sort it or offer sortable headers. The ranking *is* the
 production priority (ST-R11); a user-chosen sort silently replaces a deficit-and-
 deadline ordering with something that looks equally authoritative and is not.
+
+
+## AMENDMENT 10 — `perlu_produksi` outranks `kosong`
+
+**Raised by WP-3**, which implemented my §4.1 table literally and then flagged
+that it contradicts the PRD.
+
+§4.1 listed `kosong` first, so a SKU with no stock and 120 lembar of demand
+(`atp −120`) evaluated to **Kosong** — "nothing here" — while PRD ST-R5.3 and
+ST-R10 both say unmatched demand must read **Perlu Produksi**. My ordering was
+wrong, not the implementation.
+
+The distinction is the entire reason ST-R4 insists negative ATP be surfaced
+rather than clamped: `kosong` is an absence nobody is waiting on, and
+`perlu_produksi` is an absence somebody has already ordered against. Collapsing
+the second into the first hides the demand signal that feeds production
+planning — in the one case where it is most urgent, because there is no stock
+at all.
+
+Corrected evaluation order:
+
+| order | state | condition |
+|---|---|---|
+| 1 | `perlu_produksi` | `atp < 0` |
+| 2 | `kosong` | `on_hand + adjustment <= 0` |
+| 3 | `habis` | `atp <= 0` and `on_hand > 0` |
+| 4 | `tersedia` | `atp > 0` |
+
+Only a SKU with neither stock nor demand is `kosong`.
+
+## Known gap — ST-R5.4 UoM exceptions are not implementable as specified
+
+`erp_so_line` carries no unit-of-measure column, so the "UoM cannot be reconciled
+to lembar" exception ST-R5.4 calls for cannot be detected. `/exceptions` ships
+with one reason in v1, `sku_tidak_cocok` (no FG row for the SKU). If SO lines do
+carry a UoM in the real ERP payload, it needs mirroring before ST-R5.4 can be
+honoured — resolve during ST-R5.2 validation.
