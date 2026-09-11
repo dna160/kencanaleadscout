@@ -109,6 +109,14 @@ export interface SyncTableResult {
    * and SQL sku_key implementations silently. None is ever written.
    */
   nonFiniteNumbers: number;
+  /**
+   * Date/timestamp values that were present and unreadable — MySQL's
+   * `0000-00-00` zero date, above all. Each one is NULL in the mirror and never
+   * fatal: handing an Invalid Date (or a string that becomes one) to postgres.js
+   * throws `RangeError: Invalid time value` inside the page transaction, which
+   * used to abort the whole so_header pass and pin its cursor permanently.
+   */
+  badDates: number;
   error?: string;
   cursorBefore: Date | null;
   cursorAfter: Date | null;
@@ -469,6 +477,10 @@ async function commitPage(
   deletedIds: readonly string[],
   pageMaxUpdatedAt: Date | null,
 ): Promise<{ written: number; removed: number }> {
+  // Belt and braces over `maxUpdatedAt()`: nothing but a real instant is ever
+  // interpolated into the cursor update, because an Invalid Date here throws
+  // during Bind and rolls back rows that were otherwise perfectly good.
+  const nextCursor = isUsableInstant(pageMaxUpdatedAt) ? pageMaxUpdatedAt : null;
   return db.begin(async (tx) => {
     const written = await upsertPage(tx, table, rows);
     // Same transaction as the upserts and the cursor advance: a page either
@@ -476,7 +488,7 @@ async function commitPage(
     const removed = await deleteRows(tx, table, deletedIds);
     await tx`
       update erp_sync_state
-         set cursor_value  = greatest(cursor_value, ${pageMaxUpdatedAt}::timestamptz),
+         set cursor_value  = greatest(cursor_value, ${nextCursor}::timestamptz),
              rows_synced     = rows_synced + ${written},
              last_ok_at      = now(),
              last_error      = null,
@@ -519,11 +531,29 @@ async function markTableError(
 
 // ── One table, one run ───────────────────────────────────────────────────────
 
+/** A Date that is safe to send to Postgres — i.e. one `.toISOString()` survives. */
+function isUsableInstant(d: Date | null | undefined): d is Date {
+  return d instanceof Date && !Number.isNaN(d.getTime());
+}
+
+/**
+ * The next cursor, computed ONLY from rows whose `updated_at` is a valid date.
+ *
+ * Two refusals, both deliberate:
+ *   · an Invalid Date never reaches `greatest(...)`, because postgres.js would
+ *     serialize it with `.toISOString()` and throw `RangeError: Invalid time
+ *     value` — the failure that used to abort the entire so_header pass;
+ *   · a page with NO valid timestamp returns null, so the cursor is LEFT WHERE
+ *     IT IS and the next run retries that window. Substituting `now()` or the
+ *     epoch would be worse than not moving: a cursor only ever moves forward, so
+ *     a fabricated instant silently skips every row behind it, permanently.
+ */
 function maxUpdatedAt(rows: readonly AnyMirrorRow[]): Date | null {
   let max: Date | null = null;
   for (const row of rows) {
     const t = row.erp_updated_at;
-    if (t && (max === null || t.getTime() > max.getTime())) max = t;
+    if (!isUsableInstant(t)) continue;
+    if (max === null || t.getTime() > max.getTime()) max = t;
   }
   return max;
 }
@@ -550,6 +580,7 @@ async function syncTable(
     deleted: 0,
     ambiguousNumbers: 0,
     nonFiniteNumbers: 0,
+    badDates: 0,
     cursorBefore,
     cursorAfter: cursorBefore,
   };
@@ -558,6 +589,7 @@ async function syncTable(
   // "ATP is mysteriously 1000× off" into a thirty-second diagnosis.
   const ambiguousSamples: string[] = [];
   const nonFiniteSamples: string[] = [];
+  const badDateSamples: string[] = [];
 
   // FIX A — the exact `updated_at__gte` the first page carries, logged verbatim.
   // The documented grammar is `YYYY-MM-DD HH:mm:ss` in WIB and the client sends
@@ -579,16 +611,18 @@ async function syncTable(
       result.error = res.error;
       await markTableError(db, table, res.error, res.kind);
       log.error(`${table}: page ${page} failed — ${res.error}; cursor left at ${cursorBefore?.toISOString() ?? "null"}`);
-      reportRefusals(table, result, ambiguousSamples, nonFiniteSamples, log);
+      reportRefusals(table, result, ambiguousSamples, nonFiniteSamples, badDateSamples, log);
       return result;
     }
 
-    const { rows, rawCount, dropped, ambiguousNumbers, nonFiniteNumbers, totalPages } = res.page;
+    const { rows, rawCount, dropped, ambiguousNumbers, nonFiniteNumbers, badDates, totalPages } = res.page;
     result.dropped += dropped;
     result.ambiguousNumbers += ambiguousNumbers.count;
     result.nonFiniteNumbers += nonFiniteNumbers.count;
+    result.badDates += badDates.count;
     collectSamples(ambiguousSamples, ambiguousNumbers.samples);
     collectSamples(nonFiniteSamples, nonFiniteNumbers.samples);
+    collectSamples(badDateSamples, badDates.samples);
     if (dropped > 0) {
       log.warn(`${table}: dropped ${dropped} of ${rawCount} rows on page ${page} (no usable primary key)`);
     }
@@ -636,7 +670,7 @@ async function syncTable(
   }
 
   if (result.pages === 0) await markTableOk(db, table);
-  reportRefusals(table, result, ambiguousSamples, nonFiniteSamples, log);
+  reportRefusals(table, result, ambiguousSamples, nonFiniteSamples, badDateSamples, log);
   return result;
 }
 
@@ -663,6 +697,7 @@ function reportRefusals(
   result: SyncTableResult,
   ambiguous: readonly string[],
   nonFinite: readonly string[],
+  badDates: readonly string[],
   log: SyncLogger,
 ): void {
   if (result.ambiguousNumbers > 0) {
@@ -678,6 +713,16 @@ function reportRefusals(
         `NaN/Infinity are legal in a Postgres numeric column but would desynchronise the TS and SQL ` +
         `sku_key implementations for that SKU (X11), so none was written. Investigate upstream: an ` +
         `ERP that emits NaN in th/p/l has a computation fault.`,
+    );
+  }
+  if (result.badDates > 0) {
+    log.warn(
+      `${table}: refused ${result.badDates} unreadable date value(s)${examples(badDates)} — ` +
+        `written as NULL, never guessed at. "0000-00-00" is MySQL's zero date for an unset ` +
+        `column and is Invalid Date in JS; handing one to postgres.js throws ` +
+        `"RangeError: Invalid time value" inside the page transaction and aborts the whole ` +
+        `table pass, which is how this table's cursor got stuck. Fix the rows upstream if the ` +
+        `dates matter; the sync itself no longer cares.`,
     );
   }
 }
@@ -1306,6 +1351,7 @@ async function executeRun(deps: ErpSyncDeps): Promise<SyncRunResult> {
           deleted: 0,
           ambiguousNumbers: 0,
           nonFiniteNumbers: 0,
+          badDates: 0,
           error: message,
           cursorBefore: null,
           cursorAfter: null,

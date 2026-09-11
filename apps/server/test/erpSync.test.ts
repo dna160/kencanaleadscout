@@ -82,6 +82,110 @@ const FIXTURES: Record<SelarasTable, unknown[]> = {
   live_fg: loadFixture("selaras-live-fg.json"),
 };
 
+/**
+ * SO headers whose date columns are broken in every way the real ERP produces
+ * them. Kept out of `selaras-so-header.json` on purpose: the other tests assert
+ * exact mirror counts off that file, and these rows are served through
+ * `faults.rows` only by the tests that want them.
+ *
+ * `0000-00-00 00:00:00` is MySQL's zero date for an unset column. It is what
+ * aborted so_header in production: it matches a 'YYYY-MM-DD' shape check
+ * perfectly, but `new Date('0000-00-00')` is Invalid Date, and postgres.js
+ * serializes a `date`/`timestamptz` parameter with `.toISOString()` — which
+ * throws `RangeError: Invalid time value` during Bind, inside the page
+ * transaction, aborting the entire table pass and pinning its cursor forever.
+ */
+const MYSQL_ZERO_DATE = "0000-00-00 00:00:00";
+
+const BAD_DATE_HEADERS: unknown[] = [
+  {
+    tbl_1202_SOSalesOrderNID_id: "SOH-OK-1",
+    so_number: "SO/2026/09/0301",
+    customer_name_text: "PT Tanggal Benar",
+    sales_name_text: "Budi",
+    po_date: "2026-08-01",
+    status_order: "Open",
+    deleted_at: null,
+    updated_at: "2026-09-03T01:00:00Z",
+  },
+  {
+    // THE PRODUCTION CULPRIT, in both date columns at once.
+    tbl_1202_SOSalesOrderNID_id: "SOH-ZERO",
+    so_number: "SO/2011/01/0001",
+    customer_name_text: "PT Tanggal Nol",
+    sales_name_text: "Sari",
+    po_date: "0000-00-00",
+    status_order: "Open",
+    deleted_at: null,
+    updated_at: MYSQL_ZERO_DATE,
+  },
+  {
+    tbl_1202_SOSalesOrderNID_id: "SOH-NULL-TS",
+    so_number: "SO/2026/09/0302",
+    customer_name_text: "PT Tanpa Updated",
+    sales_name_text: "Dewi",
+    po_date: "2026-08-02",
+    status_order: "Open",
+    deleted_at: null,
+    updated_at: null,
+  },
+  {
+    tbl_1202_SOSalesOrderNID_id: "SOH-EMPTY",
+    so_number: "SO/2026/09/0303",
+    customer_name_text: "PT Kosong",
+    sales_name_text: "Dewi",
+    po_date: "",
+    status_order: "Open",
+    deleted_at: null,
+    updated_at: "",
+  },
+  {
+    tbl_1202_SOSalesOrderNID_id: "SOH-GARBAGE",
+    so_number: "SO/2026/09/0304",
+    customer_name_text: "PT Tanggal Ngawur",
+    sales_name_text: "Budi",
+    po_date: "tanggal tidak diketahui",
+    status_order: "Open",
+    deleted_at: null,
+    updated_at: "31 Februari kemarin",
+  },
+  {
+    tbl_1202_SOSalesOrderNID_id: "SOH-OK-2",
+    so_number: "SO/2026/09/0305",
+    customer_name_text: "PT Tanggal Benar Juga",
+    sales_name_text: "Sari",
+    po_date: "2026-08-03",
+    status_order: "Open",
+    deleted_at: null,
+    updated_at: "2026-09-04T02:00:00Z",
+  },
+];
+
+/** The newest VALID `updated_at` above — the only place the cursor may land. */
+const BAD_DATE_HEADERS_MAX_VALID = new Date("2026-09-04T02:00:00Z");
+
+/** The same rows with every timestamp broken: a page with nothing to advance to. */
+const ALL_BAD_DATE_HEADERS: unknown[] = [
+  {
+    tbl_1202_SOSalesOrderNID_id: "SOH-ALLBAD-1",
+    so_number: "SO/2011/01/0002",
+    customer_name_text: "PT Semua Nol",
+    po_date: "0000-00-00",
+    status_order: "Open",
+    deleted_at: null,
+    updated_at: MYSQL_ZERO_DATE,
+  },
+  {
+    tbl_1202_SOSalesOrderNID_id: "SOH-ALLBAD-2",
+    so_number: "SO/2011/01/0003",
+    customer_name_text: "PT Semua Ngawur",
+    po_date: "31/02/2020",
+    status_order: "Open",
+    deleted_at: null,
+    updated_at: "bukan tanggal",
+  },
+];
+
 /** ERP table name (what the URL carries) → our logical table name. */
 const ERP_TABLE_TO_LOGICAL: Record<string, SelarasTable> = {
   tbl_1228_DBRMWarnaID: "warna",
@@ -123,6 +227,12 @@ interface ErpFault {
   unsuccessful?: Record<string, true>;
   /** `${table}:${page}` → answer with an envelope the verified API never sends. */
   shape?: Record<string, "bare_array">;
+  /**
+   * Serve a DIFFERENT row set for a table, instead of its on-disk fixture. Used
+   * by the bad-date tests, which need rows that the shared fixtures must not
+   * carry — every other test asserts exact mirror counts off those fixtures.
+   */
+  rows?: Partial<Record<SelarasTable, unknown[]>>;
 }
 
 let faults: ErpFault = {};
@@ -159,7 +269,7 @@ function erpRespond(path: string): { statusCode: number; data: unknown; headers:
   const sinceMs = since ? new Date(since).getTime() : Number.NEGATIVE_INFINITY;
 
   // `__gte` + ascending `updated_at`, exactly as PRD §4 specifies (A2).
-  const matching = FIXTURES[table]
+  const matching = (faults.rows?.[table] ?? FIXTURES[table])
     .filter((r) => rawUpdatedAtMs(r) >= sinceMs)
     .sort((a, b) => rawUpdatedAtMs(a) - rawUpdatedAtMs(b));
   const slice = matching.slice((page - 1) * limit, page * limit);
@@ -531,6 +641,94 @@ describe("adapters — one per table, on the verified column names", () => {
     expect(row?.estimate_delivery).toBeNull();
     expect(row?.erp_updated_at).toBeNull(); // ⇒ the cursor cannot advance on it
     expect(Number.isNaN(row?.qty_balance)).toBe(false);
+  });
+});
+
+describe("unreadable dates are refused at the adapter, never written through", () => {
+  /**
+   * The production defect, at the layer that caused it.
+   *
+   * `tbl_1202_SOSalesOrderNID.po_date` carries MySQL's zero date on older rows.
+   * `'0000-00-00'` matches a 'YYYY-MM-DD' shape test, so it used to be passed
+   * through verbatim as a `date` parameter — and postgres.js serializes a `date`
+   * with `(x instanceof Date ? x : new Date(x)).toISOString()`, which throws
+   * `RangeError: Invalid time value` on an Invalid Date. That RangeError landed
+   * inside `commitPage()`'s transaction and aborted the whole table pass.
+   *
+   * The rule now: a date is accepted only if it denotes a REAL calendar day that
+   * `new Date()` can parse. Everything else is NULL plus one tick on a counter.
+   * Never invented, never "now" — a fabricated timestamp in a cursor is worse
+   * than a missing row, because a cursor only ever moves forward.
+   */
+  it.each([
+    ["MySQL zero date", "0000-00-00"],
+    ["MySQL zero timestamp", "0000-00-00 00:00:00"],
+    ["zero date, ISO spelling", "0000-00-00T00:00:00Z"],
+    ["a day that does not exist", "2026-02-29"],
+    ["month 13", "2026-13-01"],
+    ["dd/mm/yyyy that does not exist", "31/02/2020"],
+    ["prose", "tanggal tidak diketahui"],
+  ])("refuses %s in po_date rather than handing it to postgres", (_name, value) => {
+    const row = adaptSoHeaderRow({ tbl_1202_SOSalesOrderNID_id: "SOH-X", po_date: value });
+    expect(row?.po_date).toBeNull();
+  });
+
+  it.each([
+    ["MySQL zero timestamp", "0000-00-00 00:00:00"],
+    ["MySQL zero date", "0000-00-00"],
+    ["prose", "31 Februari kemarin"],
+    ["an empty string", ""],
+    ["a null", null],
+  ])("refuses %s in updated_at — an Invalid Date must never reach the cursor", (_name, value) => {
+    const row = adaptSoHeaderRow({ tbl_1202_SOSalesOrderNID_id: "SOH-X", updated_at: value });
+    expect(row?.erp_updated_at).toBeNull();
+  });
+
+  it("treats a zero `deleted_at` as NOT DELETED, not as a broken deletion", () => {
+    // The alternative — "it has a value, so the row is gone" — would silently
+    // delete every legacy row whose deleted_at was never set.
+    const row = adaptSoHeaderRow({ tbl_1202_SOSalesOrderNID_id: "SOH-X", deleted_at: MYSQL_ZERO_DATE });
+    expect(row?.deleted_at).toBeNull();
+  });
+
+  it("applies the same rule to so_line.estimate_delivery — one shared helper, not one patched adapter", () => {
+    const bad = adaptSoLineRow({
+      tbl_1203_SOSalesOrderDetailNID_id: "SOL-X",
+      estimate_delivery: "0000-00-00",
+      updated_at: MYSQL_ZERO_DATE,
+    });
+    expect(bad?.estimate_delivery).toBeNull();
+    expect(bad?.erp_updated_at).toBeNull();
+  });
+
+  it("still accepts every date shape that IS real", () => {
+    const row = adaptSoHeaderRow({
+      tbl_1202_SOSalesOrderNID_id: "SOH-Y",
+      po_date: "14/03/2020", // A17: day-first
+      updated_at: "2026-09-02 01:15:00", // A18: naive, read as UTC
+    });
+    expect(row?.po_date).toBe("2020-03-14");
+    expect(row?.erp_updated_at?.toISOString()).toBe("2026-09-02T01:15:00.000Z");
+    expect(adaptSoHeaderRow({ tbl_1202_SOSalesOrderNID_id: "S", po_date: "2024-02-29" })?.po_date).toBe("2024-02-29");
+    expect(adaptSoHeaderRow({ tbl_1202_SOSalesOrderNID_id: "S", po_date: "2026-08-14T09:00:00Z" })?.po_date).toBe(
+      "2026-08-14",
+    );
+  });
+
+  it("counts the refusals on the page, alongside the numeric ones", async () => {
+    faults.rows = { so_header: BAD_DATE_HEADERS };
+    const res = await fetchPage("so_header", { since: null, page: 1, limit: 50 });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    // SOH-ZERO (po_date + updated_at) and SOH-GARBAGE (po_date + updated_at).
+    // A null or blank date is ABSENT, not broken, and is deliberately not counted.
+    expect(res.page.badDates.count).toBe(4);
+    expect(res.page.badDates.samples.length).toBeLessThanOrEqual(3);
+    expect(res.page.badDates.samples).toContain("0000-00-00");
+    // Tokens only — never a whole row, which could carry customer data.
+    expect(res.page.badDates.samples.join("|")).not.toContain("PT Tanggal Nol");
+    // Every row still came through; nothing was dropped over a date.
+    expect(res.page.rows).toHaveLength(BAD_DATE_HEADERS.length);
   });
 });
 
@@ -1074,6 +1272,117 @@ describe.skipIf(db === null)("syncWorker — against a real mirror schema", () =
     `;
     expect(degraded[0]?.qty_balance).toBe("0");
     expect(degraded[0]?.th).toBeNull();
+  });
+
+  it("survives a page of broken dates: bad values are NULLed and counted, the run still succeeds", async () => {
+    // THE REGRESSION. In production this exact page aborted so_header on every
+    // run for months — `[erp-sync] so_header: run aborted — Invalid time value`
+    // — while so_line, live_fg and warna all completed, so the UI said
+    // "Sinkronisasi ERP gagal" over three healthy tables and one stuck cursor.
+    faults.rows = { so_header: BAD_DATE_HEADERS };
+
+    const result = await run(sql);
+    expect(result.started).toBe(true);
+    const header = result.tables.find((t) => t.table === "so_header");
+    expect(header?.error).toBeUndefined();
+    expect(header?.ok).toBe(true);
+    expect(result.tables.every((t) => t.ok)).toBe(true);
+
+    // Counted, exactly like a non-finite numeric: two broken values on SOH-ZERO
+    // and two on SOH-GARBAGE. A null or blank date is an ABSENT date, not a
+    // broken one, and is deliberately not counted — po_date is nullable and a
+    // null there is entirely routine.
+    expect(header?.badDates).toBe(4);
+    expect(header?.dropped).toBe(0); // a bad date never costs us the row
+
+    // Every row is in the mirror, with the unreadable values as NULL and the
+    // readable ones untouched.
+    const mirrored = await sql<{ id: string; po_date: Date | null; erp_updated_at: Date | null }[]>`
+      select id, po_date, erp_updated_at from erp_so_header order by id
+    `;
+    expect(mirrored.map((r) => r.id)).toEqual([
+      "SOH-EMPTY",
+      "SOH-GARBAGE",
+      "SOH-NULL-TS",
+      "SOH-OK-1",
+      "SOH-OK-2",
+      "SOH-ZERO",
+    ]);
+    const byId = new Map(mirrored.map((r) => [r.id, r]));
+    expect(byId.get("SOH-ZERO")?.po_date).toBeNull();
+    expect(byId.get("SOH-ZERO")?.erp_updated_at).toBeNull();
+    expect(byId.get("SOH-GARBAGE")?.po_date).toBeNull();
+    expect(byId.get("SOH-EMPTY")?.po_date).toBeNull();
+    expect(byId.get("SOH-NULL-TS")?.erp_updated_at).toBeNull();
+    expect(byId.get("SOH-OK-2")?.erp_updated_at?.getTime()).toBe(BAD_DATE_HEADERS_MAX_VALID.getTime());
+
+    // Nothing was invented: not one fabricated date anywhere in the mirror, and
+    // in particular nothing dated "now" standing in for a value we could not read.
+    const invented = await sql<{ n: number }[]>`
+      select count(*)::int as n from erp_so_header
+       where po_date > current_date or erp_updated_at > now() - interval '1 minute'
+    `;
+    expect(invented[0]?.n).toBe(0);
+
+    // AND THE POINT OF ALL OF IT: the cursor moved, off the good rows alone.
+    const state = await syncStateRows(sql);
+    const cursor = state.find((r) => r.table_name === "so_header")?.cursor_value;
+    expect(cursor?.getTime()).toBe(BAD_DATE_HEADERS_MAX_VALID.getTime());
+    expect(header?.cursorAfter?.getTime()).toBe(BAD_DATE_HEADERS_MAX_VALID.getTime());
+  });
+
+  it("logs the bad-date refusal ONCE per table per run, with examples and a remedy", async () => {
+    faults.rows = { so_header: BAD_DATE_HEADERS };
+    const lines: string[] = [];
+    await run(sql, { info: () => {}, warn: (m: string) => lines.push(m), error: () => {} });
+
+    const refusals = lines.filter((l) => l.includes("unreadable date value"));
+    // One line per AFFECTED TABLE, not one per row: so_header here, and so_line,
+    // whose fixture has carried "31 Desember" / "bukan tanggal" all along.
+    expect(refusals).toHaveLength(2);
+    expect(refusals.filter((l) => l.startsWith("so_header:"))).toHaveLength(1);
+    expect(refusals.filter((l) => l.startsWith("so_line:"))).toHaveLength(1);
+
+    const headerLine = refusals.find((l) => l.startsWith("so_header:")) ?? "";
+    expect(headerLine).toMatch(/^so_header: refused 4 unreadable date value\(s\)/);
+    expect(headerLine).toContain('"0000-00-00"'); // the offending token, quoted
+    expect(headerLine).toContain("Invalid time value"); // …and what it used to do
+    // Tokens only, never a whole row: customer names must not reach a log line.
+    expect(headerLine).not.toContain("PT Tanggal Nol");
+    expect(headerLine).not.toContain("SOH-ZERO");
+  });
+
+  it("leaves the cursor untouched when a page yields NO valid timestamp at all", async () => {
+    // Not an error, and emphatically not a guess: there is simply nothing to
+    // advance to. The next run re-pulls the same window and tries again. The
+    // alternative — falling back to `now()` — would be permanent data loss,
+    // because the cursor only ever moves forward.
+    faults.rows = { so_header: ALL_BAD_DATE_HEADERS };
+
+    const result = await run(sql);
+    const header = result.tables.find((t) => t.table === "so_header");
+    expect(header?.ok).toBe(true);
+    expect(header?.error).toBeUndefined();
+    expect(header?.badDates).toBe(4); // two po_dates, two updated_ats
+    expect(header?.cursorAfter).toBeNull();
+
+    const state = await syncStateRows(sql);
+    const row = state.find((r) => r.table_name === "so_header");
+    expect(row?.cursor_value).toBeNull(); // still exactly where it started
+    expect(row?.last_error).toBeNull();
+
+    // The rows themselves are mirrored — only their dates were unreadable.
+    const mirrored = await sql<{ id: string; po_date: Date | null }[]>`
+      select id, po_date from erp_so_header order by id
+    `;
+    expect(mirrored.map((r) => r.id)).toEqual(["SOH-ALLBAD-1", "SOH-ALLBAD-2"]);
+    expect(mirrored.every((r) => r.po_date === null)).toBe(true);
+
+    // And a second run over the same untouched cursor is still fine — the page
+    // replays rather than being skipped.
+    const again = await run(sql);
+    expect(again.tables.every((t) => t.ok)).toBe(true);
+    expect((await syncStateRows(sql)).find((r) => r.table_name === "so_header")?.cursor_value).toBeNull();
   });
 
   it("survives a total ERP outage without throwing, and leaves the mirror intact", async () => {

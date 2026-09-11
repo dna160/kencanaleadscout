@@ -44,6 +44,10 @@
   th{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:700;background:#fafbfc}
   tr.itemrow{cursor:pointer}tr.itemrow:hover{background:#f7fafc}
   .sub2{color:var(--muted);font-size:11px;margin-top:2px}
+  /* Merek inside a spec line: --ink-2 lifts it out of --muted so two rows that
+     share a colour are told apart at a glance, without taking the 14px bold
+     lead away from the colour (UX-SPEC §1.6, §5.2). Tokens only. */
+  .mk{color:var(--ink-2);font-weight:700}
   .avail{font-weight:800;white-space:nowrap}.avail.neg{color:var(--danger)}
   .chip{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;white-space:nowrap}
   /* Inherited. UX-SPEC §9.2: 4.39:1, fails AA — archive modal only, which neither
@@ -634,10 +638,16 @@ function warnaFromName(i){
   let v=trimStr(i.name);
   if(!v || v===trimStr(i.sku_key)) return "";        // nameless fallback, not a name
   const dot=v.indexOf(" · "); if(dot>=0) v=v.slice(0,dot);
-  const kode=trimStr(i.kode_barang);
-  if(kode && v.toLowerCase().startsWith(kode.toLowerCase())) v=v.slice(kode.length).trim();
+  // composeName(): "{brand} {warna} {th_panel} {th} · {p}×{l}", where {brand}
+  // is brand_text ?? brand ?? kode_barang. Strip whichever of those is the
+  // actual prefix — on a CommitLine there is no kode_barang to strip.
+  for(const pre of [trimStr(i.brand_text),trimStr(i.brand),trimStr(i.kode_barang)]){
+    if(pre && v.toLowerCase().startsWith(pre.toLowerCase())){ v=v.slice(pre.length).trim(); break; }
+  }
   const th=i.th!=null?String(i.th):"";
   if(th && v.toLowerCase().endsWith(th.toLowerCase())) v=v.slice(0,v.length-th.length).trim();
+  const thp=i.th_panel!=null?String(i.th_panel):"";
+  if(thp && v.toLowerCase().endsWith(thp.toLowerCase())) v=v.slice(0,v.length-thp.length).trim();
   return v;
 }
 function warnaLabel(i){
@@ -648,6 +658,47 @@ function warnaLabel(i){
   const code=t||w||fromName;
   if(code) return "Kode warna "+code;           // never a bare number
   return trimStr(i.name)||trimStr(i.sku_key)||"—";
+}
+
+/* ── `brand` is an ID too — the Merek label ───────────────────────────────────
+   `erp_live_fg` and `erp_so_line` both carry `brand` (the product-line id the
+   SKU key is built from) and its display twin `brand_text`. Alcopan, Maco and
+   Tajima are VALUES, not an enumeration — nothing here may name one.
+   Same precedence discipline as warnaLabel (UX-SPEC §1.6): the readable name
+   wins, a bare code is labelled AS a code, and when neither field is present we
+   render NOTHING — not an em dash, and never a merek guessed out of
+   `kode_barang`, which conflates merek, lini produk and tebal panel. A guess
+   shows an operator the wrong manufacturer, which is worse than showing none.
+   Byte-identical to the same block on /stock. */
+function brandLabel(i){
+  if(!i) return "";
+  const t=trimStr(i.brand_text); if(t && !isKode(t)) return t;
+  const b=trimStr(i.brand);      if(b && !isKode(b)) return b;
+  const code=t||b;
+  return code ? "Kode merek "+code : "";        // never a bare number, never a guess
+}
+/* The spec line under the colour: merek · kode barang · tebal · ukuran. A merek
+   that IS the kode_barang prints once. Returns HTML — every ERP-sourced string
+   is esc()'d here, at the boundary. */
+function specTail(i){
+  return [i.th!=null?num(i.th):null,
+          (i.p!=null&&i.l!=null)?`${num(i.p)}×${num(i.l)}`:null].filter(Boolean).join(" · ");
+}
+function identHtml(i){
+  const mk=brandLabel(i), kb=trimStr(i.kode_barang);
+  const rest=[];
+  if(kb && kb.toLowerCase()!==mk.toLowerCase()) rest.push(kb);
+  const sp=specTail(i); if(sp) rest.push(sp);
+  const tail=rest.join(" · ");
+  if(!mk) return esc(tail);
+  return `<b class="mk">${esc(mk)}</b>`+(tail?" · "+esc(tail):"");
+}
+/* Full product identity, merek then warna — what an operator quotes into a
+   ticket or reads back on the phone. */
+function identName(i,fallback){
+  const w=warnaLabel(i);
+  const head=[brandLabel(i), w==="—"?"":w].filter(Boolean).join(" ");
+  return head||fallback||"";
 }
 
 /* ── The five connection states — UX-SPEC §4 precedence, extended ─────────────
@@ -885,7 +936,10 @@ function applyLocks(){
 }
 function renderSkuList(){
   $("#skuList").innerHTML=SUMMARY.items.map(i=>{
-    const spec=[i.kode_barang,i.th!=null?num(i.th):null,
+    // An <option> is plain text, so the merek is a leading word, not a chip.
+    const mk=brandLabel(i), kb=trimStr(i.kode_barang);
+    const spec=[mk||null,(kb&&kb.toLowerCase()!==mk.toLowerCase())?kb:null,
+                i.th!=null?num(i.th):null,
                 (i.p!=null&&i.l!=null)?`${num(i.p)}×${num(i.l)}`:null].filter(Boolean).join(" · ");
     return `<option value="${esc(i.sku_key)}">${esc(warnaLabel(i))}${spec?" · "+esc(spec):""}</option>`;
   }).join("");
@@ -977,18 +1031,20 @@ function normShortfall(r){
   const deficit=r.deficit!=null?n(r.deficit):Math.max(0,committed-(on_hand+adjustment));
   return {
     sku_key:String(pick(r,"sku_key")||""), name:pick(r,"name"),
-    kode_barang:pick(r,"kode_barang")||pick(r,"brand_text")||pick(r,"brand"), brand:pick(r,"brand"), brand_text:pick(r,"brand_text"), warna:pick(r,"warna"),
+    kode_barang:pick(r,"kode_barang"), brand:pick(r,"brand"), brand_text:pick(r,"brand_text"), warna:pick(r,"warna"),
     warna_name:pick(r,"warna_name"), warna_text:pick(r,"warna_text"),
-    th:nOrNull(r.th), p:nOrNull(r.p), l:nOrNull(r.l), unit:pick(r,"unit")||"lembar",
+    th:nOrNull(r.th), th_panel:nOrNull(r.th_panel), p:nOrNull(r.p), l:nOrNull(r.l), unit:pick(r,"unit")||"lembar",
     on_hand, committed, adjustment, atp, deficit,
     stale_committed:n(r.stale_committed), nearest_eta:pick(r,"nearest_eta"),
   };
 }
 function skuCell(r){
+  // The colour keeps the bold lead — it is the label every list here is read
+  // by. The merek leads the spec line directly under it, which is what tells
+  // two same-colour rows apart without restructuring the row.
   const head=warnaLabel(r);
-  const spec=[r.kode_barang,r.th!=null?num(r.th):null,
-              (r.p!=null&&r.l!=null)?`${num(r.p)}×${num(r.l)}`:null].filter(Boolean).join(" · ");
-  return `<b>${esc(head)}</b>${spec?`<div class="sub2">${esc(spec)}</div>`:""}`;
+  const spec=identHtml(r);
+  return `<b>${esc(head)}</b>${spec?`<div class="sub2">${spec}</div>`:""}`;
 }
 async function loadShortfall(){
   const el=$("#sfBody"); const stop=SF.rows.length?()=>{}:skelAfter(el,4);
@@ -1064,9 +1120,9 @@ function normStale(r){
   return {
     so_line_id:String(pick(r,"so_line_id","id")||""),
     sku_key:String(pick(r,"sku_key")||""), name:pick(r,"name"),
-    kode_barang:pick(r,"kode_barang")||pick(r,"brand_text")||pick(r,"brand"), brand:pick(r,"brand"), brand_text:pick(r,"brand_text"), warna:pick(r,"warna"),
+    kode_barang:pick(r,"kode_barang"), brand:pick(r,"brand"), brand_text:pick(r,"brand_text"), warna:pick(r,"warna"),
     warna_name:pick(r,"warna_name"), warna_text:pick(r,"warna_text"),
-    th:nOrNull(r.th), p:nOrNull(r.p), l:nOrNull(r.l),
+    th:nOrNull(r.th), th_panel:nOrNull(r.th_panel), p:nOrNull(r.p), l:nOrNull(r.l),
     so_number:pick(r,"so_number"),
     customer:pick(r,"customer_name_text","customer_name"),
     sales:pick(r,"sales_name_text","sales_name"),
@@ -1387,7 +1443,9 @@ async function closeStale(id,btn){
     : `Baris ditutup. Bisa Dijual ${skuLabel(r)} naik ${num(j.atp_delta)} lembar.`,"ok");
   loadSummary();
 }
-function skuLabel(r){ return warnaLabel(r); }
+// Merek + warna: a close toast that says "Bisa Dijual Alcopan BLACK GALAXY naik
+// 1.200" names one product; the colour alone names several.
+function skuLabel(r){ return identName(r,warnaLabel(r)); }
 
 // ── segment=undated · inline confirm expander (UX-SPEC §6.6.2) ──────────────
 function collapseExpander(refocus){
@@ -1711,9 +1769,9 @@ function normException(r){
   return {
     so_line_id:String(pick(r,"so_line_id","id")||""),
     sku_key:String(pick(r,"sku_key")||""), name:pick(r,"name"),
-    kode_barang:pick(r,"kode_barang")||pick(r,"brand_text")||pick(r,"brand"), brand:pick(r,"brand"), brand_text:pick(r,"brand_text"), warna:pick(r,"warna"),
+    kode_barang:pick(r,"kode_barang"), brand:pick(r,"brand"), brand_text:pick(r,"brand_text"), warna:pick(r,"warna"),
     warna_name:pick(r,"warna_name"), warna_text:pick(r,"warna_text"),
-    th:nOrNull(r.th), p:nOrNull(r.p), l:nOrNull(r.l),
+    th:nOrNull(r.th), th_panel:nOrNull(r.th_panel), p:nOrNull(r.p), l:nOrNull(r.l),
     so_number:pick(r,"so_number"),
     customer:pick(r,"customer_name_text","customer_name"),
     qty_balance:n(pick(r,"qty_balance")),
@@ -1732,7 +1790,7 @@ function sebab(r){
 }
 function exDetail(r){
   const w=warnaLabel(r);
-  return [r.kode_barang,w==="—"?null:w,r.th!=null?num(r.th):null,
+  return [brandLabel(r)||null,r.kode_barang,w==="—"?null:w,r.th!=null?num(r.th):null,
           (r.p!=null&&r.l!=null)?`${num(r.p)}×${num(r.l)}`:null]
     .map(v=>v==null||v===""||v==="-"?null:v).filter(Boolean).join(" · ")||"—";
 }
@@ -1912,7 +1970,7 @@ function renderAdjustments(){
       const it=skuByKey(r.sku_key);
       return `<tr>
         <td>${esc(wib(r.created_at))}</td>
-        <td><b>${esc(it?warnaLabel(it):warnaLabel(r))}</b><div class="sub2">${esc(r.sku_key)}</div></td>
+        <td><b>${esc(it?identName(it,warnaLabel(it)):warnaLabel(r))}</b><div class="sub2">${esc(r.sku_key)}</div></td>
         <td class="sisa nums"><span class="avail ${r.qty_delta<0?"neg":""}">${esc(signed(r.qty_delta))}</span></td>
         <td style="overflow-wrap:anywhere">${esc(r.reason)}</td>
         <td class="hidesm">${esc(r.actor)}</td></tr>`;
@@ -2056,6 +2114,7 @@ async function openSku(sku){
   const atp=it.atp!=null?n(it.atp):(on_hand+adjustment-committed);
   const unit=pick(it,"unit")||"lembar";
   const sc=STATE_CHIP[it.state]||null;
+  // The heading carries the merek, so the spec line below does not repeat it.
   const spec=[it.kode_barang,it.th!=null?num(it.th):null,
               (it.p!=null&&it.l!=null)?`${num(it.p)}×${num(it.l)}`:null].filter(Boolean).join(" · ");
   const lineTbl=(rows,cap)=>rows.length?`<div class="scrollx"><table><caption class="sr-only">${esc(cap)}</caption><thead><tr>
@@ -2065,7 +2124,7 @@ async function openSku(sku){
       <td class="sisa nums">${esc(num(x.qty_balance))}</td>
       <td><div class="cust">${esc(x.customer||"—")}</div></td>
       <td>${esc(x.sales||"—")}</td></tr>`;}).join("")}</tbody></table></div>`:`<p class="metaline">—</p>`;
-  openModal(`<h3>${esc(warnaLabel(it)==="—"?sku:warnaLabel(it))}</h3>
+  openModal(`<h3>${esc(identName(it,warnaLabel(it)==="—"?sku:warnaLabel(it)))}</h3>
     <p class="mp">${esc(spec)}${spec?" · ":""}Kode SKU ${esc(it.sku_key||sku)}</p>
     <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
       <span class="atp ${atp<0?"neg":""}">${esc(num(atp))}<span class="un">${esc(unit)}</span></span>

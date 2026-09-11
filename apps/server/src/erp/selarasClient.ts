@@ -673,6 +673,8 @@ const MAX_AMBIGUITY_SAMPLES = 3;
 interface PageTally {
   ambiguous: AmbiguityTally;
   nonFinite: AmbiguityTally;
+  /** Date/timestamp values that were present and unreadable (the zero date). */
+  badDates: AmbiguityTally;
 }
 
 let tally: PageTally | null = null;
@@ -722,6 +724,94 @@ function asNumberOr(v: unknown, fallback: number): number {
 
 const DATE_ONLY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const DMY_RE = /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/;
+const ISO_DATE_PREFIX_RE = /^(\d{4})-(\d{2})-(\d{2})[T ]/;
+const NAIVE_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/;
+
+/**
+ * THE BUG THIS EXISTS TO KILL (production, so_header, every run for months):
+ *
+ *   MySQL stores an UNSET date as `0000-00-00` / `0000-00-00 00:00:00`. It is not
+ *   rare — it is what older `tbl_1202_SOSalesOrderNID` rows carry in `po_date`.
+ *   It matches `DATE_ONLY_RE` perfectly, so a shape-only check waved it straight
+ *   through as a well-formed 'YYYY-MM-DD' string. postgres.js then looked up the
+ *   parameter's real type from Postgres (`po_date` is `date`, OID 1082) and
+ *   applied its `date` serializer, which is literally
+ *
+ *       serialize: x => (x instanceof Date ? x : new Date(x)).toISOString()
+ *
+ *   `new Date('0000-00-00')` is Invalid Date, so `.toISOString()` threw
+ *   `RangeError: Invalid time value` during Bind — inside `commitPage`'s
+ *   transaction. The page rolled back, the whole so_header pass aborted, and the
+ *   cursor stayed pinned at the last good run. FOREVER: a cursor only moves
+ *   forward, and this table's never moved at all.
+ *
+ * So shape is not enough. A date is only accepted if it denotes a REAL calendar
+ * day that `new Date()` can also parse — which is the actual contract the write
+ * path has with postgres.js. Anything else is refused: null out, count it, log
+ * once per table per run with examples (`badDates`), exactly the posture
+ * `asNumber()` already takes for NaN/Infinity. Never fabricated, never "now".
+ */
+function realCalendarDate(y: number, m: number, d: number): boolean {
+  if (!Number.isInteger(y) || !Number.isInteger(m) || !Number.isInteger(d)) return false;
+  // Year 0 is MySQL's zero date; years 1-99 are refused too, because `Date.UTC()`
+  // maps them into the 1900s and no ERP row legitimately carries one.
+  if (y < 100 || m < 1 || m > 12 || d < 1 || d > 31) return false;
+  const probe = new Date(Date.UTC(y, m - 1, d));
+  // `Date.UTC` rolls 2026-02-31 forward to 2026-03-03 rather than refusing it;
+  // anything that moved was not a real day.
+  return probe.getUTCFullYear() === y && probe.getUTCMonth() === m - 1 && probe.getUTCDate() === d;
+}
+
+/** 'YYYY-MM-DD' for a real day, or null. Parts arrive as captured strings. */
+function dateOnlyFrom(y: string | undefined, m: string | undefined, d: string | undefined): string | null {
+  if (!y || !m || !d) return null;
+  const yy = Number(y);
+  const mm = Number(m);
+  const dd = Number(d);
+  if (!realCalendarDate(yy, mm, dd)) return null;
+  return `${String(yy).padStart(4, "0")}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
+}
+
+/**
+ * A refusal that is DISTINGUISHABLE from an absent value. `null`, `undefined` and
+ * a blank string are simply "the ERP has no date here" — `po_date` is nullable
+ * and a null is routine, so counting one would be noise. `bad: true` is reserved
+ * for a value that was PRESENT and could not be read.
+ */
+interface DateReading<T> {
+  value: T | null;
+  bad: boolean;
+}
+
+const ABSENT = { value: null, bad: false } as const;
+const BAD = { value: null, bad: true } as const;
+
+function readDateOnly(v: unknown): DateReading<string> {
+  if (v instanceof Date) {
+    return Number.isNaN(v.getTime()) ? BAD : { value: v.toISOString().slice(0, 10), bad: false };
+  }
+  const s = asText(v);
+  if (s === null) return ABSENT;
+
+  const iso = DATE_ONLY_RE.exec(s);
+  if (iso) {
+    const out = dateOnlyFrom(iso[1], iso[2], iso[3]);
+    return out === null ? BAD : { value: out, bad: false }; // '0000-00-00' lands here
+  }
+  const prefix = ISO_DATE_PREFIX_RE.exec(s);
+  if (prefix) {
+    const out = dateOnlyFrom(prefix[1], prefix[2], prefix[3]);
+    return out === null ? BAD : { value: out, bad: false }; // '0000-00-00 00:00:00' too
+  }
+  const dmy = DMY_RE.exec(s);
+  if (dmy) {
+    // A17: day-first, the Indonesian convention.
+    const out = dateOnlyFrom(dmy[3], dmy[2], dmy[1]);
+    return out === null ? BAD : { value: out, bad: false };
+  }
+  const parsed = new Date(s);
+  return Number.isNaN(parsed.getTime()) ? BAD : { value: parsed.toISOString().slice(0, 10), bad: false };
+}
 
 /**
  * `date` columns (`po_date`, `estimate_delivery`) are handed to Postgres as a
@@ -729,47 +819,54 @@ const DMY_RE = /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/;
  * the process timezone and can land a day early or late. Accepts ISO date,
  * ISO timestamp (date part taken) and dd/mm/yyyy (A17: day-first, the Indonesian
  * convention; an ISO string is always preferred when both could parse).
+ *
+ * An unreadable value is NULL in the mirror and one tick on the `badDates`
+ * tally. It is never guessed at and never replaced with today — a fabricated
+ * date is worse than a missing one, because nothing downstream can tell.
  */
 function asDateOnly(v: unknown): string | null {
-  const s = asText(v);
-  if (s === null) return null;
-  const iso = DATE_ONLY_RE.exec(s);
-  if (iso) return s;
-  const t = /^(\d{4}-\d{2}-\d{2})[T ]/.exec(s);
-  if (t) return t[1] ?? null;
-  const dmy = DMY_RE.exec(s);
-  if (dmy) {
-    const [, d, m, y] = dmy;
-    if (d && m && y) return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  const read = readDateOnly(v);
+  if (read.bad && tally) note(tally.badDates, v);
+  return read.value;
+}
+
+function readTimestamp(v: unknown): DateReading<Date> {
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? BAD : { value: v, bad: false };
+  if (typeof v === "number") {
+    // Seconds vs milliseconds epoch: anything below ~Sep 2001 in ms is seconds.
+    const ms = v < 1e11 ? v * 1000 : v;
+    const d = new Date(ms);
+    return Number.isNaN(d.getTime()) ? BAD : { value: d, bad: false };
   }
-  const parsed = new Date(s);
-  return Number.isNaN(parsed.getTime()) ? null : (parsed.toISOString().slice(0, 10) ?? null);
+  const s = asText(v);
+  if (s === null) return ABSENT;
+
+  // Reject the zero date on its SHAPE before `new Date()` ever sees it, so the
+  // refusal is the same whether it arrives as a date or as a timestamp.
+  const iso = DATE_ONLY_RE.exec(s) ?? ISO_DATE_PREFIX_RE.exec(s);
+  if (iso && dateOnlyFrom(iso[1], iso[2], iso[3]) === null) return BAD;
+
+  let norm = s;
+  if (DATE_ONLY_RE.test(s)) norm = `${s}T00:00:00Z`;
+  else if (NAIVE_TIMESTAMP_RE.test(s)) norm = `${s.replace(" ", "T")}Z`;
+  const d = new Date(norm);
+  return Number.isNaN(d.getTime()) ? BAD : { value: d, bad: false };
 }
 
 /**
- * `timestamptz` columns (`erp_updated_at`) — the sync cursor is read from this,
- * so a bad parse must yield null (cursor does not advance) rather than an
- * Invalid Date (which postgres.js would reject mid-batch).
+ * `timestamptz` columns (`erp_updated_at`, and the `deleted_at` marker) — the
+ * sync cursor is read from `erp_updated_at`, so a bad parse must yield null
+ * (the cursor does not advance) rather than an Invalid Date, which postgres.js
+ * would reject mid-batch and take the whole run down with it.
  *
  * A18: a timestamp with no zone designator is read as UTC, not as local time.
  * `new Date('2026-09-11 14:05:00')` is LOCAL in V8, which would shift every
  * cursor by the container's offset; appending 'Z' pins it.
  */
 function asTimestamp(v: unknown): Date | null {
-  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v;
-  if (typeof v === "number") {
-    // Seconds vs milliseconds epoch: anything below ~Sep 2001 in ms is seconds.
-    const ms = v < 1e11 ? v * 1000 : v;
-    const d = new Date(ms);
-    return Number.isNaN(d.getTime()) ? null : d;
-  }
-  const s = asText(v);
-  if (s === null) return null;
-  let norm = s;
-  if (DATE_ONLY_RE.test(s)) norm = `${s}T00:00:00Z`;
-  else if (/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(s)) norm = `${s.replace(" ", "T")}Z`;
-  const d = new Date(norm);
-  return Number.isNaN(d.getTime()) ? null : d;
+  const read = readTimestamp(v);
+  if (read.bad && tally) note(tally.badDates, v);
+  return read.value;
 }
 
 /** The ERP's `updated_at`, under every spelling we are prepared to see (A2). */
@@ -1036,6 +1133,15 @@ export interface SelarasPage<T> {
   ambiguousNumbers: AmbiguityTally;
   /** Numerics refused for being NaN / ±Infinity (X11). Never written through. */
   nonFiniteNumbers: AmbiguityTally;
+  /**
+   * Date/timestamp values that were PRESENT and unreadable — MySQL's
+   * `0000-00-00` zero date above all. Refused to NULL rather than handed to
+   * postgres.js, whose `date` serializer calls `.toISOString()` on them and
+   * throws `RangeError: Invalid time value` mid-transaction, aborting the run.
+   * A blank or absent value is not counted here: that is a missing date, not a
+   * broken one.
+   */
+  badDates: AmbiguityTally;
   page: number;
   /** Null when the ERP did not tell us; then paging stops on a short page. */
   totalPages: number | null;
@@ -1333,6 +1439,7 @@ export async function fetchPage<K extends SelarasTable>(
       const pageTally: PageTally = {
         ambiguous: { count: 0, samples: [] },
         nonFinite: { count: 0, samples: [] },
+        badDates: { count: 0, samples: [] },
       };
       tally = pageTally;
       try {
@@ -1359,6 +1466,7 @@ export async function fetchPage<K extends SelarasTable>(
           dropped,
           ambiguousNumbers: pageTally.ambiguous,
           nonFiniteNumbers: pageTally.nonFinite,
+          badDates: pageTally.badDates,
           page: opts.page,
           totalPages: env.totalPages,
         },
