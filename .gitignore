@@ -11,3 +11,4 @@ coverage/
 
 # Agent scratch probes — never belong in the branch
 apps/server/.wp*-*.mts
+apps/server/test/__probe*.test.ts

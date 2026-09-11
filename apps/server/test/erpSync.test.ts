@@ -297,7 +297,7 @@ describe("adapters — one per table, indifferent to casing (A2)", () => {
     expect(line?.sku_key).toBe(fg?.sku_key);
   });
 
-  it("normalizes messy-but-valid values ('0.30', ' 004 ', '1,810', dd/mm/yyyy) onto that same key", () => {
+  it("normalizes messy-but-UNAMBIGUOUS values ('0.30', '4880.00', ' 004 ', dd/mm/yyyy) onto that same key", () => {
     const messy = adaptSoLineRow(FIXTURES.so_line[1]);
     const clean = adaptSoLineRow(FIXTURES.so_line[0]);
     expect(messy?.sku_key).toBe(clean?.sku_key);
@@ -342,19 +342,25 @@ describe("parseErpNumber — the separator ambiguity (A22)", () => {
     ["1234", 1234, 1234, 1234], // no separator at all
   ];
 
+  /** Drops `nonFinite` (X11's channel) so these cases read as a locale table. */
+  const read = (token: unknown, mode: "auto" | "id" | "en") => {
+    const r = parseErpNumber(token, mode);
+    return { value: r.value, ambiguous: r.ambiguous };
+  };
+
   it.each(CASES)("reads %s as auto=%s id=%s en=%s", (token, auto, id, en) => {
-    const a = parseErpNumber(token, "auto");
-    if (auto === "refused") {
-      expect(a).toEqual({ value: null, ambiguous: true });
-    } else {
-      expect(a).toEqual({ value: auto, ambiguous: false });
-    }
-    expect(parseErpNumber(token, "id")).toEqual({ value: id, ambiguous: false });
-    expect(parseErpNumber(token, "en")).toEqual({ value: en, ambiguous: false });
+    expect(read(token, "auto")).toEqual(
+      auto === "refused" ? { value: null, ambiguous: true } : { value: auto, ambiguous: false },
+    );
+    expect(read(token, "id")).toEqual({ value: id, ambiguous: false });
+    expect(read(token, "en")).toEqual({ value: en, ambiguous: false });
   });
 
   it("REFUSES the ambiguous shapes under auto — it never picks a locale", () => {
-    for (const token of ["1.234", "1,234", "0.350", "12.345", "999,999"]) {
+    // '1,810' is the exact string this suite's own fixture used to carry on the
+    // happy path. It is 1810 in en notation and 1.810 in id notation, so under
+    // `auto` it is refused — the fixture was changed, not the parser.
+    for (const token of ["1.234", "1,234", "1,810", "0.350", "12.345", "999,999"]) {
       const read = parseErpNumber(token, "auto");
       expect(read.ambiguous).toBe(true);
       expect(read.value).toBeNull();
@@ -363,33 +369,99 @@ describe("parseErpNumber — the separator ambiguity (A22)", () => {
 
   it("passes JSON numbers through untouched in every mode — they are unambiguous", () => {
     for (const mode of ["auto", "id", "en"] as const) {
-      expect(parseErpNumber(1234, mode)).toEqual({ value: 1234, ambiguous: false });
-      expect(parseErpNumber(1.234, mode)).toEqual({ value: 1.234, ambiguous: false });
-      expect(parseErpNumber(0.35, mode)).toEqual({ value: 0.35, ambiguous: false });
-      expect(parseErpNumber(-2084, mode)).toEqual({ value: -2084, ambiguous: false });
-      expect(parseErpNumber(0, mode)).toEqual({ value: 0, ambiguous: false });
+      expect(read(1234, mode)).toEqual({ value: 1234, ambiguous: false });
+      expect(read(1.234, mode)).toEqual({ value: 1.234, ambiguous: false });
+      expect(read(0.35, mode)).toEqual({ value: 0.35, ambiguous: false });
+      expect(read(-2084, mode)).toEqual({ value: -2084, ambiguous: false });
+      expect(read(0, mode)).toEqual({ value: 0, ambiguous: false });
     }
   });
 
   it("treats a repeated separator as grouping — it cannot be a decimal point", () => {
-    expect(parseErpNumber("1.234.567", "auto")).toEqual({ value: 1234567, ambiguous: false });
-    expect(parseErpNumber("1,234,567", "auto")).toEqual({ value: 1234567, ambiguous: false });
+    expect(read("1.234.567", "auto")).toEqual({ value: 1234567, ambiguous: false });
+    expect(read("1,234,567", "auto")).toEqual({ value: 1234567, ambiguous: false });
   });
 
   it("keeps signs, and refuses garbage as null rather than NaN", () => {
     expect(parseErpNumber("-1234", "auto").value).toBe(-1234);
     expect(parseErpNumber("-0,35", "auto").value).toBe(-0.35);
     for (const junk of ["bukan angka", "", "  ", "1.2a", "1.2.3", null, undefined, {}]) {
-      const read = parseErpNumber(junk, "auto");
-      expect(read.value).toBeNull();
-      expect(read.ambiguous).toBe(false); // unreadable is not the same as ambiguous
+      const r = parseErpNumber(junk, "auto");
+      expect(r.value).toBeNull();
+      expect(r.ambiguous).toBe(false); // unreadable is not the same as ambiguous
+      expect(r.nonFinite).toBe(false); // …nor the same as NaN/Infinity (X11)
     }
   });
 
   it("resolves 4-digit heads as decimals: grouping is always exactly three digits", () => {
     // "1234.567" cannot be grouping (that would be "1.234.567"), so it is decimal
     // in both conventions and must NOT be refused.
-    expect(parseErpNumber("1234.567", "auto")).toEqual({ value: 1234.567, ambiguous: false });
+    expect(read("1234.567", "auto")).toEqual({ value: 1234.567, ambiguous: false });
+  });
+});
+
+describe("non-finite numerics are rejected at the adapter boundary (X11)", () => {
+  // `'NaN'::numeric` and `'Infinity'::numeric` are LEGAL values in Postgres and
+  // the frozen schema does not forbid them in th / p / l. One stored there would
+  // make `erp_sku_key()` render the literal text `NaN` while `canonicalSkuKey()`
+  // renders `'-'` — the two implementations would disagree (invariant §7.4) and
+  // that SKU's commitments would silently stop matching its stock. The parity
+  // test cannot catch it, because the divergence is created at WRITE time.
+  const NON_FINITE = ["NaN", "nan", "Infinity", "-Infinity", "INF", "1e999", "-1e999"];
+
+  it.each(NON_FINITE)("flags %s as non-finite, never as a value", (token) => {
+    const r = parseErpNumber(token, "auto");
+    expect(r.value).toBeNull();
+    expect(r.nonFinite).toBe(true);
+    expect(r.ambiguous).toBe(false);
+  });
+
+  /** The FG fixture casing, so an override replaces the field instead of shadowing it. */
+  const FG_KEY = { th: "Th", p: "P", l: "L" } as const;
+
+  it.each(["th", "p", "l"] as const)(
+    "keeps a non-finite out of the sku_key-bearing column %s, on BOTH sides of the join",
+    (column) => {
+      const line = adaptSoLineRow({ id: "X", kodeBarang: "ACP-4MM", warna: "004", th: 0.3, p: 4880, l: 1220, [column]: "NaN" });
+      const fg = adaptLiveFgRow({ SnFg: "X", KodeBarang: "ACP-4MM", Warna: "004", Th: 0.3, P: 4880, L: 1220, [FG_KEY[column]]: "Infinity" });
+      expect(line?.[column]).toBeNull();
+      expect(fg?.[column]).toBeNull();
+      // Null degrades to the '-' placeholder, which is exactly what the SQL twin
+      // produces for a NULL column — so the two keys still agree.
+      expect(line?.sku_key).toContain("-");
+      expect(line?.sku_key).not.toContain("NaN");
+      expect(fg?.sku_key).not.toContain("Infinity");
+      // A NULL on both sides still joins demand to supply consistently.
+      expect(line?.sku_key).toBe(fg?.sku_key);
+    },
+  );
+
+  it.each(["qty_order", "qty_delivered"] as const)("nulls the nullable SO column %s", (column) => {
+    const row = adaptSoLineRow({ id: "X", qtyOrder: "NaN", qtyDelivered: "Infinity", qtyBalance: 5 });
+    expect(row?.[column]).toBeNull();
+  });
+
+  it.each(["qty_m2", "buffer_qty"] as const)("nulls the nullable FG column %s", (column) => {
+    const row = adaptLiveFgRow({ SnFg: "X", QtyM2: "NaN", BufferQty: "-Infinity", Qty: 5 });
+    expect(row?.[column]).toBeNull();
+  });
+
+  it("floors the two NOT NULL columns to 0 rather than writing NaN (A23)", () => {
+    // `numeric not null` would happily accept NaN; 0 is the safe refusal, since
+    // it reserves nothing and promises nothing.
+    expect(adaptSoLineRow({ id: "X", qtyBalance: "NaN" })?.qty_balance).toBe(0);
+    expect(adaptLiveFgRow({ SnFg: "X", Qty: "Infinity" })?.qty).toBe(0);
+  });
+
+  it("counts non-finites separately from ambiguous ones — they need different fixes", async () => {
+    const res = await fetchPage("live_fg", { since: null, page: 4, limit: PAGE_SIZE, retryDelayMs: 0 });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      // Page 4 is FG-0006 (all non-finite) plus the null row.
+      expect(res.page.nonFiniteNumbers.count).toBeGreaterThan(0);
+      expect(res.page.ambiguousNumbers.count).toBe(0);
+      expect(res.page.nonFiniteNumbers.samples.length).toBeLessThanOrEqual(3);
+    }
   });
 });
 
@@ -582,7 +654,7 @@ describe.skipIf(db === null)("syncWorker — against a real mirror schema", () =
              (select count(*)::int from erp_so_line)   as l,
              (select count(*)::int from erp_live_fg)   as f
     `;
-    expect(counts[0]).toEqual({ h: 3, l: 6, f: 4 });
+    expect(counts[0]).toEqual({ h: 3, l: 7, f: 6 });
 
     // PRD §5A: the two Black Galaxy rolls sum to 4,168 lembar on hand.
     const onHand = await sql<{ qty: string }[]>`
@@ -680,7 +752,7 @@ describe.skipIf(db === null)("syncWorker — against a real mirror schema", () =
     const recovery = await run(sql);
     expect(recovery.tables.find((t) => t.table === "so_line")?.ok).toBe(true);
     const after = await sql<{ n: number }[]>`select count(*)::int as n from erp_so_line`;
-    expect(after[0]?.n).toBe(6);
+    expect(after[0]?.n).toBe(7);
   });
 
   it("survives malformed rows: they are dropped and counted, the run still succeeds", async () => {
@@ -692,6 +764,12 @@ describe.skipIf(db === null)("syncWorker — against a real mirror schema", () =
     const liveFg = result.tables.find((t) => t.table === "live_fg");
     expect(soLine?.dropped).toBe(2); // the id-less row and the bare string
     expect(liveFg?.dropped).toBe(2); // the serial-less row and the null
+
+    // A22 and X11 are counted separately, because they need different fixes:
+    // one is "tell me the emitter's locale", the other is "your ERP emitted NaN".
+    expect(soLine?.ambiguousNumbers).toBeGreaterThan(0);
+    expect(liveFg?.ambiguousNumbers).toBeGreaterThan(0);
+    expect(liveFg?.nonFiniteNumbers).toBeGreaterThan(0);
 
     // The all-malformed line still landed, degraded rather than discarded.
     const degraded = await sql<{ qty_balance: string; th: string | null }[]>`
@@ -739,6 +817,85 @@ describe.skipIf(db === null)("syncWorker — against a real mirror schema", () =
     expect(held.started).toBe(false);
     expect(held.skipped).toBe("locked");
     await sql`update erp_sync_state set running = false`;
+  });
+
+  it("refuses ambiguous quantities rather than writing a 1000x-wrong one (A22)", async () => {
+    await run(sql);
+
+    // SOL-2008 carries qtyBalance "1.234" and th "0.350". Guessing id would
+    // reserve 1234 lembar; guessing en would reserve 1.234. Refusing reserves
+    // nothing, which is the only answer that cannot be wrong by 1000x.
+    const line = await sql<{ qty_balance: string; th: string | null; sku_key: string }[]>`
+      select qty_balance::text, th::text, sku_key from erp_so_line where id = 'SOL-2008'
+    `;
+    expect(line[0]?.qty_balance).toBe("0");
+    expect(line[0]?.th).toBeNull();
+
+    // FG-0005 carries Qty "1.234" and QtyM2 "2,500".
+    const fg = await sql<{ qty: string; qty_m2: string | null }[]>`
+      select qty::text, qty_m2::text from erp_live_fg where sn_fg = 'FG-0005'
+    `;
+    expect(fg[0]?.qty).toBe("0");
+    expect(fg[0]?.qty_m2).toBeNull();
+
+    // And the Black Galaxy on-hand is untouched — only ambiguous tokens refuse.
+    const onHand = await sql<{ qty: string }[]>`
+      select sum(qty)::text as qty from erp_live_fg where kode_barang = 'ACP-4MM'
+    `;
+    expect(onHand[0]?.qty).toBe("4168");
+  });
+
+  it("logs the A22 refusal ONCE per table per run, with the tokens and the remedy", async () => {
+    const lines: string[] = [];
+    await run(sql, { info: () => {}, warn: (m: string) => lines.push(m), error: () => {} });
+
+    const a22 = lines.filter((l) => l.includes("ambiguous numeric"));
+    expect(a22).toHaveLength(2); // so_line and live_fg, one line each
+    const soLineLine = a22.find((l) => l.startsWith("so_line:"));
+    expect(soLineLine).toContain('"1.234"'); // the offending token, quoted
+    expect(soLineLine).toContain("SELARAS_NUMBER_FORMAT"); // …and what to do about it
+    // Tokens only — never a whole row, which could carry customer data.
+    expect(soLineLine).not.toContain("SOH-1001");
+    expect(soLineLine).not.toContain("PT Sinar Mandiri");
+
+    const x11 = lines.filter((l) => l.includes("non-finite numeric"));
+    expect(x11).toHaveLength(1); // live_fg only
+    expect(x11[0]).toContain("sku_key");
+  });
+
+  it("stores NO non-finite numeric anywhere in the mirror (X11)", async () => {
+    await run(sql);
+
+    // FG-0006 is mirrored — it has a serial, so it is a real row — but every one
+    // of its numerics was refused at the adapter.
+    const fg = await sql<{ th: string | null; p: string | null; l: string | null; qty: string; qty_m2: string | null }[]>`
+      select th::text, p::text, l::text, qty::text, qty_m2::text from erp_live_fg where sn_fg = 'FG-0006'
+    `;
+    expect(fg[0]).toEqual({ th: null, p: null, l: null, qty: "0", qty_m2: null });
+
+    // The real guarantee, stated over the whole mirror rather than one row:
+    // not a single NaN or Infinity in any numeric column of either table.
+    const bad = await sql<{ n: number }[]>`
+      select (
+        (select count(*) from erp_live_fg
+          where th in ('NaN','Infinity','-Infinity') or p in ('NaN','Infinity','-Infinity')
+             or l in ('NaN','Infinity','-Infinity') or qty in ('NaN','Infinity','-Infinity')
+             or qty_m2 in ('NaN','Infinity','-Infinity') or buffer_qty in ('NaN','Infinity','-Infinity'))
+        + (select count(*) from erp_so_line
+          where th in ('NaN','Infinity','-Infinity') or p in ('NaN','Infinity','-Infinity')
+             or l in ('NaN','Infinity','-Infinity') or qty_balance in ('NaN','Infinity','-Infinity')
+             or qty_order in ('NaN','Infinity','-Infinity') or qty_delivered in ('NaN','Infinity','-Infinity'))
+      )::int as n
+    `;
+    expect(bad[0]?.n).toBe(0);
+
+    // And the TS key for that row agrees with the SQL key — which is the whole
+    // point of X11. A stored NaN would make these two differ silently.
+    const parity = await sql<{ stored: string; computed: string }[]>`
+      select sku_key as stored, erp_sku_key(kode_barang, warna, th, p, l) as computed
+        from erp_live_fg where sn_fg = 'FG-0006'
+    `;
+    expect(parity[0]?.stored).toBe(parity[0]?.computed);
   });
 
   it("never lets SELARAS_TOKEN reach a log line, on the happy path or the failure path", async () => {
