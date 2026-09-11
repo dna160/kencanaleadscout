@@ -1,0 +1,72 @@
+{
+  "_comment": [
+    "WP-2 fixture — RAW Selaras live-FG rows (assumed shape only; nothing recorded).",
+    "PascalCase ON PURPOSE (A2, casing unverified). The two ACP-4MM Black Galaxy rolls",
+    "sum to 4,168 lembar, matching PRD §5A. Row 4 has an unreadable qty and row 5 has",
+    "no serial: both must degrade, never abort the page."
+  ],
+  "rows": [
+    {
+      "SnFg": "FG-0001",
+      "KodeBarang": "ACP-4MM",
+      "Warna": "004",
+      "Th": 0.3,
+      "P": 4880,
+      "L": 1220,
+      "Qty": 2084,
+      "QtyM2": 12408.6,
+      "BufferQty": 0,
+      "BufferStatus": "OK",
+      "Lokasi": "GD-01",
+      "UpdatedAt": "2026-09-01T04:00:00Z"
+    },
+    {
+      "SnFg": "FG-0002",
+      "KodeBarang": "ACP-4MM",
+      "Warna": "004",
+      "Th": "0.30",
+      "P": "4880",
+      "L": "1220",
+      "Qty": "2,084",
+      "QtyM2": 12408.6,
+      "BufferQty": 50,
+      "BufferStatus": "BUFFER",
+      "Lokasi": "GD-02",
+      "UpdatedAt": "2026-09-01T05:00:00Z"
+    },
+    {
+      "SnFg": "FG-0003",
+      "KodeBarang": "ACP-3MM",
+      "Warna": "118",
+      "Th": 0.21,
+      "P": 2440,
+      "L": 1220,
+      "Qty": 100,
+      "QtyM2": 297.68,
+      "BufferQty": null,
+      "BufferStatus": null,
+      "Lokasi": "GD-01",
+      "UpdatedAt": "2026-09-01T06:00:00Z"
+    },
+    {
+      "SnFg": "FG-0004",
+      "KodeBarang": "ACP-3MM",
+      "Warna": "118",
+      "Th": 0.21,
+      "P": 2440,
+      "L": 1220,
+      "Qty": "tidak ada",
+      "QtyM2": "???",
+      "Lokasi": "GD-09",
+      "UpdatedAt": "2026-09-01T07:00:00Z",
+      "_why": "unreadable qty must become 0, never NaN (numeric column would reject NaN)"
+    },
+    {
+      "KodeBarang": "ACP-3MM",
+      "Qty": 7,
+      "UpdatedAt": "2026-09-01T08:00:00Z",
+      "_why": "no serial — unkeyable, dropped and counted"
+    },
+    null
+  ]
+}
