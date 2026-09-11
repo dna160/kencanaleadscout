@@ -394,6 +394,14 @@ the constant `'-'`, which is exactly what dropping it would do.
 ```sql
 with k as (
   select qty_balance, kode_barang, warna, th, p, l,
+> ⚠️ **SUPERSEDED — this SQL will not execute.** It calls the v1 five-argument
+> `erp_sku_key(kode_barang, warna, th, p, l)`. The verified Selaras schema showed
+> the SO line table carries **no `kode_barang` and no `th`**, so the key moved to
+> the six-argument form over `brand, warna, th, th_panel, p, l`, and the migration
+> explicitly drops the old overload. **Use `docs/stock-2.0/GO-LIVE.md` §4 for the
+> live ST-R5.2 ablation** — it is written against the current function. The block
+> below is kept only so the reasoning behind the ablation is still readable.
+
     erp_sku_key(kode_barang, warna, th,   p,    l)    as k5,  -- v1
     erp_sku_key(kode_barang, warna, th,   p,    null) as k4,  -- drop l
     erp_sku_key(kode_barang, warna, th,   null, null) as k3,  -- drop p, l

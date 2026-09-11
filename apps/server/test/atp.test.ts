@@ -65,15 +65,21 @@ async function inRollback<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
 
 // ── Fixture builders ─────────────────────────────────────────────────────────
 
+// The 2026-09-11 composition: brand|warna|th|th_panel|p|l, where `th` is the
+// aluminium skin and `th_panel` the total panel (erp/sku.ts).
 const BLACK_GALAXY: SkuParts = {
-  kode_barang: "ACP-4MM",
-  warna: "004",
+  brand: "ACP",
+  warna: "4",
   th: 0.3,
+  th_panel: 4,
   p: 4880,
   l: 1220,
 };
 const BG_KEY = canonicalSkuKey(BLACK_GALAXY);
 
+/** `sn_fg` here is the suite's row handle: it seeds the mirror's PRIMARY KEY
+ * (`erp_row_id`, the ERP row id) and the roll serial together, so the prefix
+ * scoping below still works and the serial is still populated. */
 type FgRow = { sn_fg: string; qty: number; parts?: SkuParts };
 type LineRow = {
   id: string;
@@ -90,9 +96,10 @@ async function seedFg(tx: Tx, rows: readonly FgRow[]): Promise<void> {
   for (const r of rows) {
     const parts = r.parts ?? BLACK_GALAXY;
     await tx`
-      insert into erp_live_fg (sn_fg, kode_barang, warna, th, p, l, qty, sku_key)
-      values (${r.sn_fg}, ${String(parts.kode_barang ?? "")}, ${String(parts.warna ?? "")},
-              ${Number(parts.th ?? 0)}, ${Number(parts.p ?? 0)}, ${Number(parts.l ?? 0)},
+      insert into erp_live_fg (erp_row_id, sn_fg, kode_barang, brand, warna, th, th_panel, p, l, qty, sku_key)
+      values (${r.sn_fg}, ${r.sn_fg}, ${"ACP-4MM"}, ${String(parts.brand ?? "")}, ${String(parts.warna ?? "")},
+              ${Number(parts.th ?? 0)}, ${Number(parts.th_panel ?? 0)},
+              ${Number(parts.p ?? 0)}, ${Number(parts.l ?? 0)},
               ${r.qty}, ${canonicalSkuKey(parts)})
     `;
   }
@@ -121,12 +128,13 @@ async function seedLines(tx: Tx, rows: readonly LineRow[]): Promise<void> {
           : tx`${r.eta}::date`;
     await tx`
       insert into erp_so_line (
-        id, so_id, kode_barang, warna, th, p, l,
+        id, so_id, brand, warna, th, th_panel, p, l,
         qty_order, qty_delivered, qty_balance,
         status_order, approval, estimate_delivery, sn_fg, sku_key
       ) values (
-        ${r.id}, ${soId}, ${String(parts.kode_barang ?? "")}, ${String(parts.warna ?? "")},
-        ${Number(parts.th ?? 0)}, ${Number(parts.p ?? 0)}, ${Number(parts.l ?? 0)},
+        ${r.id}, ${soId}, ${String(parts.brand ?? "")}, ${String(parts.warna ?? "")},
+        ${Number(parts.th ?? 0)}, ${Number(parts.th_panel ?? 0)},
+        ${Number(parts.p ?? 0)}, ${Number(parts.l ?? 0)},
         ${r.qty_balance}, ${0}, ${r.qty_balance},
         ${r.status_order ?? "Open"}, ${r.approval ?? "Approved"}, ${eta},
         ${null}, ${canonicalSkuKey(parts)}
@@ -155,7 +163,7 @@ async function atpFor(tx: Tx, skuKey: string): Promise<Atp> {
   const like = `${P}%`;
   const [row] = await tx`
     select
-      coalesce((select sum(qty)         from erp_live_fg         t where t.sku_key = ${skuKey} and t.sn_fg like ${like}), 0)::float8 as on_hand,
+      coalesce((select sum(qty)         from erp_live_fg         t where t.sku_key = ${skuKey} and t.erp_row_id like ${like}), 0)::float8 as on_hand,
       coalesce((select sum(qty_balance) from v_live_commitments  t where t.sku_key = ${skuKey} and t.id    like ${like}), 0)::float8 as committed,
       coalesce((select sum(qty_balance) from v_stale_commitments t where t.sku_key = ${skuKey} and t.id    like ${like}), 0)::float8 as stale_committed,
       coalesce((select sum(qty_delta)   from stock_adjustments   t where t.sku_key = ${skuKey} and t.actor like ${like}), 0)::float8 as adjustment
@@ -888,9 +896,9 @@ describe.skipIf(!hasDb)("ATP over the real schema", () => {
         await seedLines(tx, [{ id: `${P}-i-live`, qty_balance: 15, eta: 5 }]);
         const before = await atpFor(tx, BG_KEY);
         await tx`
-          insert into erp_live_fg (sn_fg, kode_barang, warna, th, p, l, qty, sku_key)
-          values (${`${P}-fg-i1`}, 'ACP-4MM', '004', 0.3, 4880, 1220, 40, ${BG_KEY})
-          on conflict (sn_fg) do update set qty = excluded.qty, synced_at = now()
+          insert into erp_live_fg (erp_row_id, sn_fg, kode_barang, brand, warna, th, th_panel, p, l, qty, sku_key)
+          values (${`${P}-fg-i1`}, ${`${P}-fg-i1`}, 'ACP-4MM', 'ACP', '4', 0.3, 4, 4880, 1220, 40, ${BG_KEY})
+          on conflict (erp_row_id) do update set qty = excluded.qty, synced_at = now()
         `;
         expect(await atpFor(tx, BG_KEY)).toEqual(before);
       });
@@ -913,18 +921,20 @@ describe.skipIf(!hasDb)("ATP over the real schema", () => {
       // numbers would silently mix units; pin that qty is the ATP input.
       await inRollback(async (tx) => {
         await tx`
-          insert into erp_live_fg (sn_fg, kode_barang, warna, th, p, l, qty, qty_m2, sku_key)
-          values (${`${P}-fg-m2`}, 'ACP-4MM', '004', 0.3, 4880, 1220, 10, 59.536, ${BG_KEY})
+          insert into erp_live_fg (erp_row_id, sn_fg, kode_barang, brand, warna, th, th_panel, p, l, qty, qty_m2, sku_key)
+          values (${`${P}-fg-m2`}, ${`${P}-fg-m2`}, 'ACP-4MM', 'ACP', '4', 0.3, 4, 4880, 1220, 10, 59.536, ${BG_KEY})
         `;
         expect((await atpFor(tx, BG_KEY)).on_hand).toBe(10);
       });
     });
 
-    it("erp_sync_state is pre-seeded with the three mirrored tables (ST-R6)", async () => {
+    it("erp_sync_state is pre-seeded with every mirrored table (ST-R6)", async () => {
       const rows = await db!<{ table_name: string }[]>`
         select table_name from erp_sync_state order by table_name
       `;
-      expect(rows.map((r) => r.table_name)).toEqual(["live_fg", "so_header", "so_line"]);
+      // `warna` joined them on 2026-09-11: the colour master is mirrored like any
+      // other table, so it shares the cursor, the lock and the failure handling.
+      expect(rows.map((r) => r.table_name)).toEqual(["live_fg", "so_header", "so_line", "warna"]);
     });
   });
 });

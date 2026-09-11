@@ -163,9 +163,29 @@ async function inRollback<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
 
 // ── fixture builders ─────────────────────────────────────────────────────────
 
+/**
+ * A colour code nobody else in this database uses, and the name the mirrored
+ * colour master (tbl_1228 → `erp_warna`) resolves it to. `warna` is an ID, not a
+ * name (FIX 7): a row with no master entry must still render, showing the code.
+ */
+const WARNA_CODE = "907001";
+const WARNA_NAME = "HITAM GALAKSI QA";
+
+/** Mirror one colour-master row, so the display name resolves deterministically. */
+async function seedWarna(tx: Tx): Promise<void> {
+  await tx`
+    insert into erp_warna (id, code, code_num, rm_warna)
+    values (${`WP7RT-${WARNA_CODE}`}, ${WARNA_CODE}, ${Number(WARNA_CODE)}, ${WARNA_NAME})
+    on conflict (id) do nothing
+  `;
+}
+
 /** A SKU identity nobody else in this database uses. */
 function parts(tag: string, over: Partial<SkuParts> = {}): SkuParts {
-  return { kode_barang: `WP7RT-${tag}`, warna: "004", th: 0.3, p: 4880, l: 1220, ...over };
+  // 2026-09-11 composition: brand|warna|th|th_panel|p|l (erp/sku.ts). `brand`
+  // carries the suite's unique tag, since `kode_barang` is no longer in the key
+  // (tbl_1203 has no such column) and could not isolate this suite's rows.
+  return { brand: `WP7RT-${tag}`, warna: WARNA_CODE, th: 0.3, th_panel: 4, p: 4880, l: 1220, ...over };
 }
 function keyOf(tag: string, over: Partial<SkuParts> = {}): string {
   return canonicalSkuKey(parts(tag, over));
@@ -188,10 +208,14 @@ async function seedFg(tx: Tx, rows: readonly FgRow[]): Promise<void> {
   for (const r of rows) {
     const pa = r.parts;
     await tx`
-      insert into erp_live_fg (sn_fg, kode_barang, warna, th, p, l, qty, qty_m2, lokasi, sku_key)
-      values (${r.sn_fg}, ${String(pa.kode_barang ?? "")}, ${String(pa.warna ?? "")},
-              ${Number(pa.th ?? 0)}, ${Number(pa.p ?? 0)}, ${Number(pa.l ?? 0)},
-              ${r.qty}, ${r.qty_m2 ?? null}, ${r.lokasi ?? "GD-A"}, ${canonicalSkuKey(pa)})
+      insert into erp_live_fg (
+        erp_row_id, sn_fg, kode_barang, brand, warna, th, th_panel, p, l, qty, qty_m2, lokasi, sku_key
+      ) values (
+        ${r.sn_fg}, ${r.sn_fg}, ${String(pa.brand ?? "")}, ${String(pa.brand ?? "")},
+        ${String(pa.warna ?? "")},
+        ${Number(pa.th ?? 0)}, ${Number(pa.th_panel ?? 0)}, ${Number(pa.p ?? 0)}, ${Number(pa.l ?? 0)},
+        ${r.qty}, ${r.qty_m2 ?? null}, ${r.lokasi ?? "GD-A"}, ${canonicalSkuKey(pa)}
+      )
     `;
   }
 }
@@ -211,12 +235,12 @@ async function seedLines(tx: Tx, rows: readonly LineRow[]): Promise<void> {
       r.eta === null ? null : typeof r.eta === "number" ? tx`(current_date - ${r.eta}::int)` : tx`${r.eta}::date`;
     await tx`
       insert into erp_so_line (
-        id, so_id, kode_barang, warna, th, p, l,
+        id, so_id, brand, warna, th, th_panel, p, l,
         qty_order, qty_delivered, qty_balance,
         status_order, approval, estimate_delivery, sn_fg, sku_key
       ) values (
-        ${r.id}, ${soId}, ${String(pa.kode_barang ?? "")}, ${String(pa.warna ?? "")},
-        ${Number(pa.th ?? 0)}, ${Number(pa.p ?? 0)}, ${Number(pa.l ?? 0)},
+        ${r.id}, ${soId}, ${String(pa.brand ?? "")}, ${String(pa.warna ?? "")},
+        ${Number(pa.th ?? 0)}, ${Number(pa.th_panel ?? 0)}, ${Number(pa.p ?? 0)}, ${Number(pa.l ?? 0)},
         ${r.qty_balance}, ${0}, ${r.qty_balance},
         ${r.status_order ?? "Open"}, ${r.approval ?? "Approved"}, ${eta},
         ${null}, ${canonicalSkuKey(pa)}
@@ -1100,6 +1124,7 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
 
     it("totals are self-consistent with items[] — the ladder is counted once", async () => {
       await inRollback(async (tx) => {
+        await seedWarna(tx);
         await stateOf(tx, "LADD", { onHand: 0, committed: 120 });
         await stateOf(tx, "LADE", { onHand: 50, committed: 10 });
         await stateOf(tx, "LADF", { onHand: 50, committed: 50 });
@@ -1114,12 +1139,18 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
         const one = body.items.find((i) => i.sku_key === keyOf("LADE"))!;
         expect(Object.keys(one).sort()).toEqual(
           [
-            "adjustment", "atp", "atp_m2", "committed", "kode_barang", "l", "name", "nearest_eta",
-            "on_hand", "p", "sku_key", "stale_committed", "state", "th", "unit", "warna",
+            "adjustment", "atp", "atp_m2", "brand", "brand_text", "committed", "kode_barang", "l",
+            "name", "nearest_eta", "on_hand", "p", "sku_key", "stale_committed", "state", "th",
+            "th_panel", "unit", "warna", "warna_name",
           ].sort(),
         );
         expect(one.unit).toBe("lembar");
-        expect(one.name).toBe("WP7RT-LADE 004 0.3 · 4880×1220");
+        // brand · colour · panel · skin · dimensions. FIX 7: the colour is an ID
+        // on both mirrored tables, and the name comes from the mirrored master —
+        // an operator must read "HITAM GALAKSI QA", never "907001".
+        expect(one.name).toBe(`WP7RT-LADE ${WARNA_NAME} 4 0.3 · 4880×1220`);
+        expect(one.warna).toBe(WARNA_CODE);
+        expect(one.warna_name).toBe(WARNA_NAME);
         // Nominal panel area fallback: 4880 × 1220 mm² = 5.9536 m² per lembar.
         expect(one.atp_m2).toBe(238.14);
         expect(body.freshness.erp_connected).toBe(false);
@@ -1654,11 +1685,83 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
       });
     });
 
-    it("GET /sync-status carries freshness, the cursors and the three mirrored tables", async () => {
+    it("counts unmatched demand in LINES and in SKUS — only the second is a share (FIX E)", async () => {
+      await inRollback(async (tx) => {
+        // One unmatched SKU with THREE lines against it, plus one healthy SKU.
+        // `exceptions` counts lines and `exception_skus` counts SKUs, and the
+        // PPIC alarm divides by `skus` — so comparing the line count against a
+        // SKU count overstates the problem (a realistic population measured
+        // 512%, which cannot be a share of anything).
+        const ghost = parts("EXSK-GHOST");
+        const held = parts("EXSK-HELD");
+        await seedFg(tx, [{ sn_fg: `${P}-exsk-fg`, qty: 50, parts: held }]);
+        await seedLines(tx, [
+          { id: `${P}-exsk-g1`, qty_balance: 4, eta: 5, parts: ghost },
+          { id: `${P}-exsk-g2`, qty_balance: 4, eta: 6, parts: ghost },
+          { id: `${P}-exsk-g3`, qty_balance: 4, eta: 7, parts: ghost },
+          { id: `${P}-exsk-h1`, qty_balance: 4, eta: 5, parts: held },
+        ]);
+
+        const before = await GET<SummaryResponse>("/api/stock/summary");
+        const ghostKey = canonicalSkuKey(ghost);
+        const mine = before.body.items.filter((i) => i.sku_key === ghostKey);
+        expect(mine).toHaveLength(1);
+
+        // The three lines contribute 3 to `exceptions` and 1 to `exception_skus`.
+        const { body } = await GET<SummaryResponse>("/api/stock/summary");
+        expect(body.totals.exceptions).toBeGreaterThanOrEqual(3);
+        expect(body.totals.exception_skus).toBeGreaterThanOrEqual(1);
+        expect(body.totals.exceptions).toBeGreaterThan(body.totals.exception_skus);
+        // A count of SKUs can never exceed the number of SKUs — which is exactly
+        // the property the line count does not have.
+        expect(body.totals.exception_skus).toBeLessThanOrEqual(body.totals.skus);
+      });
+    });
+
+    it("says the ERP rejected our credentials as a VALUE, not a message to grep (FIX D)", async () => {
+      await inRollback(async (tx) => {
+        // Healthy first: never having synced is not an authorization verdict, so
+        // a fresh deployment must not wear a "call IT" banner.
+        const healthy = await GET<SyncStatusResponse>("/api/stock/sync-status");
+        expect(healthy.body.freshness.erp_authorized).toBe(true);
+
+        await tx`
+          update erp_sync_state
+             set last_error = 'HTTP 401 from ERP', last_error_kind = 'auth', last_error_at = now()
+           where table_name = 'so_line'
+        `;
+        const denied = await GET<SyncStatusResponse>("/api/stock/sync-status");
+        expect(denied.body.freshness.erp_authorized).toBe(false);
+        expect(denied.body.tables.find((t) => t.table_name === "so_line")?.last_error_kind).toBe("auth");
+        // …and /summary carries the same flag, since that is the page sales sees.
+        const summary = await GET<SummaryResponse>("/api/stock/summary");
+        expect(summary.body.freshness.erp_authorized).toBe(false);
+
+        // A network failure is NOT an authorization failure: "wait" is the right
+        // advice there, and "call IT" is not.
+        await tx`update erp_sync_state set last_error_kind = 'network' where table_name = 'so_line'`;
+        const down = await GET<SyncStatusResponse>("/api/stock/sync-status");
+        expect(down.body.freshness.erp_authorized).toBe(true);
+      });
+    });
+
+    it("GET /sync-status carries freshness, the cursors and every mirrored table", async () => {
       await inRollback(async () => {
         const { status, body } = await GET<SyncStatusResponse>("/api/stock/sync-status");
         expect(status).toBe(200);
-        expect(body.tables.map((t) => t.table_name).sort()).toEqual(["live_fg", "so_header", "so_line"]);
+        // `warna` (the colour master, tbl_1228) joined the mirrored set on
+        // 2026-09-11 and is synced exactly like the others.
+        expect(body.tables.map((t) => t.table_name).sort()).toEqual([
+          "live_fg", "so_header", "so_line", "warna",
+        ]);
+        // FIX D: the failure KIND is a typed value, not a substring of last_error.
+        expect(typeof body.freshness.erp_authorized).toBe("boolean");
+        for (const t of body.tables) {
+          expect(
+            t.last_error_kind === null ||
+              ["auth", "network", "shape", "erp_error", "server", "other"].includes(t.last_error_kind),
+          ).toBe(true);
+        }
         expect(typeof body.interval_ms).toBe("number");
         expect(body.stale_after_ms).toBe(body.interval_ms * 4);
         expect(body.freshness.erp_connected).toBe(false);
@@ -1747,10 +1850,13 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
         // Fastify decodes path params once. A second decodeURIComponent would turn
         // this key's `%2F` into `/` and the lookup would miss. Inserted straight
         // into the mirror because the canonical key normaliser strips `%`.
-        const key = "WP7RT-PCT%2FX|004|0.3|4880|1220";
+        const key = "WP7RT-PCT%2FX|4|0.3|4|4880|1220";
         await tx`
-          insert into erp_live_fg (sn_fg, kode_barang, warna, th, p, l, qty, sku_key)
-          values (${`${P}-pct-fg`}, 'WP7RT-PCT', '004', 0.3, 4880, 1220, 9, ${key})
+          insert into erp_live_fg (
+            erp_row_id, sn_fg, kode_barang, brand, warna, th, th_panel, p, l, qty, sku_key
+          ) values (
+            ${`${P}-pct-fg`}, ${`${P}-pct-fg`}, 'WP7RT-PCT', 'WP7RT-PCT', '4', 0.3, 4, 4880, 1220, 9, ${key}
+          )
         `;
         const { status, body } = await GET<SkuDetailResponse>(`/api/stock/sku/${encodeURIComponent(key)}`);
         expect(status).toBe(200);
@@ -1760,7 +1866,7 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
         // The double-decoded spelling must NOT resolve — proving the single decode.
         const doubled = await app.inject({
           method: "GET",
-          url: `/api/stock/sku/${encodeURIComponent("WP7RT-PCT/X|004|0.3|4880|1220")}`,
+          url: `/api/stock/sku/${encodeURIComponent("WP7RT-PCT/X|4|0.3|4|4880|1220")}`,
         });
         expect(doubled.statusCode).toBe(404);
       });
@@ -1953,6 +2059,7 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
       await inRollback(async (tx) => {
         const pa = parts("ADJOK");
         const key = canonicalSkuKey(pa);
+        await seedWarna(tx);
         await seedFg(tx, [{ sn_fg: `${P}-adj-fg`, qty: 100, parts: pa }]);
         await seedLines(tx, [{ id: `${P}-adj-live`, qty_balance: 30, eta: 5, parts: pa }]);
         const before = await atpOf(key);
@@ -1988,7 +2095,7 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
         );
         expect(list.body.total).toBe(1);
         expect(list.body.items[0]!.qty_delta).toBe(-12);
-        expect(list.body.items[0]!.name).toBe("WP7RT-ADJOK 004 0.3 · 4880×1220");
+        expect(list.body.items[0]!.name).toBe(`WP7RT-ADJOK ${WARNA_NAME} 4 0.3 · 4880×1220`);
       });
     });
 

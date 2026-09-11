@@ -786,3 +786,161 @@ line releases `0`, a live or undated line releases its own `qty_balance`. Both
 are already on every `CommitLine`. **That preview is exact and free**, and it is
 the number that changes the decision. `atp_delta` is a post-hoc confirmation;
 `atp_after` is the authoritative figure.
+
+
+## AMENDMENT 16 — the unmatched-SKU warning belongs on the SALES page too
+
+**Raised by the front-end package, against my own scoping.** I scoped the
+unmatched-SKU alarm to `/stock-ppic` on the strength of §5.0, which keeps
+exception counts away from sales. That was wrong, and the reasoning against it is
+better than the reasoning for it.
+
+Trace the failure. The SKU join breaks, every commitment lands in the exceptions
+tray, `open_commitment` is zero, ATP equals on-hand for every SKU — and the
+damage is then done by **a rep in a customer's showroom quoting a number
+`/stock` presents as perfectly healthy**. PPIC seeing an alarm does not stop that
+sale, because PPIC is not in the room. I had put the warning on the screen that
+is safe and left the screen that does the harm untouched.
+
+The distinction that resolves it: §5.0 withholds a **count** from sales because
+"31 exceptions" reads as generalised breakage and gives a rep nothing to act on.
+That argument is about a number in a totals strip. It says nothing about **a
+sentence that tells them what to do** — which is precisely what the stale banner
+already gives sales, in a state that is *less* dangerous than this one. Stale
+data is visibly old; this is confidently wrong.
+
+**Ruling:** `/stock` carries one line above the list, at the same threshold, with
+**no numbers and no hygiene count** — §5.0 stays intact:
+
+> *Angka Bisa Dijual sedang tidak bisa dipakai untuk menjanjikan stok —
+> konfirmasi ke PPIC dulu.*
+
+It obeys the standing precedence (`off` ▸ `auth` ▸ `failing` ▸ `stale` ▸ this):
+never two claims on screen at once. `/stock-ppic` keeps the fuller alarm with the
+count and the link to the exceptions tab.
+
+## AMENDMENT 17 — two typed fields the pages should not have to infer
+
+**17a — `freshness.erp_authorized: boolean`** on `/summary` and `/sync-status`.
+Nothing distinguished "the ERP rejected our credentials" from "the sync failed",
+so the page was **string-sniffing `last_error`** for `HTTP 401`. That works only
+while `selarasClient` happens to compose that exact text; one reword upstream and
+the page silently downgrades to "sync failing" — telling an operator to wait for
+something that will never fix itself, because the fix is an admin action. An auth
+failure is the likeliest first-run outcome and the one where "wait" versus "call
+IT" is the entire message. (`tables[].last_error_kind` is an acceptable
+alternative shape.)
+
+**17b — `totals.exception_skus`** on `/summary`: the count of **distinct**
+`sku_key` with no matching `erp_live_fg` row. The alarm compared
+`totals.exceptions` (SO **lines**) against `totals.skus` (**SKUs**); several lines
+share a SKU, so the ratio ran several times high and measured 512% on a realistic
+population. With a true share the threshold drops from 50% to 25% — at a quarter
+of SKUs unmatched the join is already catastrophic, and the inflation headroom is
+no longer needed.
+
+## Known gap — `brand` / `th_panel` make §11-A1 obsolete
+
+§11-A1 records "the item has no brand field", which was true when the SKU key was
+`kode_barang|warna|th|p|l`. The verified ERP schema moved the key onto `brand` and
+the panel thickness, so `brand`/`brand_text` are now on the wire. Both pages still
+label the filter "Kode barang". That is a **spec change, not a bug** — ST-R8 asked
+for a brand filter and the field now exists to build one. Left unimplemented
+deliberately; spec it before building it.
+
+
+## AMENDMENT 18 — the deploy gate is a grep checklist, not a green build
+
+**Raised by the deployment package, and upheld.** Its evidence is the argument:
+three live defects appeared and were fixed inside one hour, and **not one of them
+was visible to `tsc` or to a passing test run.**
+
+- The worker wrote `kode_barang` into `erp_so_line` *after* the migration dropped
+  that column — a `42703` on every demand page, meaning `open_commitment` is zero
+  and **ATP equals on-hand across the whole catalogue**. `postgres.js` takes
+  column names as strings, so no type checker can see this class of defect.
+- `checkSkuKeyMatch()` — the unmatched-SKU alarm, the entire safety net under an
+  unvalidated join key — was **exported and called by nothing**, while two source
+  files documented it as running every sync. A decorative safety net is worse
+  than none, because it is believed.
+- `header` auth mode sent the *query-parameter* names as header names — exactly
+  the 401 that the config comment claimed had been fixed.
+
+Each was a green build. Two of the three would have shipped, and one of those
+makes the entire inventory read as promiseable.
+
+**Ruling:** `GO-LIVE.md` §1's greps are a **literal checklist executed at the
+deploy gate**, not advisory reading. In particular, before any deploy that
+touches the mirror:
+
+1. Every column the worker writes exists on the table it writes to — checked
+   against `information_schema`, not against the type checker.
+2. Both silent-catastrophe detectors (`checkCommitmentGate`, `checkSkuKeyMatch`)
+   have a **call site**, not merely an export.
+3. The credential names match the configured auth **mode**.
+4. The conformance suite **ran** rather than skipped.
+
+On (4): `--passWithNoTests` combined with `describe.skipIf(!hasDb)` means a green
+run proves little without `DATABASE_URL`. The standing rule is therefore **"green
+is not the check — not-skipped is the check."** A deploy gate that accepts a
+suite which silently skipped its own database tests is measuring nothing.
+
+
+## AMENDMENT 19 — §1 and §2 are superseded by the verified ERP schema
+
+§1's key (`kode_barang|warna|th|p|l`) and §2's `erp_so_line` / `erp_live_fg`
+column lists were written before anyone had seen the real Selaras schema. They
+are now wrong in a way that matters, and this amendment supersedes them.
+
+**The key is `brand | warna | th | th_panel | p | l`**, six segments, computed
+identically on both sides — because `tbl_1203` carries **no `kode_barang` and no
+`th`**. Under the old composition an SO line keyed as `-|4|-|4880|1220` against a
+stock row keyed `ACP-4MM|4|0.3|4880|1220`: nothing would ever have matched, every
+commitment would have fallen to the exceptions tray, and **ATP would have equalled
+on-hand for the entire catalogue**. Worked example, now passing end to end:
+
+```
+SO line  brand ACP · warna 4 · th_alu_skin 0.3 · total_thickness_acp 4 · 4880×1220
+FG roll  brand ACP · warna 4 · th          0.3 · t                   4 · 4880×1220
+both  ->  ACP|4|0.3|4|4880|1220
+```
+
+`th_alu_skin ↔ th` and `total_thickness_acp ↔ t` are **confirmed by the product
+owner (2026-09-11)**, not inferred.
+
+**Schema changes:** `erp_so_line` drops `kode_barang` and gains
+`brand`/`brand_text`/`warna_text`/`th_panel`. `erp_live_fg` keeps `kode_barang`
+for display, gains the same four, and is keyed on **`erp_row_id`**
+(`tbl_1210_STLiveFGMX_id`) with **`sn_fg` restored to being the roll serial** — a
+serial is a business identifier the ERP never promises to be unique or non-null,
+so keying on it risked merging two physical rolls into one mirror row and
+understating on-hand. A new `erp_warna` mirrors the colour master, because
+`warna` is an id and users must not be shown a bare number as a product.
+
+**The 5-argument `erp_sku_key` overload is explicitly dropped**, not replaced:
+`create or replace function` would otherwise leave a working-looking v1 twin in
+the database. The key-composition change also resets every sync cursor, because a
+new key only reaches rows that are re-fetched — rows older than the cursor would
+otherwise keep a retired key forever.
+
+**Also landed:** the WIB cursor grammar with a 12-hour lookback (§ FIX A —
+guarding against an ERP that parses our timestamp and discards the offset, which
+would skip rows permanently and silently); `deleted_at` soft-delete handling;
+`freshness.erp_authorized`; `tables[].last_error_kind`; `totals.exception_skus`;
+and `item.warna_name`. `CommitLine` **loses `kode_barang`** and gains
+`brand`/`brand_text`/`warna_name`/`th_panel`.
+
+## Residual unknowns — carried into the first live sync
+
+- **`warna` is normalized as text, not numeric.** A zero-padded `"004"` on one
+  side would not match `4` on the other. The doc says numeric on both sides, so
+  this bites only if the ERP renders it per-table. One-word fix; the
+  unmatched-ratio alarm is exactly what would surface it.
+- **The colour master's link column is ambiguous** — `warna_code` versus the row
+  id. All three readings are tried.
+- **`fields=` projection** is documented but never observed; the sweep reports
+  which happened.
+- **ST-R5.2 is still unrun.** The key is now *coherent* — both sides derive from
+  columns that exist — but whether it *resolves* across 137k SO lines and 1,464
+  stock rows is answerable only from production. That is what the unmatched-rate
+  alarm and `GO-LIVE.md` §4 exist for.

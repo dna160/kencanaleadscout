@@ -106,6 +106,18 @@
           color:var(--offline-ink);border-radius:12px;padding:12px 14px;
           font-size:13px;line-height:1.45;display:flex;gap:10px;
           align-items:flex-start;margin-bottom:12px}
+  /* A fourth look for a fourth kind of news. The families now read:
+     slate = the integration is switched off · amber = the data may be old ·
+     red = something is broken that a person has to fix, and waiting will not
+     fix it. Tokens only (--neg-bg / --neg-ink, the inherited .st-rejected
+     pair, 5.30:1) — no new hex. Used by the rejected-credentials box (§4) and
+     by the unmatched-SKU alarm, which are both exactly that kind of news. */
+  .alarmbox{background:var(--neg-bg);border:1px solid var(--neg-ink);
+            color:var(--neg-ink);border-radius:12px;padding:12px 14px;
+            font-size:13px;line-height:1.5;display:flex;gap:10px;
+            align-items:flex-start;margin-bottom:12px;font-weight:600}
+  .alarmbox .bd{min-width:0}
+  .alarmbox p{margin:6px 0 0}
 
   /* ── filter chip row + totals strip — CANONICAL, byte-identical on both pages
         (CONTRACTS "Open": the two pages had diverged; this is the reconciliation) ─ */
@@ -216,6 +228,12 @@
   </label>
 
   <div id="freshBox"></div>
+  <!-- ST-R5.3 safety net, user-facing half: when the SKU join does not resolve,
+       every commitment lands in the exceptions tray, ATP silently equals
+       on-hand, and the whole inventory reads as promiseable on a page that
+       looks perfectly healthy. Non-dismissible, and above the tabs so it is
+       visible whichever tab is open. -->
+  <div id="skuAlarm"></div>
 
   <div class="tabs" id="tabs" role="tablist" aria-label="Bagian PPIC"></div>
 
@@ -568,7 +586,7 @@ async function loadSummary(){
     SUMMARY_ERR=errText(res,"Gagal memuat data.");
     if(res.status===503){ DB_DOWN=true; applyLocks(); }
     if(HAD_SUMMARY) errToastThrottled("Gagal memuat data. Mencoba lagi otomatis.");
-    renderFreshness(); renderTabs(); return;
+    renderFreshness(); renderSkuAlarm(); renderTabs(); return;
   }
   DB_DOWN=false; SUMMARY_ERR=null;
   const j=res.json||{};
@@ -593,23 +611,217 @@ function applySummary(next){
   // §6.9 — tab 2 never auto-refreshes its rows; it offers the choice instead.
   const nowStale=nOrNull(SUMMARY.totals.stale_commitments);
   if(TAB==="lama"&&LM.rows.length&&prevStale!=null&&nowStale!=null&&prevStale!==nowStale) LM.changed=true;
-  renderFreshness(); renderTabs(); renderSkuList(); applyLocks();
+  renderFreshness(); renderSkuAlarm(); renderTabs(); renderSkuList(); applyLocks();
   if(TAB==="lama") renderUpdPill();
 }
 function erpOff(){ return SUMMARY.freshness && SUMMARY.freshness.erp_connected===false; }
 
+/* ── `warna` is an ID, not a name ─────────────────────────────────────────────
+   SO and stock rows carry `warna` as a numeric code (e.g. 4) into a colour
+   master whose `rm_warna` holds the name ("BLACK GALAXY"). Printing the code
+   puts "4" where the operator expects a product. The back end resolves it into
+   `warna_name` (= coalesce(warna_text, the tbl_1228 colour master's rm_warna))
+   and into `name`; this renders whichever has arrived and, when none has, falls
+   back to the code LABELLED as a code — a bare number never stands in for a
+   product name. Correct before and after the
+   back-end change lands. Byte-identical to the same block on /stock. */
+const trimStr = v => (v==null?"":String(v)).trim();
+const isKode  = v => /^[0-9]+$/.test(v);        // "4", "004" — a master-data id
+function warnaFromName(i){
+  // Server idiom (composeName): "{kode} {warna} {th} · {p}×{l}". Strip the parts
+  // we already hold as fields and whatever is left is the colour. If the strip
+  // does not bite we keep the fuller name — long but true — never the code.
+  let v=trimStr(i.name);
+  if(!v || v===trimStr(i.sku_key)) return "";        // nameless fallback, not a name
+  const dot=v.indexOf(" · "); if(dot>=0) v=v.slice(0,dot);
+  const kode=trimStr(i.kode_barang);
+  if(kode && v.toLowerCase().startsWith(kode.toLowerCase())) v=v.slice(kode.length).trim();
+  const th=i.th!=null?String(i.th):"";
+  if(th && v.toLowerCase().endsWith(th.toLowerCase())) v=v.slice(0,v.length-th.length).trim();
+  return v;
+}
+function warnaLabel(i){
+  if(!i) return "—";
+  const t=trimStr(i.warna_name)||trimStr(i.warna_text); if(t && !isKode(t)) return t;
+  const w=trimStr(i.warna);      if(w && !isKode(w)) return w;
+  const fromName=warnaFromName(i); if(fromName && !isKode(fromName)) return fromName;
+  const code=t||w||fromName;
+  if(code) return "Kode warna "+code;           // never a bare number
+  return trimStr(i.name)||trimStr(i.sku_key)||"—";
+}
+
+/* ── The five connection states — UX-SPEC §4 precedence, extended ─────────────
+   1 tidak terhubung  SELARAS_BASE_URL unset          → slate box   (suppresses all)
+   2 akses ditolak    reachable, credentials rejected → red box     (admin action)
+   3 sinkronisasi gagal  last attempt errored         → amber banner (we know why)
+   4 kedaluwarsa      no success in N intervals       → amber banner (only: old)
+   5 sehat                                            → freshness line only
+   Exactly one renders, highest first. 2 and 3 come from /api/stock/sync-status;
+   1 and 4 stay where the contract puts them, on /summary's freshness block. */
+let SYNC=null;        // last /sync-status payload that arrived, or null
+let WAS_CONN=null;    // to announce a recovery exactly once
+// Last-resort probe only. The server now classifies auth failures itself —
+// `freshness.erp_authorized` (FIX D) and per-table `last_error_kind:"auth"` —
+// and both are preferred below. This regex stays as the floor for a mirror that
+// predates those fields: the ERP client writes "HTTP 401 from ERP" verbatim into
+// last_error. Anything unmatched degrades to state 3, which is the honest
+// answer when we cannot tell.
+const AUTH_RE=/\bHTTP\s*(401|403)\b|\b(unauthorized|forbidden)\b/i;
+function normSync(j){
+  const o=j&&typeof j==="object"?j:{};
+  const f=o.freshness&&typeof o.freshness==="object"?o.freshness:{};
+  const tbl=Array.isArray(o.tables)?o.tables:[];
+  return {
+    root:o, freshness:f,
+    tables:tbl.map(t=>({
+      table_name:trimStr(t&&t.table_name),
+      last_error:trimStr(t&&t.last_error),
+      last_error_kind:trimStr(t&&t.last_error_kind),   // SyncErrorKind: "auth" | …
+      last_error_at:(t&&t.last_error_at)||null,
+      last_ok_at:(t&&t.last_ok_at)||null,
+    })),
+  };
+}
+function authRejected(){
+  // 1 · the typed field, straight off /summary's own freshness block — so this
+  //     is known on the 30s poll and does not need /sync-status to be reachable.
+  //     It is false ONLY on a recorded auth failure: never-synced is not an
+  //     authorization verdict, so a fresh deployment gets no "call IT" banner.
+  const sf=SUMMARY.freshness||{};
+  if(sf.erp_authorized===false) return true;
+  if(!SYNC) return false;
+  // 2 · the same field (and the spellings this page has always tolerated) on
+  //     /sync-status, at either level.
+  for(const k of ["erp_authorized","authorized"])
+    if(SYNC.freshness[k]===false || SYNC.root[k]===false) return true;
+  for(const k of ["erp_auth_failed","auth_failed","unauthorized"])
+    if(SYNC.freshness[k]===true || SYNC.root[k]===true) return true;
+  // 3 · the typed per-table classification.
+  if(SYNC.tables.some(t=>t.last_error_kind==="auth")) return true;
+  // 4 · floor: the prose the ERP client writes.
+  return SYNC.tables.some(t=>AUTH_RE.test(t.last_error));
+}
+// The worker clears last_error on a successful table pull, so a message that is
+// still there means that table's most recent attempt failed.
+function syncFailing(){ return !!(SYNC && SYNC.tables.some(t=>t.last_error!=="")); }
+function connState(){
+  const f=SUMMARY.freshness||{};
+  if(f.erp_connected===false) return "off";
+  if(authRejected()) return "auth";
+  if(syncFailing())  return "failing";
+  if(f.stale===true) return "stale";
+  return "ok";
+}
+function firstSyncError(){
+  const t=SYNC?SYNC.tables.find(x=>x.last_error!==""):null;
+  return t?t.last_error_at:null;
+}
+/* /sync-status is a three-row payload and is the only place states 2 and 3 are
+   visible. It polls on its own 60s tick; the Sinkronisasi tab feeds the same
+   store when it loads, so opening that tab refreshes this immediately. A failed
+   fetch is silent on purpose — an unknown sync state must never put a new claim
+   on screen. */
+async function loadConnStatus(){
+  const res=await api("/api/stock/sync-status");
+  if(res.ok) adoptSync(res.json);
+}
+function adoptSync(j){
+  SYNC=normSync(j);
+  const now=connState();
+  if((WAS_CONN==="failing"||WAS_CONN==="auth") && (now==="ok"||now==="stale")){
+    toast("Sinkronisasi ERP kembali normal.","ok");
+  }
+  if(WAS_CONN!==null && WAS_CONN!==now && now==="auth"){
+    announce("Peringatan: akses ERP ditolak. Hubungi tim IT.");
+  }
+  WAS_CONN=now;
+  if(!modalOpen()) renderFreshness();
+}
+
+/* ── ST-R5.3 · the unmatched-SKU alarm ───────────────────────────────────────
+   The SKU join key has never been validated against real ERP data. If it does
+   not resolve, every commitment falls into Belum Cocok, nothing is subtracted
+   from on-hand, ATP silently equals Stok Fisik, and the entire inventory reads
+   as promiseable on a page that otherwise looks perfectly healthy. This is the
+   user-facing half of that safety net; the other half is a server log nobody
+   watches.
+
+   THRESHOLD. Today `totals.exceptions` counts SO LINES while `totals.skus`
+   counts SKUs — different units, and several lines share one SKU, so the ratio
+   runs a few times higher than the true share of unmatched SKUs. A working join
+   (a few percent of SKUs, a handful of lines each) lands in the low tens of
+   percent; a broken join key lands at several hundred. 50% sits in the empty
+   space between them, which is what keeps this from ever crying wolf — and the
+   copy says so, because an alarm that will not state its own trigger does not
+   get believed. `totals.exception_skus` (distinct unmatched sku_key) has been
+   asked for; the moment it arrives the ratio becomes a TRUE share, the
+   inflation headroom is no longer needed, and the limit drops to 25% by itself.
+   Identical trigger on /stock, which renders one sentence and no figures. */
+const EXC_ALARM_PCT=50;        // line-over-SKU ratio, inflated
+const EXC_ALARM_PCT_TRUE=25;   // true share, once exception_skus lands
+function excAlarm(){
+  const t=SUMMARY.totals||{};
+  const skus=nOrNull(t.skus);
+  if(skus==null||skus<=0) return null;
+  const exact=nOrNull(t.exception_skus);         // preferred when present
+  const un=exact!=null?exact:nOrNull(t.exceptions);
+  if(un==null) return null;
+  const limit=exact!=null?EXC_ALARM_PCT_TRUE:EXC_ALARM_PCT;
+  const pct=(un/skus)*100;
+  return { pct, limit, exact:exact!=null, fires:pct>=limit, unmatched:un, skus,
+           lines:n(t.exceptions) };
+}
+function renderSkuAlarm(){
+  const el=$("#skuAlarm"); if(!el) return;
+  const a=excAlarm();
+  if(!a||!a.fires){ el.innerHTML=""; return; }
+  // Two phrasings because the ratio means two different things. Saying "512%
+  // dari 812 SKU" when the numerator is lines would be a false share.
+  const scale=a.exact
+    ? `${esc(num(a.unmatched))} dari ${esc(num(a.skus))} SKU (${esc(num(Math.round(a.pct)))}%) tidak punya
+       baris stok yang cocok.`
+    : `${esc(num(a.lines))} baris Sales Order belum cocok dengan SKU stok.
+       Dibandingkan jumlah SKU (${esc(num(a.skus))}), itu ${esc(num(Math.round(a.pct)))}%.`;
+  el.innerHTML=`<div class="alarmbox" role="status">
+    <span aria-hidden="true">⚠️</span>
+    <div class="bd">
+      <b>Angka Bisa Dijual belum bisa dipercaya.</b>
+      <p>${scale}
+         Peringatan ini baru muncul di atas ${esc(String(a.limit))}%, jadi ini bukan soal
+         beberapa baris yang nyasar: pencocokan Kode SKU antara Sales Order dan stok belum jalan.</p>
+      <p>Baris yang belum cocok tidak memotong stok, jadi hampir seluruh stok terlihat bisa
+         dijual padahal sudah dipesan. Jangan pakai angka Bisa Dijual untuk menjanjikan stok,
+         dan beri tahu tim Sales, sampai pencocokan Kode SKU dibereskan bersama tim IT.</p>
+      <p><button class="btn ghost mini tap" id="alarmToEx">Buka Belum Cocok</button></p>
+    </div>
+  </div>`;
+  const b=$("#alarmToEx");
+  if(b) b.addEventListener("click",()=>selectTab("cocok"));
+}
+
 function renderFreshness(){
   const f=SUMMARY.freshness||{};
   const sub=$("#dataPer"), box=$("#freshBox");
+  const st=connState();
+
+  // The freshness line renders in every state, with different text (§4.1).
   if(!HAD_SUMMARY&&SUMMARY_ERR){ sub.textContent="Gagal memuat data"; }
-  else if(f.erp_connected===false){ sub.textContent="ERP tidak terhubung"; }
-  else if(!f.last_ok_at){ sub.textContent="Menunggu sinkronisasi pertama…"; }
+  else if(st==="off"){ sub.textContent="ERP tidak terhubung"; }
+  else if(st==="auth"){ sub.textContent="Akses ERP ditolak"; }
+  else if(!f.last_ok_at){
+    sub.textContent = st==="failing" ? "Sinkronisasi ERP gagal" : "Menunggu sinkronisasi pertama…";
+  }
   else {
     const r=rel(f.last_ok_at);
-    sub.textContent=`Data ERP per ${wibAuto(f.last_ok_at)}${r?` · ${r}`:""}`
-      + (SUMMARY_ERR?" · gagal memuat ulang":"");
+    const head=`Data ERP per ${wibAuto(f.last_ok_at)}`;
+    sub.textContent = SUMMARY_ERR ? head+" · gagal memuat ulang"
+      : st==="failing" ? head+" · sinkronisasi gagal"
+      : head+(r?` · ${r}`:"");
   }
-  if(f.erp_connected===false){
+
+  // Exactly one box or banner, highest state first. #freshBox holds all of
+  // them, so there is structurally no way for two to be on screen at once.
+  if(st==="off"){
     const populated=SUMMARY.items.length>0;
     box.innerHTML=`<div class="offbox" role="status">
       <span aria-hidden="true">🔌</span>
@@ -619,7 +831,37 @@ function renderFreshness(){
     </div>`;
     return;
   }
-  if(f.stale){
+  if(st==="auth"){
+    // NOT "tidak terhubung": the ERP is there and answering, it is refusing us.
+    // No retry affordance — the credential stays rejected until an
+    // administrator replaces it, and a Sinkron button here would only teach the
+    // operator that pressing it does nothing.
+    const since=firstSyncError();
+    box.innerHTML=`<div class="alarmbox" role="status">
+      <span aria-hidden="true">🔒</span>
+      <div class="bd"><b>Akses ERP ditolak.</b>
+        <p>Sistem ERP menolak kredensial LeadScout${since?` sejak <b>${esc(wibAuto(since))}</b>`:""},
+           jadi data stok berhenti diperbarui. Menjalankan sinkronisasi ulang tidak akan
+           memperbaikinya — hubungi tim IT untuk memperbarui kredensial ERP.</p>
+        <p>Sampai itu beres, angka di bawah adalah data terakhir yang berhasil diambil.</p>
+      </div>
+    </div>`;
+    return;
+  }
+  if(st==="failing"){
+    // Distinct from stale on purpose. Stale says only "the data is old"; this
+    // says the sync itself is failing — and the message is one tab away.
+    box.innerHTML=`<div class="banner" role="status">
+      <span aria-hidden="true">⚠️</span>
+      <span>Sinkronisasi ERP gagal${firstSyncError()?` sejak <b>${esc(wibAuto(firstSyncError()))}</b>`:""}.
+        Angka di bawah adalah data terakhir yang berhasil diambil${f.last_ok_at?`, per <b>${esc(wibAuto(f.last_ok_at))}</b>`:""}
+        — buka tab Sinkronisasi untuk pesan kesalahannya.</span>
+      <button class="btn mini tap ghost" id="syncToTab" style="margin-left:auto">Buka Sinkronisasi</button>
+    </div>`;
+    $("#syncToTab").addEventListener("click",()=>selectTab("sinkron"));
+    return;
+  }
+  if(st==="stale"){
     box.innerHTML=`<div class="banner" id="staleBanner" role="status">
       <span aria-hidden="true">⚠️</span>
       <span>Data ERP belum diperbarui sejak <b>${esc(wib(f.last_ok_at,false))}</b>. Angka di bawah mungkin
@@ -645,7 +887,7 @@ function renderSkuList(){
   $("#skuList").innerHTML=SUMMARY.items.map(i=>{
     const spec=[i.kode_barang,i.th!=null?num(i.th):null,
                 (i.p!=null&&i.l!=null)?`${num(i.p)}×${num(i.l)}`:null].filter(Boolean).join(" · ");
-    return `<option value="${esc(i.sku_key)}">${esc(i.warna||i.name||i.sku_key)}${spec?" · "+esc(spec):""}</option>`;
+    return `<option value="${esc(i.sku_key)}">${esc(warnaLabel(i))}${spec?" · "+esc(spec):""}</option>`;
   }).join("");
 }
 function skuByKey(k){ return SUMMARY.items.find(i=>eq(i.sku_key,k))||null; }
@@ -735,14 +977,15 @@ function normShortfall(r){
   const deficit=r.deficit!=null?n(r.deficit):Math.max(0,committed-(on_hand+adjustment));
   return {
     sku_key:String(pick(r,"sku_key")||""), name:pick(r,"name"),
-    kode_barang:pick(r,"kode_barang"), warna:pick(r,"warna"),
+    kode_barang:pick(r,"kode_barang")||pick(r,"brand_text")||pick(r,"brand"), brand:pick(r,"brand"), brand_text:pick(r,"brand_text"), warna:pick(r,"warna"),
+    warna_name:pick(r,"warna_name"), warna_text:pick(r,"warna_text"),
     th:nOrNull(r.th), p:nOrNull(r.p), l:nOrNull(r.l), unit:pick(r,"unit")||"lembar",
     on_hand, committed, adjustment, atp, deficit,
     stale_committed:n(r.stale_committed), nearest_eta:pick(r,"nearest_eta"),
   };
 }
 function skuCell(r){
-  const head=r.warna||r.name||r.sku_key;
+  const head=warnaLabel(r);
   const spec=[r.kode_barang,r.th!=null?num(r.th):null,
               (r.p!=null&&r.l!=null)?`${num(r.p)}×${num(r.l)}`:null].filter(Boolean).join(" · ");
   return `<b>${esc(head)}</b>${spec?`<div class="sub2">${esc(spec)}</div>`:""}`;
@@ -821,7 +1064,8 @@ function normStale(r){
   return {
     so_line_id:String(pick(r,"so_line_id","id")||""),
     sku_key:String(pick(r,"sku_key")||""), name:pick(r,"name"),
-    kode_barang:pick(r,"kode_barang"), warna:pick(r,"warna"),
+    kode_barang:pick(r,"kode_barang")||pick(r,"brand_text")||pick(r,"brand"), brand:pick(r,"brand"), brand_text:pick(r,"brand_text"), warna:pick(r,"warna"),
+    warna_name:pick(r,"warna_name"), warna_text:pick(r,"warna_text"),
     th:nOrNull(r.th), p:nOrNull(r.p), l:nOrNull(r.l),
     so_number:pick(r,"so_number"),
     customer:pick(r,"customer_name_text","customer_name"),
@@ -1143,7 +1387,7 @@ async function closeStale(id,btn){
     : `Baris ditutup. Bisa Dijual ${skuLabel(r)} naik ${num(j.atp_delta)} lembar.`,"ok");
   loadSummary();
 }
-function skuLabel(r){ return r.warna||r.name||r.sku_key; }
+function skuLabel(r){ return warnaLabel(r); }
 
 // ── segment=undated · inline confirm expander (UX-SPEC §6.6.2) ──────────────
 function collapseExpander(refocus){
@@ -1467,7 +1711,8 @@ function normException(r){
   return {
     so_line_id:String(pick(r,"so_line_id","id")||""),
     sku_key:String(pick(r,"sku_key")||""), name:pick(r,"name"),
-    kode_barang:pick(r,"kode_barang"), warna:pick(r,"warna"),
+    kode_barang:pick(r,"kode_barang")||pick(r,"brand_text")||pick(r,"brand"), brand:pick(r,"brand"), brand_text:pick(r,"brand_text"), warna:pick(r,"warna"),
+    warna_name:pick(r,"warna_name"), warna_text:pick(r,"warna_text"),
     th:nOrNull(r.th), p:nOrNull(r.p), l:nOrNull(r.l),
     so_number:pick(r,"so_number"),
     customer:pick(r,"customer_name_text","customer_name"),
@@ -1486,7 +1731,8 @@ function sebab(r){
   return "Tidak ada di stok";
 }
 function exDetail(r){
-  return [r.kode_barang,r.warna,r.th!=null?num(r.th):null,
+  const w=warnaLabel(r);
+  return [r.kode_barang,w==="—"?null:w,r.th!=null?num(r.th):null,
           (r.p!=null&&r.l!=null)?`${num(r.p)}×${num(r.l)}`:null]
     .map(v=>v==null||v===""||v==="-"?null:v).filter(Boolean).join(" · ")||"—";
 }
@@ -1666,7 +1912,7 @@ function renderAdjustments(){
       const it=skuByKey(r.sku_key);
       return `<tr>
         <td>${esc(wib(r.created_at))}</td>
-        <td><b>${esc(r.name||(it&&(it.warna||it.name))||r.sku_key)}</b><div class="sub2">${esc(r.sku_key)}</div></td>
+        <td><b>${esc(it?warnaLabel(it):warnaLabel(r))}</b><div class="sub2">${esc(r.sku_key)}</div></td>
         <td class="sisa nums"><span class="avail ${r.qty_delta<0?"neg":""}">${esc(signed(r.qty_delta))}</span></td>
         <td style="overflow-wrap:anywhere">${esc(r.reason)}</td>
         <td class="hidesm">${esc(r.actor)}</td></tr>`;
@@ -1725,8 +1971,15 @@ async function loadSync(){
   SY.interval=nOrNull(j.interval_ms)||180000;
   SY.tables=syncTables(j);
   SY.running=Boolean(j.running)||SY.tables.some(t=>t.running);
-  $("#syTop").innerHTML=f.erp_connected===false
+  adoptSync(j);                       // same five states, one store, one truth
+  const stTop=connState();
+  $("#syTop").innerHTML=
+      stTop==="off"
     ? `<div class="offbox" role="status"><span aria-hidden="true">🔌</span><div><b>ERP tidak terhubung.</b><br>Sinkronisasi tidak berjalan. Hubungi tim IT untuk mengaktifkan.</div></div>`
+    : stTop==="auth"
+    ? `<div class="alarmbox" role="status"><span aria-hidden="true">🔒</span><div class="bd"><b>Akses ERP ditolak.</b><br>Sistem ERP menolak kredensial LeadScout. Menjalankan sinkronisasi ulang tidak akan memperbaikinya — hubungi tim IT untuk memperbarui kredensial ERP.</div></div>`
+    : stTop==="failing"
+    ? `<div class="banner" role="status"><span aria-hidden="true">⚠️</span><span>Sinkronisasi terakhir gagal. Pesan kesalahannya ada di kartu tabel di bawah.</span></div>`
     : f.stale
       ? `<div class="banner" role="status"><span aria-hidden="true">⚠️</span><span>Data ERP belum diperbarui sejak <b>${esc(wib(f.last_ok_at,false))}</b>.</span></div>`
       : "";
@@ -1812,7 +2065,7 @@ async function openSku(sku){
       <td class="sisa nums">${esc(num(x.qty_balance))}</td>
       <td><div class="cust">${esc(x.customer||"—")}</div></td>
       <td>${esc(x.sales||"—")}</td></tr>`;}).join("")}</tbody></table></div>`:`<p class="metaline">—</p>`;
-  openModal(`<h3>${esc(it.warna||it.name||sku)}</h3>
+  openModal(`<h3>${esc(warnaLabel(it)==="—"?sku:warnaLabel(it))}</h3>
     <p class="mp">${esc(spec)}${spec?" · ":""}Kode SKU ${esc(it.sku_key||sku)}</p>
     <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
       <span class="atp ${atp<0?"neg":""}">${esc(num(atp))}<span class="un">${esc(unit)}</span></span>
@@ -1847,9 +2100,11 @@ async function openSku(sku){
 renderTabs(); renderAdjForm();
 (async function boot(){
   await loadSummary();
+  loadConnStatus();
   loadTab(TAB);
 })();
 setInterval(loadSummary,30000);
+setInterval(loadConnStatus,60000);
 window.addEventListener("hashchange",()=>{
   const h=hashTab(), s=hashSeg();
   if(TABS.some(t=>t.id===h)&&h!==TAB){ TAB=h; renderTabs(); loadTab(h); }

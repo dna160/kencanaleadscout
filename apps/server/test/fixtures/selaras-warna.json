@@ -1,0 +1,33 @@
+{
+  "_comment": [
+    "WP-2 fixture — the colour master tbl_1228_DBRMWarnaID (273 rows live; four here).",
+    "`warna` on both mirrored tables is an ID into this table, so this is what turns",
+    "a '4' on the stock page into 'BLACK GALAXY' (FIX 7). Matching is still by id.",
+    "Row 3 is soft-deleted; row 4 has no primary key."
+  ],
+  "rows": [
+    {
+      "tbl_1228_DBRMWarnaID_id": 4,
+      "rm_warna": "BLACK GALAXY",
+      "deleted_at": null,
+      "updated_at": "2026-08-01T00:00:00Z"
+    },
+    {
+      "tbl_1228_DBRMWarnaID_id": 118,
+      "rm_warna": "SILVER METALLIC",
+      "deleted_at": null,
+      "updated_at": "2026-08-01T00:05:00Z"
+    },
+    {
+      "tbl_1228_DBRMWarnaID_id": 999,
+      "rm_warna": "WARNA DIHAPUS",
+      "deleted_at": "2026-09-01T00:00:00Z",
+      "updated_at": "2026-08-01T00:10:00Z"
+    },
+    {
+      "rm_warna": "TANPA ID",
+      "deleted_at": null,
+      "updated_at": "2026-08-01T00:15:00Z"
+    }
+  ]
+}

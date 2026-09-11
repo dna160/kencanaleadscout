@@ -53,6 +53,7 @@ const {
   adaptLiveFgRow,
   adaptSoHeaderRow,
   adaptSoLineRow,
+  adaptWarnaRow,
   buildPageUrl,
   fetchPage,
   parseErpNumber,
@@ -75,6 +76,7 @@ function loadFixture(name: string): unknown[] {
 }
 
 const FIXTURES: Record<SelarasTable, unknown[]> = {
+  warna: loadFixture("selaras-warna.json"),
   so_header: loadFixture("selaras-so-header.json"),
   so_line: loadFixture("selaras-so-line.json"),
   live_fg: loadFixture("selaras-live-fg.json"),
@@ -82,6 +84,7 @@ const FIXTURES: Record<SelarasTable, unknown[]> = {
 
 /** ERP table name (what the URL carries) → our logical table name. */
 const ERP_TABLE_TO_LOGICAL: Record<string, SelarasTable> = {
+  tbl_1228_DBRMWarnaID: "warna",
   tbl_1202_SOSalesOrderNID: "so_header",
   tbl_1203_SOSalesOrderDetailNID: "so_line",
   tbl_1210_STLiveFGMX: "live_fg",
@@ -105,29 +108,27 @@ function rawUpdatedAtMs(row: unknown): number {
 
 // ── The fake ERP ─────────────────────────────────────────────────────────────
 //
-// Three DIFFERENT envelope shapes on purpose, one per table, so a single run
-// proves the A1 assumption and both tolerated alternatives at once:
-//   so_header → `{ data, meta: { page, total_pages } }`   (A1, the assumption)
-//   so_line   → `{ results, total }`                      (row count → page count)
-//   live_fg   → a bare array                              (no envelope at all)
-
-type Envelope = "a1" | "results_total" | "bare_array";
-
-const ENVELOPE_BY_TABLE: Record<SelarasTable, Envelope> = {
-  so_header: "a1",
-  so_line: "results_total",
-  live_fg: "bare_array",
-};
+// It answers with the VERIFIED envelope (2026-09-11) for every table:
+//   `{ success, table, meta: { count, total, total_pages, page, limit, offset,
+//      order_by, order_dir, filters }, data: [...] }`
+// The tolerated alternatives (bare array, `results`/`total`, …) are still
+// covered, as unit tests of readEnvelope() rather than as pretend ERP behaviour.
 
 interface ErpFault {
   /** `${table}:${page}` → HTTP status to answer with instead of data. */
   status?: Record<string, number>;
   /** `${table}:${page}` → answer 200 with a non-JSON body (a login page, say). */
   garbage?: Record<string, string>;
+  /** `${table}:${page}` → answer 200 with `success: false` (FIX 5). */
+  unsuccessful?: Record<string, true>;
+  /** `${table}:${page}` → answer with an envelope the verified API never sends. */
+  shape?: Record<string, "bare_array">;
 }
 
 let faults: ErpFault = {};
 let requestLog: string[] = [];
+/** Headers of the most recent request, lower-cased — the auth tests read these. */
+let lastRequestHeaders: Record<string, string> = {};
 
 function erpRespond(path: string): { statusCode: number; data: unknown; headers: Record<string, string> } {
   requestLog.push(path);
@@ -142,6 +143,13 @@ function erpRespond(path: string): { statusCode: number; data: unknown; headers:
 
   const status = faults.status?.[key];
   if (status !== undefined) return { statusCode: status, data: `upstream said ${status}`, headers: {} };
+  if (faults.unsuccessful?.[key]) {
+    return {
+      statusCode: 200,
+      data: { success: false, table: erpTable, message: "refused", meta: {}, data: [] },
+      headers: { "content-type": "application/json" },
+    };
+  }
   const garbage = faults.garbage?.[key];
   if (garbage !== undefined) {
     return { statusCode: 200, data: garbage, headers: { "content-type": "text/html" } };
@@ -157,18 +165,29 @@ function erpRespond(path: string): { statusCode: number; data: unknown; headers:
   const slice = matching.slice((page - 1) * limit, page * limit);
 
   const headers = { "content-type": "application/json" };
-  switch (ENVELOPE_BY_TABLE[table]) {
-    case "a1":
-      return {
-        statusCode: 200,
-        data: { data: slice, meta: { page, total_pages: Math.max(1, Math.ceil(matching.length / limit)) } },
-        headers,
-      };
-    case "results_total":
-      return { statusCode: 200, data: { results: slice, total: matching.length }, headers };
-    case "bare_array":
-      return { statusCode: 200, data: slice, headers };
+  if (faults.shape?.[key] === "bare_array") {
+    return { statusCode: 200, data: slice, headers };
   }
+  return {
+    statusCode: 200,
+    data: {
+      success: true,
+      table: erpTable,
+      meta: {
+        count: slice.length,
+        total: matching.length,
+        total_pages: Math.max(1, Math.ceil(matching.length / limit)),
+        page,
+        limit,
+        offset: (page - 1) * limit,
+        order_by: url.searchParams.get("order_by"),
+        order_dir: url.searchParams.get("order_dir"),
+        filters: {},
+      },
+      data: slice,
+    },
+    headers,
+  };
 }
 
 let mockAgent: MockAgent;
@@ -182,6 +201,9 @@ beforeAll(() => {
     .get("http://erp.test")
     .intercept({ path: (p: string) => p.startsWith("/api/"), method: "GET" })
     .reply((opts) => {
+      lastRequestHeaders = {};
+      const raw = (opts.headers ?? {}) as Record<string, unknown>;
+      for (const [k, v] of Object.entries(raw)) lastRequestHeaders[k.toLowerCase()] = String(v);
       const res = erpRespond(String(opts.path));
       return { statusCode: res.statusCode, data: res.data, responseOptions: { headers: res.headers } };
     })
@@ -197,19 +219,64 @@ afterAll(async () => {
 beforeEach(() => {
   faults = {};
   requestLog = [];
+  lastRequestHeaders = {};
 });
 
 // ── 1. The client's assumptions, isolated ────────────────────────────────────
 
-describe("selarasClient — URL contract (PRD §4, assumption A2)", () => {
+describe("selarasClient — URL contract (VERIFIED 2026-09-11)", () => {
+  it("reads rows from <base>/table/{table}, not <base>/{table}", () => {
+    // The pre-documentation client sent GET <base>/{table}, which would have
+    // 404'd on the very first real request.
+    for (const [table, erpTable] of [
+      ["warna", "tbl_1228_DBRMWarnaID"],
+      ["so_header", "tbl_1202_SOSalesOrderNID"],
+      ["so_line", "tbl_1203_SOSalesOrderDetailNID"],
+      ["live_fg", "tbl_1210_STLiveFGMX"],
+    ] as const) {
+      const url = new URL(buildPageUrl(table, { since: null, page: 1, limit: 10 }));
+      expect(url.pathname, table).toBe(`/api/table/${erpTable}`);
+    }
+  });
+
   it("builds the documented query string, with __gte so no boundary row is skipped", () => {
     const url = new URL(buildPageUrl("so_line", { since: new Date("2026-09-01T02:00:00Z"), page: 3, limit: 500 }));
-    expect(url.pathname).toBe("/api/tbl_1203_SOSalesOrderDetailNID");
-    expect(url.searchParams.get("updated_at__gte")).toBe("2026-09-01T02:00:00.000Z");
+    expect(url.pathname).toBe("/api/table/tbl_1203_SOSalesOrderDetailNID");
+    // FIX A — the documented grammar is `YYYY-MM-DD HH:mm:ss` in WIB (UTC+7),
+    // and the request carries the cursor minus STOCK_SYNC_LOOKBACK_MINUTES.
+    // 02:00Z − 12h = 14:00Z the previous day = 21:00 WIB.
+    expect(url.searchParams.get("updated_at__gte")).toBe("2026-08-31 21:00:00");
     expect(url.searchParams.get("order_by")).toBe("updated_at");
     expect(url.searchParams.get("order_dir")).toBe("asc");
     expect(url.searchParams.get("limit")).toBe("500");
     expect(url.searchParams.get("page")).toBe("3");
+  });
+
+  it("sends the cursor in the documented WIB grammar, never ISO-8601 (FIX A)", () => {
+    // The silent failure this prevents: the spec documents WIB datetimes and says
+    // nothing about ISO-8601. An ERP that parsed `...T03:00:00.000Z` and then
+    // DISCARDED the offset would read it as 03:00 WIB, leaving the cursor SEVEN
+    // HOURS ahead. Every row updated in that window is skipped, and a cursor only
+    // moves forward, so no later run ever revisits them. Nothing logs.
+    const url = new URL(buildPageUrl("so_line", { since: new Date("2026-09-01T02:00:00Z"), page: 1, limit: 10 }));
+    const cursor = url.searchParams.get("updated_at__gte") ?? "";
+    expect(cursor).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+    expect(cursor).not.toContain("T");
+    expect(cursor).not.toContain("Z");
+    // And it denotes the instant we meant, read as WIB.
+    expect(Date.parse(`${cursor.replace(" ", "T")}+07:00`)).toBe(
+      new Date("2026-09-01T02:00:00Z").getTime() - 720 * 60_000,
+    );
+  });
+
+  it("subtracts a lookback wide enough to absorb a misread timezone (FIX A)", async () => {
+    const { config } = await import("../src/config.js");
+    // 12 hours by default, and the size is the point: it must comfortably exceed
+    // the 7-hour WIB offset, which is the specific failure it exists to absorb.
+    expect(config.stock.syncLookbackMinutes).toBe(720);
+    expect(config.stock.syncLookbackMinutes).toBeGreaterThan(7 * 60);
+    // Re-fetching is free: every write is an idempotent upsert keyed on the PK,
+    // which the idempotency test below proves over a whole replayed window.
   });
 
   it("omits the cursor entirely on a first, full pull", () => {
@@ -253,11 +320,25 @@ describe("readEnvelope — assumes A1, tolerates the alternatives (HANDOVER §2)
     },
   );
 
-  it("logs the observed shape ONCE, clearly enough to correct A1 from the log line", async () => {
+  it("says nothing when the ERP answers the verified shape", async () => {
     resetShapeNotices();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
-      // live_fg answers with a bare array; two fetches, one notice.
+      await fetchPage("live_fg", { since: null, page: 1, limit: PAGE_SIZE });
+      expect(warn.mock.calls.map((c) => String(c[0])).filter((m) => m.includes("envelope"))).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("logs an unexpected shape ONCE, clearly enough to correct the reader from the log line", async () => {
+    resetShapeNotices();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      // A body the verified envelope would never produce: a bare array. Two
+      // fetches, one notice — a warning every three minutes is a warning nobody
+      // reads.
+      faults = { shape: { "live_fg:1": "bare_array", "live_fg:2": "bare_array" } };
       await fetchPage("live_fg", { since: null, page: 1, limit: PAGE_SIZE });
       await fetchPage("live_fg", { since: null, page: 2, limit: PAGE_SIZE });
       const notices = warn.mock.calls.map((c) => String(c[0])).filter((m) => m.includes("envelope"));
@@ -270,31 +351,160 @@ describe("readEnvelope — assumes A1, tolerates the alternatives (HANDOVER §2)
   });
 });
 
-describe("adapters — one per table, indifferent to casing (A2)", () => {
-  it("adapts snake_case, camelCase and PascalCase rows alike", () => {
+describe("auth — Selaras issues a KEY + TOKEN pair, not a bearer credential", () => {
+  const KEY = "kcn_testkey_0000000000000000000000";
+  const TOK = "testtoken_1111111111111111111111111111";
+
+  it("defaults each placement to ITS OWN verified credential names", async () => {
+    // The bug: header mode lower-cased whatever SELARAS_KEY_PARAM held and sent
+    // `secret_key:` as a header name. Verified 2026-09-11, the headers are
+    // X-Secret-Key / X-Secret-Token and the QUERY params are secret_key /
+    // secret_token — two different names, so one default cannot serve both.
+    const { config } = await import("../src/config.js");
+    expect(config.selarasKeyHeader).toBe("x-secret-key");
+    expect(config.selarasTokenHeader).toBe("x-secret-token");
+    expect(config.selarasKeyParam).toBe("secret_key");
+    expect(config.selarasTokenParam).toBe("secret_token");
+  });
+
+  it("sends the credential pair as X-Secret-Key / X-Secret-Token headers", async () => {
+    // Read off the wire: the fake ERP records the headers it was called with.
+    lastRequestHeaders = {};
+    const saved = { key: process.env["SELARAS_SECRET_KEY"], tok: process.env["SELARAS_SECRET_TOKEN"] };
+    vi.resetModules();
+    process.env["SELARAS_SECRET_KEY"] = KEY;
+    process.env["SELARAS_SECRET_TOKEN"] = TOK;
+    try {
+      const isolated = await import("../src/erp/selarasClient.js");
+      await isolated.fetchPage("so_header", { since: null, page: 1, limit: 2, retryDelayMs: 0 });
+      expect(lastRequestHeaders["x-secret-key"]).toBe(KEY);
+      expect(lastRequestHeaders["x-secret-token"]).toBe(TOK);
+      // …and never as the query-param spelling, which would be a 401.
+      expect(lastRequestHeaders["secret_key"]).toBeUndefined();
+      expect(lastRequestHeaders["secret_token"]).toBeUndefined();
+    } finally {
+      if (saved.key === undefined) delete process.env["SELARAS_SECRET_KEY"];
+      else process.env["SELARAS_SECRET_KEY"] = saved.key;
+      if (saved.tok === undefined) delete process.env["SELARAS_SECRET_TOKEN"];
+      else process.env["SELARAS_SECRET_TOKEN"] = saved.tok;
+      vi.resetModules();
+    }
+  });
+
+  it("redacts the header names' values too, not just the query params", async () => {
+    const { redactSecrets } = await import("../src/erp/selarasClient.js");
+    const out = redactSecrets(`X-Secret-Key: ${KEY}; x-secret-token: ${TOK}`);
+    expect(out).not.toContain(KEY);
+    expect(out).not.toContain(TOK);
+  });
+
+  it("never puts the credential pair on the URL in the default header mode", async () => {
+    const { buildPageUrl } = await import("../src/erp/selarasClient.js");
+    const url = buildPageUrl("so_line", { since: null, page: 1, limit: 10 });
+    expect(url).not.toContain(KEY);
+    expect(url).not.toContain(TOK);
+    expect(url).not.toContain("secret_key");
+    expect(url).not.toContain("secret_token");
+  });
+
+  it("redacts the credential pair out of a URL, an error and a JSON blob", async () => {
+    const { redactSecrets } = await import("../src/erp/selarasClient.js");
+    const samples = [
+      `https://erp.example.com/t?secret_key=${KEY}&secret_token=${TOK}`,
+      `{"secret_key":"${KEY}","secret_token":"${TOK}"}`,
+      `401 Unauthorized: secret_token=${TOK}`,
+    ];
+    for (const raw of samples) {
+      const out = redactSecrets(raw);
+      expect(out, raw).not.toContain(KEY);
+      expect(out, raw).not.toContain(TOK);
+    }
+  });
+});
+
+describe("adapters — one per table, on the verified column names", () => {
+  it("reads the documented {table}_id primary key first (FIX 4)", () => {
+    expect(adaptSoHeaderRow(FIXTURES.so_header[0])?.id).toBe("SOH-1001");
+    expect(adaptSoLineRow(FIXTURES.so_line[0])?.id).toBe("SOL-2001");
+    // FIX B: the PRIMARY KEY is the ERP row id; `sn_fg` keeps the roll serial.
+    expect(adaptLiveFgRow(FIXTURES.live_fg[0])?.erp_row_id).toBe("FG-0001");
+    expect(adaptWarnaRow(FIXTURES.warna[0])?.id).toBe("4");
+    // The table-qualified name wins over a bare `id` carrying something else.
+    const both = adaptSoLineRow({ tbl_1203_SOSalesOrderDetailNID_id: "REAL", id: "LEGACY" });
+    expect(both?.id).toBe("REAL");
+    // …and the old spellings still work, so a mirror seeded before the remap
+    // keys the same way.
+    expect(adaptSoLineRow({ id: "LEGACY" })?.id).toBe("LEGACY");
+  });
+
+  it("adapts the documented fields, whatever casing they arrive in", () => {
     const header = adaptSoHeaderRow(FIXTURES.so_header[0]);
     expect(header?.id).toBe("SOH-1001");
     expect(header?.customer_name_text).toBe("PT Sinar Mandiri");
 
-    const line = adaptSoLineRow(FIXTURES.so_line[0]); // camelCase fixture
-    expect(line?.id).toBe("SOL-2001");
+    const line = adaptSoLineRow(FIXTURES.so_line[0]);
     expect(line?.qty_balance).toBe(319);
     expect(line?.estimate_delivery).toBe("2099-09-20");
+    expect(line?.brand_text).toBe("ACP Kencana");
+    expect(line?.warna_text).toBe("BLACK GALAXY");
 
-    const fg = adaptLiveFgRow(FIXTURES.live_fg[0]); // PascalCase fixture
-    expect(fg?.sn_fg).toBe("FG-0001");
+    const fg = adaptLiveFgRow(FIXTURES.live_fg[0]);
     expect(fg?.qty).toBe(2084);
     expect(fg?.lokasi).toBe("GD-01");
+    expect(fg?.kode_barang).toBe("ACP-4MM"); // display only, never in the key
+
+    // Casing tolerance is a property of the adapters, not of the fixtures.
+    const camel = adaptSoLineRow({
+      tbl_1203_SOSalesOrderDetailNID_id: "X", brand: "ACP", warna: 4,
+      thAluSkin: 0.3, TotalThicknessAcp: 4, P: 4880, l: 1220,
+    });
+    expect(camel?.th).toBe(0.3);
+    expect(camel?.th_panel).toBe(4);
+    expect(camel?.p).toBe(4880);
+  });
+
+  it("maps each side's OWN thickness columns onto the same two (the 2026-09-11 fix)", () => {
+    // tbl_1203 has th_alu_skin + total_thickness_acp; tbl_1210 has th + t.
+    const line = adaptSoLineRow(FIXTURES.so_line[0]);
+    const fg = adaptLiveFgRow(FIXTURES.live_fg[0]);
+    expect(line?.th).toBe(0.3);       // ← th_alu_skin
+    expect(line?.th_panel).toBe(4);   // ← total_thickness_acp
+    expect(fg?.th).toBe(0.3);         // ← th
+    expect(fg?.th_panel).toBe(4);     // ← t
+    // And the SO side must NOT pick up a bare `th`, which tbl_1203 does not
+    // have — a fallback probe for it would resurrect the wrong-column bug.
+    const sneaky = adaptSoLineRow({ tbl_1203_SOSalesOrderDetailNID_id: "X", th: 9.9, t: 9.9 });
+    expect(sneaky?.th).toBeNull();
+    expect(sneaky?.th_panel).toBeNull();
   });
 
   it("computes sku_key through canonicalSkuKey(), never its own copy (§7.4)", () => {
     const line = adaptSoLineRow(FIXTURES.so_line[0]);
     const fg = adaptLiveFgRow(FIXTURES.live_fg[0]);
-    const expected = canonicalSkuKey({ kode_barang: "ACP-4MM", warna: "004", th: 0.3, p: 4880, l: 1220 });
+    const expected = canonicalSkuKey({ brand: "ACP", warna: "4", th: 0.3, th_panel: 4, p: 4880, l: 1220 });
+    expect(expected).toBe("ACP|4|0.3|4|4880|1220");
     expect(line?.sku_key).toBe(expected);
     expect(fg?.sku_key).toBe(expected);
-    // Demand and supply must land on the SAME key or open_commitment under-counts.
+    // THE assertion of this whole remap: demand and supply land on the SAME key.
+    // Under the v1 composition the SO line keyed as '-|4|-|4880|1220' and nothing
+    // could ever match, so every SKU read as fully promiseable.
     expect(line?.sku_key).toBe(fg?.sku_key);
+  });
+
+  it("carries the soft-delete marker every table has (FIX 6)", () => {
+    expect(adaptSoLineRow(FIXTURES.so_line[0])?.deleted_at).toBeNull();
+    expect(adaptSoLineRow(FIXTURES.so_line[9])?.deleted_at).toBeInstanceOf(Date);
+    expect(adaptLiveFgRow(FIXTURES.live_fg[8])?.deleted_at).toBeInstanceOf(Date);
+    expect(adaptSoHeaderRow(FIXTURES.so_header[4])?.deleted_at).toBeInstanceOf(Date);
+    expect(adaptWarnaRow(FIXTURES.warna[2])?.deleted_at).toBeInstanceOf(Date);
+  });
+
+  it("reads the colour master, keeping the id AND a numeric form of it (FIX 7)", () => {
+    const w = adaptWarnaRow(FIXTURES.warna[0]);
+    expect(w?.id).toBe("4");
+    expect(w?.code_num).toBe(4);
+    expect(w?.rm_warna).toBe("BLACK GALAXY");
+    expect(adaptWarnaRow(FIXTURES.warna[3])).toBeNull(); // no id ⇒ unkeyable
   });
 
   it("normalizes messy-but-UNAMBIGUOUS values ('0.30', '4880.00', ' 004 ', dd/mm/yyyy) onto that same key", () => {
@@ -307,7 +517,7 @@ describe("adapters — one per table, indifferent to casing (A2)", () => {
 
   it("drops an unkeyable row instead of throwing", () => {
     expect(adaptSoHeaderRow(FIXTURES.so_header[3])).toBeNull(); // no id
-    expect(adaptLiveFgRow(FIXTURES.live_fg[4])).toBeNull(); // no serial
+    expect(adaptLiveFgRow(FIXTURES.live_fg[4])).toBeNull(); // no primary key
     expect(adaptLiveFgRow(null)).toBeNull();
     expect(adaptSoLineRow("ini bukan baris sama sekali")).toBeNull();
   });
@@ -416,14 +626,15 @@ describe("non-finite numerics are rejected at the adapter boundary (X11)", () =>
     expect(r.ambiguous).toBe(false);
   });
 
-  /** The FG fixture casing, so an override replaces the field instead of shadowing it. */
-  const FG_KEY = { th: "Th", p: "P", l: "L" } as const;
+  /** Each side's OWN column name for the same measurement (the 2026-09-11 map). */
+  const SO_KEY = { th: "th_alu_skin", th_panel: "total_thickness_acp", p: "p", l: "l" } as const;
+  const FG_KEY = { th: "th", th_panel: "t", p: "p", l: "l" } as const;
 
-  it.each(["th", "p", "l"] as const)(
+  it.each(["th", "th_panel", "p", "l"] as const)(
     "keeps a non-finite out of the sku_key-bearing column %s, on BOTH sides of the join",
     (column) => {
-      const line = adaptSoLineRow({ id: "X", kodeBarang: "ACP-4MM", warna: "004", th: 0.3, p: 4880, l: 1220, [column]: "NaN" });
-      const fg = adaptLiveFgRow({ SnFg: "X", KodeBarang: "ACP-4MM", Warna: "004", Th: 0.3, P: 4880, L: 1220, [FG_KEY[column]]: "Infinity" });
+      const line = adaptSoLineRow({ id: "X", brand: "ACP", warna: "4", th_alu_skin: 0.3, total_thickness_acp: 4, p: 4880, l: 1220, [SO_KEY[column]]: "NaN" });
+      const fg = adaptLiveFgRow({ sn_fg: "X", brand: "ACP", warna: "4", th: 0.3, t: 4, p: 4880, l: 1220, [FG_KEY[column]]: "Infinity" });
       expect(line?.[column]).toBeNull();
       expect(fg?.[column]).toBeNull();
       // Null degrades to the '-' placeholder, which is exactly what the SQL twin
@@ -437,20 +648,20 @@ describe("non-finite numerics are rejected at the adapter boundary (X11)", () =>
   );
 
   it.each(["qty_order", "qty_delivered"] as const)("nulls the nullable SO column %s", (column) => {
-    const row = adaptSoLineRow({ id: "X", qtyOrder: "NaN", qtyDelivered: "Infinity", qtyBalance: 5 });
+    const row = adaptSoLineRow({ id: "X", qty_order: "NaN", qty_delivered: "Infinity", qty_balance: 5 });
     expect(row?.[column]).toBeNull();
   });
 
   it.each(["qty_m2", "buffer_qty"] as const)("nulls the nullable FG column %s", (column) => {
-    const row = adaptLiveFgRow({ SnFg: "X", QtyM2: "NaN", BufferQty: "-Infinity", Qty: 5 });
+    const row = adaptLiveFgRow({ sn_fg: "X", qty_m2: "NaN", buffer_qty: "-Infinity", qty: 5 });
     expect(row?.[column]).toBeNull();
   });
 
   it("floors the two NOT NULL columns to 0 rather than writing NaN (A23)", () => {
     // `numeric not null` would happily accept NaN; 0 is the safe refusal, since
     // it reserves nothing and promises nothing.
-    expect(adaptSoLineRow({ id: "X", qtyBalance: "NaN" })?.qty_balance).toBe(0);
-    expect(adaptLiveFgRow({ SnFg: "X", Qty: "Infinity" })?.qty).toBe(0);
+    expect(adaptSoLineRow({ id: "X", qty_balance: "NaN" })?.qty_balance).toBe(0);
+    expect(adaptLiveFgRow({ sn_fg: "X", qty: "Infinity" })?.qty).toBe(0);
   });
 
   it("counts non-finites separately from ambiguous ones — they need different fixes", async () => {
@@ -493,6 +704,72 @@ describe("fetchPage — transport posture (§5)", () => {
       expect(res.error).toContain("non-JSON");
     }
     expect(requestLog).toHaveLength(1); // a shape fault; retrying would only hide it
+  });
+});
+
+describe("the verified envelope — success, and what a failed page must not do", () => {
+  it("reads the real envelope and flags it as the expected shape", () => {
+    const env = readEnvelope(
+      {
+        success: true,
+        table: "tbl_1203_SOSalesOrderDetailNID",
+        meta: { count: 1, total: 7, total_pages: 4, page: 1, limit: 2, offset: 0, order_by: "updated_at", order_dir: "asc", filters: {} },
+        data: [{ id: 1 }],
+      },
+      2,
+    );
+    expect(env.rows).toHaveLength(1);
+    expect(env.totalPages).toBe(4);
+    expect(env.success).toBe(true);
+    expect(env.matchedAssumption).toBe(true);
+  });
+
+  it("treats success:false as a FAILED page, not an empty one (FIX 5)", async () => {
+    faults = { unsuccessful: { "so_header:1": true } };
+    const res = await fetchPage("so_header", { since: null, page: 1, limit: PAGE_SIZE, retryDelayMs: 0 });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.error).toContain("success=false");
+      expect(res.retryable).toBe(false); // the ERP understood us and said no
+    }
+    expect(requestLog).toHaveLength(1);
+  });
+
+  it("reports success:null when the body carries no such field", () => {
+    expect(readEnvelope([{ id: 1 }], 10).success).toBeNull();
+    expect(readEnvelope({ data: [{ id: 1 }] }, 10).success).toBeNull();
+  });
+});
+
+describe("a 401 gets its own unmistakable line (FIX 5)", () => {
+  it("logs once per process, names the auth mode, and never prints a credential", async () => {
+    const { resetAuthNotices } = await import("../src/erp/selarasClient.js");
+    resetAuthNotices();
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      faults = { status: { "so_line:1": 401 } };
+      const first = await fetchPage("so_line", { since: null, page: 1, limit: PAGE_SIZE, retryDelayMs: 0 });
+      await fetchPage("so_line", { since: null, page: 1, limit: PAGE_SIZE, retryDelayMs: 0 });
+
+      const lines = error.mock.calls.map((c) => String(c[0])).filter((m) => m.includes("REJECTED OUR CREDENTIALS"));
+      expect(lines).toHaveLength(1); // once, not every three minutes
+      expect(lines[0]).toContain("401");
+      expect(lines[0]).toContain("X-Secret-Key");
+      expect(lines[0]).toContain("SELARAS_AUTH_MODE");
+      expect(lines[0]).not.toContain(TOKEN);
+      // The returned error points at that line rather than repeating it.
+      expect(first.ok).toBe(false);
+      if (!first.ok) expect(first.error).toContain("credentials rejected");
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it("says what a 400 usually means, since that is the other likely first-run fault", async () => {
+    faults = { status: { "so_line:1": 400 } };
+    const res = await fetchPage("so_line", { since: null, page: 1, limit: PAGE_SIZE, retryDelayMs: 0 });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toContain("unknown filter");
   });
 });
 
@@ -569,7 +846,7 @@ type AtpRow = { sku_key: string; on_hand: string; committed: string; atp: string
 async function mirrorSnapshot(sql: postgres.Sql<{}>): Promise<Record<string, unknown[]>> {
   const header = await sql<JsonRow[]>`select to_jsonb(t) - 'synced_at' as row from erp_so_header t order by id`;
   const line = await sql<JsonRow[]>`select to_jsonb(t) - 'synced_at' as row from erp_so_line t order by id`;
-  const fg = await sql<JsonRow[]>`select to_jsonb(t) - 'synced_at' as row from erp_live_fg t order by sn_fg`;
+  const fg = await sql<JsonRow[]>`select to_jsonb(t) - 'synced_at' as row from erp_live_fg t order by erp_row_id`;
   return {
     erp_so_header: header.map((r) => r.row),
     erp_so_line: line.map((r) => r.row),
@@ -605,8 +882,17 @@ async function resetCursors(sql: postgres.Sql<{}>): Promise<void> {
 }
 
 async function syncStateRows(sql: postgres.Sql<{}>) {
-  return sql<{ table_name: string; cursor_value: Date | null; last_error: string | null; running: boolean }[]>`
-    select table_name, cursor_value, last_error, running from erp_sync_state order by table_name
+  return sql<
+    {
+      table_name: string;
+      cursor_value: Date | null;
+      last_error: string | null;
+      last_error_kind: string | null;
+      running: boolean;
+    }[]
+  >`
+    select table_name, cursor_value, last_error, last_error_kind, running
+    from erp_sync_state order by table_name
   `;
 }
 
@@ -643,10 +929,13 @@ describe.skipIf(db === null)("syncWorker — against a real mirror schema", () =
     await resetCursors(sql);
   });
 
-  it("mirrors the fixture window, paging through all three tables in order", async () => {
+  it("mirrors the fixture window, paging through every table in order", async () => {
     const result = await run(sql);
     expect(result.started).toBe(true);
-    expect(result.tables.map((t) => t.table)).toEqual(["so_header", "so_line", "live_fg"]);
+    // The colour master first (small, and everything displays through it), then
+    // headers before lines because lines reference them, and live_fg LAST so
+    // on-hand is the freshest half of the ATP subtraction.
+    expect(result.tables.map((t) => t.table)).toEqual(["warna", "so_header", "so_line", "live_fg"]);
     expect(result.tables.every((t) => t.ok)).toBe(true);
 
     const counts = await sql<{ h: number; l: number; f: number }[]>`
@@ -661,6 +950,14 @@ describe.skipIf(db === null)("syncWorker — against a real mirror schema", () =
       select sum(qty)::text as qty from erp_live_fg where kode_barang = 'ACP-4MM'
     `;
     expect(onHand[0]?.qty).toBe("4168");
+
+    // FIX B: the primary key is the ERP row id, and the ROLL SERIAL is kept in
+    // its own column — `/api/stock/sku/:sku_key` shows it to an operator who is
+    // matching it against a physical panel.
+    const roll = await sql<{ erp_row_id: string; sn_fg: string | null }[]>`
+      select erp_row_id, sn_fg from erp_live_fg where erp_row_id = 'FG-0001'
+    `;
+    expect(roll[0]).toEqual({ erp_row_id: "FG-0001", sn_fg: "SN-0001" });
 
     // AMENDMENT 1: the undated approved line is mirrored with a NULL ETA — it is
     // real, undated demand, not a row to be dropped on the floor.
@@ -700,7 +997,7 @@ describe.skipIf(db === null)("syncWorker — against a real mirror schema", () =
     try {
       const result = await run(sql);
       expect(result.tables.find((t) => t.table === "live_fg")?.ok).toBe(true);
-      const rows = await sql<{ n: number }[]>`select count(*)::int as n from erp_live_fg where sn_fg = 'FG-0001'`;
+      const rows = await sql<{ n: number }[]>`select count(*)::int as n from erp_live_fg where erp_row_id = 'FG-0001'`;
       expect(rows[0]?.n).toBe(1);
     } finally {
       FIXTURES.live_fg = original;
@@ -783,7 +1080,9 @@ describe.skipIf(db === null)("syncWorker — against a real mirror schema", () =
     await run(sql);
     const mirrorBefore = await mirrorSnapshot(sql);
 
-    faults = { status: { "so_header:1": 500, "so_line:1": 500, "live_fg:1": 500 } };
+    faults = {
+      status: { "warna:1": 500, "so_header:1": 500, "so_line:1": 500, "live_fg:1": 500 },
+    };
     const result = await run(sql);
 
     expect(result.started).toBe(true); // resolved, did not reject
@@ -793,6 +1092,145 @@ describe.skipIf(db === null)("syncWorker — against a real mirror schema", () =
     const states = await syncStateRows(sql);
     expect(states.every((s) => s.running === false)).toBe(true);
     expect(states.every((s) => (s.last_error ?? "").length > 0)).toBe(true);
+    // FIX D: a 5xx is classified `server`, not `auth` — the page must not tell
+    // an operator to call IT when the ERP is merely down.
+    expect(states.every((s) => s.last_error_kind === "server")).toBe(true);
+  });
+
+  // ── FIX 6 · soft deletes ───────────────────────────────────────────────────
+
+  it("never mirrors a row that arrives already carrying deleted_at", async () => {
+    await run(sql);
+
+    const gone = await sql<{ n: number }[]>`
+      select (
+        (select count(*) from erp_so_line   where id         = 'SOL-2009')
+      + (select count(*) from erp_live_fg   where erp_row_id = 'FG-0007')
+      + (select count(*) from erp_so_header where id         = 'SOH-1004')
+      )::int as n
+    `;
+    // FG-0007 alone carries 5,000 lembar and SOL-2009 reserves 900. Mirroring a
+    // deleted FG row over-promises stock that does not physically exist — the
+    // direction this module exists to prevent.
+    expect(gone[0]?.n).toBe(0);
+  });
+
+  it("REMOVES a row from the mirror once the ERP marks it deleted (FIX 6)", async () => {
+    await run(sql);
+    const before = await sql<{ n: number }[]>`select count(*)::int as n from erp_so_line where id = 'SOL-2001'`;
+    expect(before[0]?.n).toBe(1);
+
+    // The ERP soft-deletes it. `deleted_at` is the routine deletion signal; the
+    // hourly reconciliation sweep is only the backstop for a hard delete.
+    const original = FIXTURES.so_line;
+    const live = original[0] as Record<string, unknown>;
+    FIXTURES.so_line = [{ ...live, deleted_at: "2026-09-08T10:00:00Z" }, ...original.slice(1)];
+    try {
+      await resetCursors(sql);
+      const result = await run(sql);
+      const soLine = result.tables.find((t) => t.table === "so_line");
+      expect(soLine?.ok).toBe(true);
+      expect(soLine?.deleted).toBeGreaterThan(0);
+
+      const after = await sql<{ n: number }[]>`select count(*)::int as n from erp_so_line where id = 'SOL-2001'`;
+      expect(after[0]?.n).toBe(0);
+      // …and it stops reserving, which is the only reason any of this matters.
+      const live_rows = await sql<{ n: number }[]>`
+        select count(*)::int as n from v_live_commitments where id = 'SOL-2001'
+      `;
+      expect(live_rows[0]?.n).toBe(0);
+    } finally {
+      FIXTURES.so_line = original;
+    }
+  });
+
+  // ── FIX 7 · the colour master ──────────────────────────────────────────────
+
+  it("mirrors the colour master so a page can read BLACK GALAXY, not 4", async () => {
+    await run(sql);
+    const rows = await sql<{ id: string; code: string | null; code_num: string | null; rm_warna: string | null }[]>`
+      select id, code, code_num::text as code_num, rm_warna from erp_warna order by id
+    `;
+    expect(rows.map((r) => r.id)).toEqual(["118", "4"]); // 999 is soft-deleted
+    const black = rows.find((r) => r.id === "4");
+    expect(black?.rm_warna).toBe("BLACK GALAXY");
+    expect(black?.code_num).toBe("4"); // so a mirrored '004' still resolves
+  });
+
+  // ── FIX 1 · the ST-R5.2 safety net ─────────────────────────────────────────
+
+  it("shouts, ONCE and loudly, when most live commitments match no stock at all", async () => {
+    // The alarm that stands in for ST-R5.2, which could not be run against live
+    // data. A few unmatched keys are normal (that is the exceptions tray); a
+    // MAJORITY unmatched is what a broken key composition looks like, and it
+    // fails toward over-promising: those commitments reserve nothing, so ATP
+    // equals on-hand and the whole inventory reads as promiseable.
+    await run(sql);
+    // Break the join the way a wrong segment list would: move the stock rows to
+    // a different key, leaving the demand keyed where it was.
+    await sql`update erp_live_fg set sku_key = sku_key || '|X'`;
+
+    const errors: string[] = [];
+    const report = await migrateMod.checkSkuKeyMatch(sql, { error: (m: string) => errors.push(m) });
+
+    expect(report.checked).toBe(true);
+    expect(report.liveLines).toBeGreaterThan(0);
+    expect(report.ratio).toBe(1);
+    expect(report.tripped).toBe(true);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("SKU KEY MATCHES ALMOST NOTHING");
+    expect(errors[0]).toContain("100%");
+    expect(errors[0]).toContain("STOCK_SKU_KEY_SEGMENTS"); // the knob, named
+    expect(errors[0]).toContain("SKU_SEGMENT_SOURCES"); // …and the mapping
+    // Example keys from BOTH sides, so the mismatch is diagnosable by eye.
+    expect(report.soSamples.length).toBeGreaterThan(0);
+    expect(report.fgSamples.length).toBeGreaterThan(0);
+    expect(errors[0]).toContain(report.soSamples[0]!);
+    expect(errors[0]).toContain(report.fgSamples[0]!);
+  });
+
+  it("stays quiet when the key matches, and when there is no demand at all", async () => {
+    await run(sql);
+    const errors: string[] = [];
+    const matched = await migrateMod.checkSkuKeyMatch(sql, { error: (m: string) => errors.push(m) });
+    expect(matched.tripped).toBe(false);
+    expect(matched.liveLines).toBeGreaterThan(0);
+
+    // An empty mirror is not evidence of a broken key. Warning here would fire on
+    // every fresh deployment forever, which is how a real alert gets ignored.
+    await sql`truncate erp_so_line`;
+    const empty = await migrateMod.checkSkuKeyMatch(sql, { error: (m: string) => errors.push(m) });
+    expect(empty.liveLines).toBe(0);
+    expect(empty.tripped).toBe(false);
+    expect(errors).toEqual([]);
+  });
+
+  it("honours STOCK_UNMATCHED_ALERT_RATIO as the threshold", async () => {
+    await run(sql);
+    await sql`update erp_live_fg set sku_key = sku_key || '|X'`;
+    const errors: string[] = [];
+    // A threshold of 1 means "only complain above 100% unmatched", which nothing
+    // can exceed — the knob genuinely gates the alarm.
+    const report = await migrateMod.checkSkuKeyMatch(sql, { error: (m: string) => errors.push(m) }, 1);
+    expect(report.ratio).toBe(1);
+    expect(report.tripped).toBe(false);
+    expect(errors).toEqual([]);
+  });
+
+  it("records an auth failure as a typed kind, not as prose (FIX D)", async () => {
+    const { resetAuthNotices } = await import("../src/erp/selarasClient.js");
+    resetAuthNotices();
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      faults = { status: { "so_line:1": 401 } };
+      await run(sql);
+      const state = (await syncStateRows(sql)).find((r) => r.table_name === "so_line");
+      expect(state?.last_error_kind).toBe("auth");
+      expect(state?.last_error).toBeTruthy();
+      expect(state?.last_error).not.toContain(TOKEN);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("refuses to start a second run while one is in flight (§4.2 manual kick)", async () => {
@@ -833,7 +1271,7 @@ describe.skipIf(db === null)("syncWorker — against a real mirror schema", () =
 
     // FG-0005 carries Qty "1.234" and QtyM2 "2,500".
     const fg = await sql<{ qty: string; qty_m2: string | null }[]>`
-      select qty::text, qty_m2::text from erp_live_fg where sn_fg = 'FG-0005'
+      select qty::text, qty_m2::text from erp_live_fg where erp_row_id = 'FG-0005'
     `;
     expect(fg[0]?.qty).toBe("0");
     expect(fg[0]?.qty_m2).toBeNull();
@@ -869,7 +1307,7 @@ describe.skipIf(db === null)("syncWorker — against a real mirror schema", () =
     // FG-0006 is mirrored — it has a serial, so it is a real row — but every one
     // of its numerics was refused at the adapter.
     const fg = await sql<{ th: string | null; p: string | null; l: string | null; qty: string; qty_m2: string | null }[]>`
-      select th::text, p::text, l::text, qty::text, qty_m2::text from erp_live_fg where sn_fg = 'FG-0006'
+      select th::text, p::text, l::text, qty::text, qty_m2::text from erp_live_fg where erp_row_id = 'FG-0006'
     `;
     expect(fg[0]).toEqual({ th: null, p: null, l: null, qty: "0", qty_m2: null });
 
@@ -892,8 +1330,8 @@ describe.skipIf(db === null)("syncWorker — against a real mirror schema", () =
     // And the TS key for that row agrees with the SQL key — which is the whole
     // point of X11. A stored NaN would make these two differ silently.
     const parity = await sql<{ stored: string; computed: string }[]>`
-      select sku_key as stored, erp_sku_key(kode_barang, warna, th, p, l) as computed
-        from erp_live_fg where sn_fg = 'FG-0006'
+      select sku_key as stored, erp_sku_key(brand, warna, th, th_panel, p, l) as computed
+        from erp_live_fg where erp_row_id = 'FG-0006'
     `;
     expect(parity[0]?.stored).toBe(parity[0]?.computed);
   });
