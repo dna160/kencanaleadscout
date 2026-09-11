@@ -49,7 +49,7 @@ const SKU_SEGMENT_ARGS: Record<SkuSegmentName, string> = {
  * The signature, in one place, so the drop of the retired overload and the
  * create below cannot disagree. Order matches SKU_SEGMENT_ARGS.
  */
-const SKU_KEY_SIGNATURE = "text,text,numeric,numeric,numeric,numeric";
+export const SKU_KEY_SIGNATURE = "text,text,numeric,numeric,numeric,numeric";
 
 /**
  * The v1 signature (`kode_barang, warna, th, p, l`). `create or replace function`

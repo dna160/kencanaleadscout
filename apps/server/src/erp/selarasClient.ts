@@ -1,11 +1,27 @@
 /**
  * Selaras ERP REST client (CONTRACTS §5, ST-R6).
  *
- * ⚠️ READ HANDOVER §2 BEFORE CHANGING THIS FILE. The Selaras integration does not
- * exist anywhere else in this repository: there is no recorded response body, no
- * base URL and no credential. The pagination envelope, the field casing and the
- * date format are all **unverified** (assumptions A1/A2). Everything this module
- * believes about the wire format is therefore deliberately concentrated here:
+ * ⚠️ REMAPPED 2026-09-11 against the VERIFIED Selaras API documentation. What is
+ * now fact rather than assumption:
+ *
+ *   - base URL `https://selaras2.io/kencana/api` (the `/api` suffix belongs in
+ *     SELARAS_BASE_URL). `https://selaras2.io/kencana/table_documentation` is the
+ *     human-facing documentation SPA, NOT the API root — pointing the env var at
+ *     it is the obvious wrong turn and costs twenty minutes.
+ *   - rows come from `GET <base>/table/{table}` — NOT `GET <base>/{table}`.
+ *     `GET <base>/tables` lists the tables and `GET <base>/table/{table}/columns`
+ *     returns a schema; neither is needed by the sync, both are worth knowing.
+ *   - auth is the header pair `X-Secret-Key` / `X-Secret-Token` (preferred), or
+ *     `?secret_key=` / `?secret_token=` as query params.
+ *   - the envelope is `{ success, table, meta: { count, total, total_pages, page,
+ *     limit, offset, order_by, order_dir, filters }, data: [...] }` — assumption
+ *     A1 was right, so the tolerant reader stays, plus `success === false` now
+ *     fails the page.
+ *   - every table carries `deleted_at`; a non-null value means the row is gone.
+ *   - upserts key on `{table}_id`, e.g. `tbl_1203_SOSalesOrderDetailNID_id`.
+ *
+ * Everything this module believes about the wire format is still deliberately
+ * concentrated here:
  *
  *   - ONE `adaptRow` per mirrored table (`adaptSoHeaderRow`, `adaptSoLineRow`,
  *     `adaptLiveFgRow`). The sync worker never touches a raw ERP field name.
@@ -31,28 +47,61 @@
  */
 import { request, type Dispatcher } from "undici";
 import { config } from "../config.js";
-import { canonicalSkuKey } from "./sku.js";
+import { canonicalSkuKey, SKU_SEGMENT_SOURCES } from "./sku.js";
 
 // ── Logical tables ───────────────────────────────────────────────────────────
 
-/** The three mirrored tables, in the order a run must process them (§5). */
-export const SYNC_TABLES = ["so_header", "so_line", "live_fg"] as const;
+/**
+ * The mirrored tables, in the order a run must process them (§5): the colour
+ * master first (it is small and everything else displays through it), then
+ * headers before lines because lines reference them, and live_fg LAST so
+ * on-hand is the freshest half of the ATP subtraction.
+ */
+export const SYNC_TABLES = ["warna", "so_header", "so_line", "live_fg"] as const;
 export type SelarasTable = (typeof SYNC_TABLES)[number];
 
 /**
- * Logical name → ERP table name, per the table names the PRD cites. A2: the REST
- * path is assumed to be `<base>/<erp table name>`. If the real API nests them
- * (`/api/v1/tables/<name>`) this map and `buildPageUrl()` are the only edit.
+ * Logical name → ERP table name. VERIFIED 2026-09-11: the table names were
+ * already right; the path shape was not — rows come from `<base>/table/<name>`.
  */
 export const SELARAS_ENDPOINTS: Record<SelarasTable, string> = {
+  warna: "tbl_1228_DBRMWarnaID",
   so_header: "tbl_1202_SOSalesOrderNID",
   so_line: "tbl_1203_SOSalesOrderDetailNID",
   live_fg: "tbl_1210_STLiveFGMX",
 };
 
+/**
+ * The path segment rows are read from. `GET <base>/table/{table}`, with
+ * `<base>/tables` and `<base>/table/{table}/columns` as the two sibling
+ * endpoints the sync does not use.
+ */
+const TABLE_PATH = "table";
+
+/**
+ * The primary key column, per the documented `{table}_id` convention — e.g.
+ * `tbl_1203_SOSalesOrderDetailNID_id`. Derived from the endpoint map rather than
+ * spelled out, so the two can never drift apart.
+ */
+export function primaryKeyField(table: SelarasTable): string {
+  return `${SELARAS_ENDPOINTS[table]}_id`;
+}
+
 // ── Mirrored row shapes (exactly the columns migrateErpStock.ts defines) ─────
 
-export interface SoHeaderRow {
+/**
+ * Every mirrored row carries the ERP's soft-delete marker (verified: EVERY table
+ * has `deleted_at`). A non-null value means the row is DELETED upstream: the
+ * worker does not mirror it and removes it from the mirror if it is already
+ * there. It is never a mirror column — a deleted row simply is not in the
+ * mirror — which is why it sits on this base type and not in any insert list.
+ */
+export interface MirrorRowBase {
+  /** Non-null ⇒ deleted upstream. Routine deletions come through here (FIX 6). */
+  deleted_at: Date | null;
+}
+
+export interface SoHeaderRow extends MirrorRowBase {
   id: string;
   so_number: string | null;
   customer_name_text: string | null;
@@ -62,12 +111,20 @@ export interface SoHeaderRow {
   erp_updated_at: Date | null;
 }
 
-export interface SoLineRow {
+/**
+ * The demand side. NOTE what is absent: `kode_barang` and a bare `th`, neither
+ * of which exists on `tbl_1203`. The identity columns are the mirror's canonical
+ * six, mapped from the SO table's own spellings by `SKU_SEGMENT_SOURCES`.
+ */
+export interface SoLineRow extends MirrorRowBase {
   id: string;
   so_id: string | null;
-  kode_barang: string | null;
+  brand: string | null;
+  brand_text: string | null;
   warna: string | null;
-  th: number | null;
+  warna_text: string | null;
+  th: number | null;       // aluminium skin  ← tbl_1203.th_alu_skin
+  th_panel: number | null; // total panel     ← tbl_1203.total_thickness_acp
   p: number | null;
   l: number | null;
   qty_order: number | null;
@@ -82,11 +139,16 @@ export interface SoLineRow {
   erp_updated_at: Date | null;
 }
 
-export interface LiveFgRow {
+export interface LiveFgRow extends MirrorRowBase {
   sn_fg: string;
+  /** Display only. The SO side has no such column, so it is NOT in the key. */
   kode_barang: string | null;
+  brand: string | null;
+  brand_text: string | null;
   warna: string | null;
-  th: number | null;
+  warna_text: string | null;
+  th: number | null;       // aluminium skin  ← tbl_1210.th
+  th_panel: number | null; // total panel     ← tbl_1210.t
   p: number | null;
   l: number | null;
   qty: number;
@@ -98,8 +160,18 @@ export interface LiveFgRow {
   erp_updated_at: Date | null;
 }
 
+/** The colour master `tbl_1228_DBRMWarnaID` — 273 rows, `warna` 4 = BLACK GALAXY. */
+export interface WarnaRow extends MirrorRowBase {
+  id: string;
+  /** The id read as a number, so a mirrored '004' still finds id '4'. */
+  code_num: number | null;
+  rm_warna: string | null;
+  erp_updated_at: Date | null;
+}
+
 /** Maps a logical table to the row type its adapter produces. */
 export interface SelarasRowByTable {
+  warna: WarnaRow;
   so_header: SoHeaderRow;
   so_line: SoLineRow;
   live_fg: LiveFgRow;
@@ -156,10 +228,15 @@ export function redactSecrets(input: unknown): string {
     /([?&](?:token|access_token|api_key|apikey|key|secret|secret_key|secret_token)=)[^&\s]+/gi,
     "$1***",
   );
-  // `query` auth mode puts the pair on the URL, so the CONFIGURED names are
-  // redacted too — a deployment may rename them, and a URL is the single most
-  // likely thing to reach a log line.
-  for (const name of [config.selarasKeyParam, config.selarasTokenParam]) {
+  // Both placements' CONFIGURED names are redacted — query mode puts the pair on
+  // the URL (the single most likely thing to reach a log line) and header mode
+  // can still have a header name echoed back in an error body.
+  for (const name of [
+    config.selarasKeyParam,
+    config.selarasTokenParam,
+    config.selarasKeyHeader,
+    config.selarasTokenHeader,
+  ]) {
     if (!/^[A-Za-z0-9_.-]{1,64}$/.test(name)) continue;
     s = s.replace(new RegExp(`([?&]${name}=)[^&\\s]+`, "gi"), "$1***");
     s = s.replace(new RegExp(`("?${name}"?\\s*[:=]\\s*"?)[^\\s"',;)}\\]]+`, "gi"), "$1***");
@@ -169,7 +246,13 @@ export function redactSecrets(input: unknown): string {
 
 // ── Envelope handling (A1, and the tolerated alternatives) ───────────────────
 
-/** What A1 says a page looks like. Anything else is tolerated, and logged once. */
+/**
+ * The verified envelope's row key. A1 turned out to be RIGHT — the real body is
+ * `{ success, table, meta: { count, total, total_pages, page, limit, offset,
+ * order_by, order_dir, filters }, data: [...] }` — so the reader keeps its
+ * tolerance (it costs nothing and a second ERP endpoint may differ) and the
+ * `matchedAssumption` flag now means "matched the verified shape".
+ */
 const ASSUMED_ROWS_KEY = "data";
 
 /** Keys that have been seen to carry the row array in REST envelopes. */
@@ -183,6 +266,13 @@ const TOTAL_ROWS_KEYS = ["total", "count", "total_count", "totalCount", "total_r
 
 export interface SelarasEnvelope {
   rows: unknown[];
+  /**
+   * The verified envelope carries a top-level `success`. `false` means the ERP
+   * refused the request even under a 200, so the page must FAIL rather than be
+   * read as "no new rows" — which would advance the cursor past data we never
+   * saw. `null` when the body carries no such field (a bare array, say).
+   */
+  success: boolean | null;
   /** Total pages when the ERP told us, else null — then paging stops on a short page. */
   totalPages: number | null;
   /** Human-readable description of the shape actually observed (for the notice). */
@@ -214,11 +304,12 @@ function positiveInt(v: unknown): number | null {
  */
 export function readEnvelope(body: unknown, limit: number): SelarasEnvelope {
   if (Array.isArray(body)) {
-    return { rows: body, totalPages: null, shape: "bare array (no envelope)", matchedAssumption: false };
+    return { rows: body, success: null, totalPages: null, shape: "bare array (no envelope)", matchedAssumption: false };
   }
   if (!isRecord(body)) {
-    return { rows: [], totalPages: null, shape: `non-object body (${typeof body})`, matchedAssumption: false };
+    return { rows: [], success: null, totalPages: null, shape: `non-object body (${typeof body})`, matchedAssumption: false };
   }
+  const success = typeof body["success"] === "boolean" ? body["success"] : null;
 
   let rows: unknown[] = [];
   let rowsKey: string | null = null;
@@ -277,7 +368,7 @@ export function readEnvelope(body: unknown, limit: number): SelarasEnvelope {
     rowsKey === null ? `no row array (keys: ${Object.keys(body).slice(0, 8).join(", ") || "none"})` : `rows at '${rowsKey}'`,
     metaKey === null ? "no page/row count" : `page count from '${metaKey}'`,
   ];
-  return { rows, totalPages, shape: shapeParts.join("; "), matchedAssumption };
+  return { rows, success, totalPages, shape: shapeParts.join("; "), matchedAssumption };
 }
 
 // One notice per distinct (table, shape) per process. Loud enough to act on,
@@ -299,6 +390,71 @@ function noticeShape(table: SelarasTable, env: SelarasEnvelope): void {
       `{ data: [...], meta: { page, total_pages } } — observed: ${env.shape}. ` +
       `Parsing continued with the tolerated alternative. Fix A1 in ` +
       `erp/selarasClient.ts (readEnvelope) if this is the real shape.`,
+  );
+}
+
+// ── Auth failures get their own unmistakable line ────────────────────────────
+//
+// A 401 is the single most likely first-run failure: the credential pair is
+// wrong, absent, or in the wrong placement (header vs query). Buried inside a
+// generic "HTTP 401 from ERP" it reads like any other transport hiccup and the
+// sync simply looks stale. Once per process, per table, it says what to check.
+
+const noticedAuthFailures = new Set<string>();
+
+/** Test seam: forget which auth failures have already been announced. */
+export function resetAuthNotices(): void {
+  noticedAuthFailures.clear();
+}
+
+function noticeAuthFailure(table: SelarasTable, status: number): void {
+  const key = `${table}:${status}`;
+  if (noticedAuthFailures.has(key)) return;
+  noticedAuthFailures.add(key);
+  const mode = config.selarasAuthMode;
+  const names =
+    mode === "header" ? `${config.selarasKeyHeader} / ${config.selarasTokenHeader} (headers)`
+    : mode === "query" ? `${config.selarasKeyParam} / ${config.selarasTokenParam} (query params)`
+    : "Authorization: Bearer (legacy single-token mode)";
+  console.error(
+    `[selaras] ERP REJECTED OUR CREDENTIALS — HTTP ${status} on '${table}'. NOTHING will sync until ` +
+      `this is fixed: the mirror keeps serving whatever it already holds and every stock figure ` +
+      `ages from here. Auth mode '${mode}' is sending ${names}. Verified 2026-09-11: Selaras wants ` +
+      `X-Secret-Key + X-Secret-Token as headers, or ?secret_key= + ?secret_token= as query params. ` +
+      `Check SELARAS_SECRET_KEY / SELARAS_SECRET_TOKEN are both set (values never logged), that ` +
+      `SELARAS_AUTH_MODE matches how they were issued, and that SELARAS_BASE_URL is the API root ` +
+      `(…/kencana/api) and not the table_documentation page.`,
+  );
+}
+
+/**
+ * A 4xx, described so the log says what to do about it. 401/403 additionally get
+ * the dedicated line above; 400 is what an unknown filter column returns, which
+ * is the other realistic first-run fault.
+ */
+function describeClientError(table: SelarasTable, status: number): string {
+  if (status === 401 || status === 403) {
+    noticeAuthFailure(table, status);
+    return `HTTP ${status} from ERP — credentials rejected (auth mode '${config.selarasAuthMode}'); see the [selaras] line above`;
+  }
+  if (status === 400) {
+    return `HTTP 400 from ERP — the request was refused, most likely an unknown filter or order_by column for '${SELARAS_ENDPOINTS[table]}' (GET <base>/table/${SELARAS_ENDPOINTS[table]}/columns lists them)`;
+  }
+  if (status === 404) {
+    return `HTTP 404 from ERP — no such endpoint. Rows come from <base>/table/${SELARAS_ENDPOINTS[table]}; check SELARAS_BASE_URL ends at /api`;
+  }
+  return `HTTP ${status} from ERP`;
+}
+
+/**
+ * `success: false` under a 200 (FIX 5). Treated as a FAILED page, never as an
+ * empty one: an empty page would advance the cursor past rows we never saw, and
+ * the mirror would keep a stale commitment forever with nothing in the log.
+ */
+function successFailure(table: SelarasTable, env: SelarasEnvelope): string {
+  return (
+    `ERP answered 200 with success=false for '${SELARAS_ENDPOINTS[table]}' — the page was refused, ` +
+    `so the cursor stays put and nothing was mirrored from it (observed envelope: ${env.shape})`
   );
 }
 
@@ -599,23 +755,62 @@ function pickUpdatedAt(row: Map<string, unknown>): Date | null {
   return asTimestamp(pick(row, "updated_at", "updatedAt", "last_update", "lastUpdate", "modified_at", "tgl_update"));
 }
 
-/** The five product-identity fields, already typed for both the row and the key. */
+/** The six product-identity fields, already typed for both the row and the key. */
 interface IdentityFields {
-  kode_barang: string | null;
+  brand: string | null;
   warna: string | null;
   th: number | null;
+  th_panel: number | null;
   p: number | null;
   l: number | null;
 }
 
-function skuParts(row: Map<string, unknown>): IdentityFields {
+/** The `_text` display twins, which are NOT part of the key (they are names). */
+interface IdentityTextFields {
+  brand_text: string | null;
+  warna_text: string | null;
+}
+
+/**
+ * Read the key's six segments for ONE side of the join.
+ *
+ * The probe names come from `SKU_SEGMENT_SOURCES` in erp/sku.ts rather than
+ * being spelled again here, because the two sides diverging is precisely the bug
+ * this remap exists to fix: the SO table has `th_alu_skin` / `total_thickness_acp`
+ * where the FG table has `th` / `t`, and both must land on the same mirror
+ * column or demand stops matching supply — silently, and in the direction that
+ * over-promises.
+ *
+ * Nothing outside `SKU_SEGMENT_SOURCES[*][side]` is probed: a fallback to "try
+ * `th` on the SO side too" would resurrect exactly the wrong-column bug.
+ */
+function skuParts(row: Map<string, unknown>, side: "so_line" | "live_fg"): IdentityFields {
+  const read = (segment: keyof IdentityFields): unknown =>
+    pick(row, ...SKU_SEGMENT_SOURCES[segment][side]);
   return {
-    kode_barang: asText(pick(row, "kode_barang", "kodeBarang", "kode")),
-    warna: asText(pick(row, "warna", "colour", "color", "kode_warna")),
-    th: asNumber(pick(row, "th", "tebal", "thickness")),
-    p: asNumber(pick(row, "p", "panjang", "length")),
-    l: asNumber(pick(row, "l", "lebar", "width")),
+    brand: asText(read("brand")),
+    warna: asText(read("warna")),
+    th: asNumber(read("th")),
+    th_panel: asNumber(read("th_panel")),
+    p: asNumber(read("p")),
+    l: asNumber(read("l")),
   };
+}
+
+/**
+ * `brand` and `warna` are IDs; the ERP carries a `_text` twin for each, which is
+ * what a human should read. Preferred for display, never used for matching.
+ */
+function identityText(row: Map<string, unknown>): IdentityTextFields {
+  return {
+    brand_text: asText(pick(row, "brand_text")),
+    warna_text: asText(pick(row, "warna_text")),
+  };
+}
+
+/** The soft-delete marker every table carries (FIX 6). */
+function pickDeletedAt(row: Map<string, unknown>): Date | null {
+  return asTimestamp(pick(row, "deleted_at", "deletedAt"));
 }
 
 // ── adaptRow, one per table (the single place the wire format is believed) ───
@@ -633,7 +828,7 @@ function rowMap(raw: unknown): Map<string, unknown> | null {
 export function adaptSoHeaderRow(raw: unknown): SoHeaderRow | null {
   const row = rowMap(raw);
   if (!row) return null;
-  const id = asText(pick(row, "id", "so_id", "nid", "id_so", "soid"));
+  const id = asText(pick(row, ...pkNames("so_header")));
   if (id === null) return null; // no primary key ⇒ nothing to upsert onto
   return {
     id,
@@ -643,23 +838,21 @@ export function adaptSoHeaderRow(raw: unknown): SoHeaderRow | null {
     po_date: asDateOnly(pick(row, "po_date", "poDate", "tgl_po", "tanggal_po", "order_date")),
     status_order: asText(pick(row, "status_order", "statusOrder", "status")),
     erp_updated_at: pickUpdatedAt(row),
+    deleted_at: pickDeletedAt(row),
   };
 }
 
 export function adaptSoLineRow(raw: unknown): SoLineRow | null {
   const row = rowMap(raw);
   if (!row) return null;
-  const id = asText(pick(row, "id", "detail_id", "nid", "id_detail", "so_detail_id"));
+  const id = asText(pick(row, ...pkNames("so_line")));
   if (id === null) return null;
-  const parts = skuParts(row);
+  const parts = skuParts(row, "so_line");
   return {
     id,
-    so_id: asText(pick(row, "so_id", "soId", "header_id", "id_so", "parent_id")),
-    kode_barang: parts.kode_barang,
-    warna: parts.warna,
-    th: parts.th,
-    p: parts.p,
-    l: parts.l,
+    so_id: asText(pick(row, "so_id", "soId", "header_id", "id_so", "parent_id", `${SELARAS_ENDPOINTS.so_header}_id`)),
+    ...parts,
+    ...identityText(row),
     qty_order: asNumber(pick(row, "qty_order", "qtyOrder", "qty", "qty_so")),
     qty_delivered: asNumber(pick(row, "qty_delivered", "qtyDelivered", "qty_kirim", "qty_deliver")),
     // `not null default 0` in the schema, and it drives the liveness predicate:
@@ -672,69 +865,113 @@ export function adaptSoLineRow(raw: unknown): SoLineRow | null {
     sn_fg: asText(pick(row, "sn_fg", "snFg", "serial")), // observed NULL in practice (ST-R5.1)
     sku_key: canonicalSkuKey(parts),
     erp_updated_at: pickUpdatedAt(row),
+    deleted_at: pickDeletedAt(row),
   };
 }
 
 export function adaptLiveFgRow(raw: unknown): LiveFgRow | null {
   const row = rowMap(raw);
   if (!row) return null;
-  const snFg = asText(pick(row, "sn_fg", "snFg", "serial", "serial_number", "id"));
+  const snFg = asText(pick(row, ...pkNames("live_fg")));
   if (snFg === null) return null;
-  const parts = skuParts(row);
+  const parts = skuParts(row, "live_fg");
   return {
     sn_fg: snFg,
-    kode_barang: parts.kode_barang,
-    warna: parts.warna,
-    th: parts.th,
-    p: parts.p,
-    l: parts.l,
+    // Display only (§FIX 1): there is no `kode_barang` on the demand side, so it
+    // can never be part of the key — but it is what PPIC calls the product.
+    kode_barang: asText(pick(row, "kode_barang", "kodeBarang", "kode")),
+    ...parts,
+    ...identityText(row),
     // Canonical unit is lembar (A4, ST-R5.4); qty_m2 is display only.
     qty: asNumberOr(pick(row, "qty", "qty_lembar", "quantity", "stock"), 0),
-    qty_m2: asNumber(pick(row, "qty_m2", "qtyM2", "qty_meter", "luas")),
+    qty_m2: asNumber(pick(row, "qty_m2", "qtyM2", "m2", "qty_meter", "luas")),
     buffer_qty: asNumber(pick(row, "buffer_qty", "bufferQty")),
     buffer_status: asText(pick(row, "buffer_status", "bufferStatus")),
     lokasi: asText(pick(row, "lokasi", "location", "gudang", "warehouse")),
     sku_key: canonicalSkuKey(parts),
     erp_updated_at: pickUpdatedAt(row),
+    deleted_at: pickDeletedAt(row),
+  };
+}
+
+/**
+ * The colour master. `warna` on the two mirrored tables is an ID into this
+ * table — 273 rows, `warna = 4` is "BLACK GALAXY" — so this is what turns a "4"
+ * on screen into a colour name. Matching still happens on the id (FIX 7).
+ */
+export function adaptWarnaRow(raw: unknown): WarnaRow | null {
+  const row = rowMap(raw);
+  if (!row) return null;
+  const id = asText(pick(row, ...pkNames("warna")));
+  if (id === null) return null;
+  // The id normalized to a number, computed HERE so there is exactly one rule:
+  // a mirrored row may carry '004' where the master's id is '4'.
+  const code = parseErpNumber(id, "en");
+  return {
+    id,
+    code_num: code.value,
+    rm_warna: asText(pick(row, "rm_warna", "rmWarna", "warna_text", "nama_warna", "warna")),
+    erp_updated_at: pickUpdatedAt(row),
+    deleted_at: pickDeletedAt(row),
   };
 }
 
 const ADAPTERS: { [K in SelarasTable]: (raw: unknown) => SelarasRowByTable[K] | null } = {
+  warna: adaptWarnaRow,
   so_header: adaptSoHeaderRow,
   so_line: adaptSoLineRow,
   live_fg: adaptLiveFgRow,
 };
 
-// ── Primary keys, for the reconciliation sweep (PRD §10, deleted-line handling) ─
+// ── Primary keys ─────────────────────────────────────────────────────────────
 
 /**
- * The ERP field the sweep asks for as a projection, per table. This is the
- * column `migrateErpStock.ts` made the mirror's primary key, so a key set pulled
- * with it is directly comparable to `select <pk> from <mirror table>`.
+ * The tolerated spellings of a table's primary key, DOCUMENTED NAME FIRST.
+ *
+ * `{table}_id` (e.g. `tbl_1203_SOSalesOrderDetailNID_id`) is what the verified
+ * documentation says a row is upserted by, and it is derived from
+ * `SELARAS_ENDPOINTS` so it cannot drift from the endpoint it belongs to. The
+ * older guesses stay behind it as fallbacks: they cost nothing, and a mirror
+ * seeded before the remap keys the same way.
+ */
+const PK_FALLBACKS: Record<SelarasTable, readonly string[]> = {
+  warna: ["id", "warna_id", "nid"],
+  so_header: ["id", "so_id", "nid", "id_so", "soid"],
+  so_line: ["id", "detail_id", "nid", "id_detail", "so_detail_id"],
+  live_fg: ["sn_fg", "snFg", "serial", "serial_number", "id"],
+};
+
+function pkNames(table: SelarasTable): string[] {
+  return [primaryKeyField(table), ...PK_FALLBACKS[table]];
+}
+
+/**
+ * The ERP field the reconciliation sweep asks for as a projection, per table —
+ * the documented primary key, which is also the first thing every adapter picks.
  */
 export const SELARAS_KEY_FIELDS: Record<SelarasTable, string> = {
-  so_header: "id",
-  so_line: "id",
-  live_fg: "sn_fg",
+  warna: primaryKeyField("warna"),
+  so_header: primaryKeyField("so_header"),
+  so_line: primaryKeyField("so_line"),
+  live_fg: primaryKeyField("live_fg"),
 };
 
 /**
  * The primary key of a RAW row, read through exactly the same tolerant `pick()`
- * name lists the adapters use — because a key set that spelled `snFg` differently
- * from `adaptLiveFgRow()` would mark live rows as deleted and purge them. The
- * two must agree by construction, so they share the probe list literally.
+ * name list the adapters use — because a key set that spelled the key
+ * differently from the adapter would mark live rows as deleted and purge them.
+ * The two agree by construction: both call `pkNames()`.
  */
 export function extractRowKey(table: SelarasTable, raw: unknown): string | null {
   const row = rowMap(raw);
   if (!row) return null;
-  switch (table) {
-    case "so_header":
-      return asText(pick(row, "id", "so_id", "nid", "id_so", "soid"));
-    case "so_line":
-      return asText(pick(row, "id", "detail_id", "nid", "id_detail", "so_detail_id"));
-    case "live_fg":
-      return asText(pick(row, "sn_fg", "snFg", "serial", "serial_number", "id"));
-  }
+  return asText(pick(row, ...pkNames(table)));
+}
+
+/** True when a RAW row is soft-deleted upstream (FIX 6). */
+export function isRowDeleted(raw: unknown): boolean {
+  const row = rowMap(raw);
+  return row !== null && pickDeletedAt(row) !== null;
 }
 
 // ── HTTP ─────────────────────────────────────────────────────────────────────
@@ -779,6 +1016,17 @@ export type SelarasResult<T> =
   | { ok: false; error: string; status: number | null; retryable: boolean };
 
 /**
+ * `<base>/table/<erp table>` — VERIFIED 2026-09-11. It is NOT `<base>/<table>`,
+ * which is what this client sent before the documentation arrived and what would
+ * have 404'd on the first real request. Trailing slashes on the base are
+ * stripped, so both `…/kencana/api` and `…/kencana/api/` work.
+ */
+function tableUrl(table: SelarasTable): string {
+  const base = config.selarasBaseUrl.replace(/\/+$/, "");
+  return `${base}/${TABLE_PATH}/${SELARAS_ENDPOINTS[table]}`;
+}
+
+/**
  * `?updated_at__gte=<cursor>&order_by=updated_at&order_dir=asc&limit=N&page=P`
  * exactly as PRD §4 states (A2).
  *
@@ -789,8 +1037,7 @@ export type SelarasResult<T> =
  * delta path anywhere, which is precisely what makes this safe.
  */
 export function buildPageUrl(table: SelarasTable, opts: { since?: Date | null; page: number; limit: number }): string {
-  const base = config.selarasBaseUrl.replace(/\/+$/, "");
-  const url = new URL(`${base}/${SELARAS_ENDPOINTS[table]}`);
+  const url = new URL(tableUrl(table));
   if (opts.since) url.searchParams.set("updated_at__gte", opts.since.toISOString());
   url.searchParams.set("order_by", "updated_at");
   url.searchParams.set("order_dir", "asc");
@@ -823,8 +1070,7 @@ export function applyQueryAuth(url: URL): void {
  * two actually happened so the log says it plainly rather than pretending.
  */
 export function buildKeyPageUrl(table: SelarasTable, opts: { page: number; limit: number }): string {
-  const base = config.selarasBaseUrl.replace(/\/+$/, "");
-  const url = new URL(`${base}/${SELARAS_ENDPOINTS[table]}`);
+  const url = new URL(tableUrl(table));
   url.searchParams.set("fields", SELARAS_KEY_FIELDS[table]);
   url.searchParams.set("order_by", SELARAS_KEY_FIELDS[table]);
   url.searchParams.set("order_dir", "asc");
@@ -870,8 +1116,13 @@ async function requestOnce(url: string, timeoutMs: number, dispatcher?: Dispatch
   if (config.selarasAuthMode === "bearer") {
     if (config.selarasToken) headers["authorization"] = `Bearer ${config.selarasToken}`;
   } else if (config.selarasAuthMode === "header") {
-    if (config.selarasSecretKey) headers[config.selarasKeyParam.toLowerCase()] = config.selarasSecretKey;
-    if (config.selarasSecretToken) headers[config.selarasTokenParam.toLowerCase()] = config.selarasSecretToken;
+    // VERIFIED: the HEADERS are `X-Secret-Key` / `X-Secret-Token` — NOT the query
+    // parameter names lower-cased, which is what this used to send (`secret_key:`)
+    // and is a guaranteed 401 on the first real request. Each placement now has
+    // its own configured name; undici lower-cases header names anyway, and HTTP
+    // header names are case-insensitive, so `x-secret-key` is on the wire.
+    if (config.selarasSecretKey) headers[config.selarasKeyHeader.toLowerCase()] = config.selarasSecretKey;
+    if (config.selarasSecretToken) headers[config.selarasTokenHeader.toLowerCase()] = config.selarasSecretToken;
   }
   // `query` mode puts them on the URL — see applyQueryAuth().
 
@@ -944,11 +1195,15 @@ export async function fetchPage<K extends SelarasTable>(
       }
       if (res.status >= 400) {
         // 4xx is terminal for this run: no retry (§5).
-        return { ok: false, error: `HTTP ${res.status} from ERP`, status: res.status, retryable: false };
+        return { ok: false, error: describeClientError(table, res.status), status: res.status, retryable: false };
       }
 
       const env = readEnvelope(res.body, opts.limit);
       noticeShape(table, env);
+      if (env.success === false) {
+        // Not retryable: the ERP understood us and said no.
+        return { ok: false, error: successFailure(table, env), status: res.status, retryable: false };
+      }
 
       const adapt = ADAPTERS[table];
       const rows: SelarasRowByTable[K][] = [];
@@ -1052,10 +1307,13 @@ export async function fetchKeyPage(
         continue;
       }
       if (res.status >= 400) {
-        return { ok: false, error: `HTTP ${res.status} from ERP`, status: res.status, retryable: false };
+        return { ok: false, error: describeClientError(table, res.status), status: res.status, retryable: false };
       }
 
       const env = readEnvelope(res.body, opts.limit);
+      if (env.success === false) {
+        return { ok: false, error: successFailure(table, env), status: res.status, retryable: false };
+      }
       const keys: string[] = [];
       let dropped = 0;
       let projected = env.rows.length > 0;
@@ -1063,6 +1321,11 @@ export async function fetchKeyPage(
         // A projected row carries one field; anything wider means `fields=` was
         // ignored. Checked before extraction so a dropped row still counts.
         if (!isRecord(raw) || Object.keys(raw).length !== 1) projected = false;
+        // A soft-deleted row is NOT part of the current key set (FIX 6): leaving
+        // it in would keep a deleted row alive in the mirror forever. Invisible
+        // when `fields=` is honoured — a projected row carries the key alone —
+        // which is fine: the incremental pull deletes it by `deleted_at` anyway.
+        if (isRowDeleted(raw)) continue;
         const key = extractRowKey(table, raw);
         if (key === null) dropped += 1;
         else keys.push(key);

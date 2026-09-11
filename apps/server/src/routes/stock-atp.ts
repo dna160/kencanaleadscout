@@ -150,9 +150,19 @@ export type SkuState = "tersedia" | "habis" | "kosong" | "perlu_produksi";
 export interface SkuItem {
   sku_key: string;
   name: string;
+  /** FG-side display code. NULL for a SKU we hold no stock of — tbl_1203 has none. */
   kode_barang: string | null;
+  /** Product line id, and its `_text` display twin. Part of the key. */
+  brand: string | null;
+  brand_text: string | null;
+  /** Colour ID (matching is by id) … */
   warna: string | null;
+  /** … and the name it resolves to — `warna_text`, else the tbl_1228 master. */
+  warna_name: string | null;
+  /** Aluminium skin thickness. Unchanged meaning: FG `th` / SO `th_alu_skin`. */
   th: number | null;
+  /** Total panel thickness. FG `t` / SO `total_thickness_acp`. */
+  th_panel: number | null;
   p: number | null;
   l: number | null;
   unit: string;
@@ -171,9 +181,13 @@ export interface CommitLine {
   so_line_id: string;
   sku_key: string;
   name: string;
-  kode_barang: string | null;
+  /** No `kode_barang`: tbl_1203 has no such column (verified 2026-09-11). */
+  brand: string | null;
+  brand_text: string | null;
   warna: string | null;
+  warna_name: string | null;
   th: number | null;
+  th_panel: number | null;
   p: number | null;
   l: number | null;
   so_id: string | null;
@@ -335,8 +349,12 @@ export interface SyncStatusResponse {
 interface AggregateRow {
   sku_key: string;
   kode_barang: string | null;
+  brand: string | null;
+  brand_text: string | null;
   warna: string | null;
+  warna_name: string | null;
   th: string | null;
+  th_panel: string | null;
   p: string | null;
   l: string | null;
   on_hand: string | null;
@@ -360,22 +378,70 @@ interface EngineItem extends SkuItem {
 }
 
 /**
- * Display name. The ERP gives us codes, not marketing names, so the name is
- * composed deterministically from the identity columns in the same idiom the
- * 1.0 page used (` · ` between groups, `×` between dimensions):
- *   "ACP 4mm Black Galaxy 0.3 · 4880×1220"
+ * FIX 7 — resolve a colour ID to its name through the mirrored master
+ * `erp_warna` (`tbl_1228_DBRMWarnaID`, 273 rows: `warna = 4` → "BLACK GALAXY").
+ *
+ * A LATERAL with `limit 1`, never a plain join: two master rows could match one
+ * code ('4' and '04'), and a join that fans out would duplicate stock rows and
+ * double-count ATP. The exact id match is preferred over the numeric one, and
+ * `erp_num_or_null()` (migrateErpStock.ts) does the numeric comparison without
+ * ever casting a non-numeric string — a bare `::numeric` here would 22P02 on the
+ * first colour code that is not a number.
+ *
+ * `alias` is the source relation carrying `warna`; it is a literal from this
+ * file, never anything a request supplies. The join publishes `wn.rm_warna`.
+ */
+function warnaName(db: Sql, alias: "i" | "c" | "a") {
+  const col = alias === "i" ? db`i.warna` : alias === "c" ? db`c.warna` : db`a.warna`;
+  return db`
+    left join lateral (
+      select w.rm_warna
+      from erp_warna w
+      where w.id = ${col}
+         or (w.code_num is not null and w.code_num = erp_num_or_null(${col}))
+      order by (w.id = ${col}) desc nulls last
+      limit 1
+    ) wn on true
+  `;
+}
+
+/** Everything the display name is built from. Codes on the left, names preferred. */
+interface NameParts {
+  kode_barang?: string | null;
+  brand: string | null;
+  brand_text: string | null;
+  warna: string | null;
+  warna_name: string | null;
+  th: number | null;
+  th_panel: number | null;
+  p: number | null;
+  l: number | null;
+}
+
+/**
+ * Display name, composed deterministically from the identity columns in the same
+ * idiom the 1.0 page used (` · ` between groups, `×` between dimensions):
+ *   "ACP 4 BLACK GALAXY 0.3 · 4880×1220"
+ *
+ * FIX 7 — `brand` and `warna` are IDs, not names: `warna = 4` is "BLACK GALAXY"
+ * in `tbl_1228_DBRMWarnaID`. Rendering the raw code shows a user "4". So the
+ * resolved name wins wherever one exists (`_text` twin first, then the colour
+ * master), and the code is only the fallback — never nothing.
+ *
  * Falls back to the sku_key so a row is never nameless.
  */
-function composeName(
-  kode: string | null,
-  warna: string | null,
-  th: number | null,
-  p: number | null,
-  l: number | null,
-  skuKey: string,
-): string {
-  const head = [kode, warna, th != null ? String(th) : null].filter((v) => v !== null && v !== "").join(" ");
-  const dims = p != null && l != null ? `${p}×${l}` : "";
+function composeName(parts: NameParts, skuKey: string): string {
+  const brand = parts.brand_text ?? parts.brand ?? parts.kode_barang ?? null;
+  const warna = parts.warna_name ?? parts.warna ?? null;
+  const head = [
+    brand,
+    warna,
+    parts.th_panel != null ? String(parts.th_panel) : null,
+    parts.th != null ? String(parts.th) : null,
+  ]
+    .filter((v) => v !== null && v !== "")
+    .join(" ");
+  const dims = parts.p != null && parts.l != null ? `${parts.p}×${parts.l}` : "";
   const name = [head, dims].filter((v) => v !== "").join(" · ");
   return name || skuKey;
 }
@@ -462,17 +528,24 @@ async function loadItems(
     ),
     -- Identity columns: prefer the FG row (physical truth), fall back to the SO
     -- line so demand for a SKU we hold no stock of still renders with a name.
+    -- kode_barang exists only on the FG side (tbl_1203 has no such column), so
+    -- the demand arm contributes a NULL for it and the brand carries the name.
     ident_src as (
-      select sku_key, 1 as pri, min(kode_barang) as kode_barang, min(warna) as warna,
-             min(th) as th, min(p) as p, min(l) as l
+      select sku_key, 1 as pri, min(kode_barang) as kode_barang,
+             min(brand) as brand, min(brand_text) as brand_text,
+             min(warna) as warna, min(warna_text) as warna_text,
+             min(th) as th, min(th_panel) as th_panel, min(p) as p, min(l) as l
       from erp_live_fg ${f} group by sku_key
       union all
-      select sku_key, 2 as pri, min(kode_barang) as kode_barang, min(warna) as warna,
-             min(th) as th, min(p) as p, min(l) as l
+      select sku_key, 2 as pri, null::text as kode_barang,
+             min(brand) as brand, min(brand_text) as brand_text,
+             min(warna) as warna, min(warna_text) as warna_text,
+             min(th) as th, min(th_panel) as th_panel, min(p) as p, min(l) as l
       from erp_so_line ${f} group by sku_key
     ),
     ident as (
-      select distinct on (sku_key) sku_key, kode_barang, warna, th, p, l
+      select distinct on (sku_key) sku_key, kode_barang, brand, brand_text,
+             warna, warna_text, th, th_panel, p, l
       from ident_src order by sku_key, pri
     ),
     keys as (
@@ -483,8 +556,15 @@ async function loadItems(
     )
     select k.sku_key,
            i.kode_barang,
+           i.brand,
+           i.brand_text,
            i.warna,
-           i.th::text  as th,
+           -- FIX 7: warna is an id into tbl_1228_DBRMWarnaID, so a user would
+           -- otherwise read "4" instead of "BLACK GALAXY". The _text twin wins
+           -- when the ERP sends one; the mirrored master is the fallback.
+           coalesce(i.warna_text, wn.rm_warna) as warna_name,
+           i.th::text       as th,
+           i.th_panel::text as th_panel,
            i.p::text   as p,
            i.l::text   as l,
            coalesce(fg.on_hand, 0)::text          as on_hand,
@@ -499,6 +579,7 @@ async function loadItems(
            coalesce(adj.adjustment, 0)::text      as adjustment
     from keys k
     left join ident i    on i.sku_key    = k.sku_key
+    ${warnaName(db, "i")}
     left join fg         on fg.sku_key    = k.sku_key
     left join live       on live.sku_key  = k.sku_key
     left join stale      on stale.sku_key = k.sku_key
@@ -508,6 +589,7 @@ async function loadItems(
 
   return rows.map((r) => {
     const th = numOrNull(r.th);
+    const th_panel = numOrNull(r.th_panel);
     const p = numOrNull(r.p);
     const l = numOrNull(r.l);
     const on_hand = round2(numOf(r.on_hand));
@@ -526,14 +608,22 @@ async function loadItems(
         ? (p * l) / MM2_PER_M2
         : null;
 
-    return {
-      sku_key: r.sku_key,
-      name: composeName(r.kode_barang, r.warna, th, p, l, r.sku_key),
+    const identity = {
       kode_barang: r.kode_barang,
+      brand: r.brand,
+      brand_text: r.brand_text,
       warna: r.warna,
+      warna_name: r.warna_name,
       th,
+      th_panel,
       p,
       l,
+    };
+
+    return {
+      sku_key: r.sku_key,
+      name: composeName(identity, r.sku_key),
+      ...identity,
       unit: UNIT,
       on_hand,
       committed,
@@ -564,8 +654,12 @@ function toWire(it: EngineItem): SkuItem {
     sku_key: it.sku_key,
     name: it.name,
     kode_barang: it.kode_barang,
+    brand: it.brand,
+    brand_text: it.brand_text,
     warna: it.warna,
+    warna_name: it.warna_name,
     th: it.th,
+    th_panel: it.th_panel,
     p: it.p,
     l: it.l,
     unit: it.unit,
@@ -596,7 +690,9 @@ async function loadSyncState(db: Sql): Promise<SyncStateRow[]> {
   return db<SyncStateRow[]>`
     select table_name, cursor_value, last_ok_at, last_error, last_error_at, rows_synced, running
     from erp_sync_state
-    order by case table_name when 'so_header' then 1 when 'so_line' then 2 else 3 end, table_name
+    order by case table_name
+               when 'so_header' then 1 when 'so_line' then 2 when 'live_fg' then 3 else 4
+             end, table_name
   `;
 }
 
@@ -633,9 +729,12 @@ interface CommitRow {
   id: string;
   so_id: string | null;
   sku_key: string;
-  kode_barang: string | null;
+  brand: string | null;
+  brand_text: string | null;
   warna: string | null;
+  warna_name: string | null;
   th: string | null;
+  th_panel: string | null;
   p: string | null;
   l: string | null;
   qty_order: string | null;
@@ -677,7 +776,8 @@ function commitSource(db: Sql, segment: CommitSegment) {
   // column (or the `undated` column AMENDMENT 1 adds to the view) would otherwise
   // collide with the aliases the outer query computes.
   const cols = db`
-    select v.id, v.so_id, v.sku_key, v.kode_barang, v.warna, v.th, v.p, v.l,
+    select v.id, v.so_id, v.sku_key, v.brand, v.brand_text, v.warna, v.warna_text,
+           v.th, v.th_panel, v.p, v.l,
            v.qty_order, v.qty_delivered, v.qty_balance, v.status_order, v.approval,
            v.estimate_delivery, v.po_date, v.so_number, v.customer_name_text, v.sales_name_text
   `;
@@ -692,7 +792,8 @@ function commitSource(db: Sql, segment: CommitSegment) {
   const fromClosed = db`
     ${cols}, 'closed'::text as line_state
     from (
-      select l.id, l.so_id, l.sku_key, l.kode_barang, l.warna, l.th, l.p, l.l,
+      select l.id, l.so_id, l.sku_key, l.brand, l.brand_text, l.warna, l.warna_text,
+             l.th, l.th_panel, l.p, l.l,
              l.qty_order, l.qty_delivered, l.qty_balance, l.status_order, l.approval,
              l.estimate_delivery, h.po_date, h.so_number, h.customer_name_text, h.sales_name_text
       from erp_so_line l
@@ -795,8 +896,8 @@ async function loadCommitments(
     const needle = likeNeedle(o.q);
     filters.push(db`(
       c.sku_key ilike ${needle} escape '\\'
-      or coalesce(c.kode_barang, '') ilike ${needle} escape '\\'
-      or coalesce(c.warna, '') ilike ${needle} escape '\\'
+      or coalesce(c.brand_text, c.brand, '') ilike ${needle} escape '\\'
+      or coalesce(c.warna_text, c.warna, '') ilike ${needle} escape '\\'
       or coalesce(c.so_number, '') ilike ${needle} escape '\\'
       or coalesce(c.customer_name_text, '') ilike ${needle} escape '\\'
       or coalesce(c.sales_name_text, '') ilike ${needle} escape '\\'
@@ -827,8 +928,9 @@ async function loadCommitments(
   const offset = Math.max(o.offset ?? 0, 0);
 
   const rows = await db<CommitRow[]>`
-    select c.id, c.so_id, c.sku_key, c.kode_barang, c.warna,
-           c.th::text as th, c.p::text as p, c.l::text as l,
+    select c.id, c.so_id, c.sku_key, c.brand, c.brand_text, c.warna,
+           coalesce(c.warna_text, wn.rm_warna) as warna_name,
+           c.th::text as th, c.th_panel::text as th_panel, c.p::text as p, c.l::text as l,
            c.qty_order::text as qty_order, c.qty_delivered::text as qty_delivered,
            c.qty_balance::text as qty_balance,
            c.status_order, c.approval,
@@ -844,6 +946,7 @@ async function loadCommitments(
            o.created_at as ov_created_at, o.updated_at as ov_updated_at,
            count(*) over () as total_count
     from (${commitSource(db, o.segment)}) c
+    ${warnaName(db, "c")}
     left join stock_commitment_overrides o on o.so_line_id = c.id
     left join (select distinct sku_key from erp_live_fg) fg on fg.sku_key = c.sku_key
     ${whereSql}
@@ -881,6 +984,7 @@ async function loadCommitments(
 
 function shapeCommit(r: CommitRow): CommitLine {
   const th = numOrNull(r.th);
+  const th_panel = numOrNull(r.th_panel);
   const p = numOrNull(r.p);
   const l = numOrNull(r.l);
   const lineState: CommitLine["state"] =
@@ -888,10 +992,25 @@ function shapeCommit(r: CommitRow): CommitLine {
   return {
     so_line_id: String(r.id),
     sku_key: r.sku_key,
-    name: composeName(r.kode_barang, r.warna, th, p, l, r.sku_key),
-    kode_barang: r.kode_barang,
+    name: composeName(
+      {
+        brand: r.brand,
+        brand_text: r.brand_text,
+        warna: r.warna,
+        warna_name: r.warna_name,
+        th,
+        th_panel,
+        p,
+        l,
+      },
+      r.sku_key,
+    ),
+    brand: r.brand,
+    brand_text: r.brand_text,
     warna: r.warna,
+    warna_name: r.warna_name,
     th,
+    th_panel,
     p,
     l,
     so_id: r.so_id,
@@ -1070,7 +1189,7 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
       let short = all;
       if (q) {
         short = short.filter((it) =>
-          [it.sku_key, it.name, it.kode_barang, it.warna]
+          [it.sku_key, it.name, it.kode_barang, it.brand_text, it.brand, it.warna_name, it.warna]
             .some((v) => (v ?? "").toLowerCase().includes(q)),
         );
       }
@@ -1259,17 +1378,31 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
 
       const rows = await db<{
         id: string; sku_key: string; qty_delta: string; reason: string; actor: string;
-        created_at: Date | string; kode_barang: string | null; warna: string | null;
-        th: string | null; p: string | null; l: string | null; total_count: string;
+        created_at: Date | string; kode_barang: string | null;
+        brand: string | null; brand_text: string | null;
+        warna: string | null; warna_name: string | null;
+        th: string | null; th_panel: string | null; p: string | null; l: string | null;
+        total_count: string;
       }[]>`
         select a.id, a.sku_key, a.qty_delta::text as qty_delta, a.reason, a.actor, a.created_at,
-               i.kode_barang, i.warna, i.th::text as th, i.p::text as p, i.l::text as l,
+               i.kode_barang, i.brand, i.brand_text, i.warna,
+               coalesce(i.warna_text, wn.rm_warna) as warna_name,
+               i.th::text as th, i.th_panel::text as th_panel, i.p::text as p, i.l::text as l,
                count(*) over () as total_count
         from stock_adjustments a
         left join lateral (
-          select kode_barang, warna, th, p, l from erp_live_fg f
+          select kode_barang, brand, brand_text, warna, warna_text, th, th_panel, p, l
+          from erp_live_fg f
           where f.sku_key = a.sku_key limit 1
         ) i on true
+        left join lateral (
+          select w.rm_warna
+          from erp_warna w
+          where w.id = i.warna
+             or (w.code_num is not null and w.code_num = erp_num_or_null(i.warna))
+          order by (w.id = i.warna) desc nulls last
+          limit 1
+        ) wn on true
         ${whereSql}
         order by a.created_at desc, a.id desc
         limit ${limit} offset ${offset}
@@ -1286,7 +1419,20 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
       const shaped: AdjustmentRow[] = rows.map((r) => ({
         id: String(r.id),
         sku_key: r.sku_key,
-        name: composeName(r.kode_barang, r.warna, numOrNull(r.th), numOrNull(r.p), numOrNull(r.l), r.sku_key),
+        name: composeName(
+          {
+            kode_barang: r.kode_barang,
+            brand: r.brand,
+            brand_text: r.brand_text,
+            warna: r.warna,
+            warna_name: r.warna_name,
+            th: numOrNull(r.th),
+            th_panel: numOrNull(r.th_panel),
+            p: numOrNull(r.p),
+            l: numOrNull(r.l),
+          },
+          r.sku_key,
+        ),
         qty_delta: round2(numOf(r.qty_delta)),
         reason: r.reason,
         actor: r.actor,

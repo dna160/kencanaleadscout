@@ -16,6 +16,12 @@
  * "expected" value was typed by hand would prove only that a human agreed with
  * themselves twice.
  *
+ * 2026-09-11 — the composition changed with the verified column lists: the key is
+ * now `brand|warna|th|th_panel|p|l` (aluminium skin and total panel), because
+ * `tbl_1203` has neither `kode_barang` nor `th` and the v1 key could therefore
+ * never have matched a single row. The fixtures below exercise the SIX segments;
+ * the parity assertions are unchanged in kind — still live SQL against live TS.
+ *
  * DB-dependency: the SQL half needs Postgres. Without DATABASE_URL the parity
  * block SKIPS (it does not fail) — a red suite for an absent optional dependency
  * is noise, not signal. The pure-TS block always runs.
@@ -29,17 +35,18 @@ import {
   SKU_SEGMENTS,
   SKU_SEGMENT_KINDS,
   SKU_SEGMENT_SEPARATOR,
+  SKU_SEGMENT_SOURCES,
   type SkuParts,
   type SkuSegmentName,
   type SkuValue,
 } from "../src/erp/sku.js";
 import { closeDatabase, getSql } from "../src/db/client.js";
-import { runErpStockMigrations } from "../src/db/migrateErpStock.js";
+import { runErpStockMigrations, SKU_KEY_SIGNATURE } from "../src/db/migrateErpStock.js";
 
 const hasDb = Boolean(process.env.DATABASE_URL);
 
 // ── Fixture table ────────────────────────────────────────────────────────────
-// One row = one (kode_barang, warna, th, p, l) tuple pushed through both
+// One row = one (brand, warna, th, th_panel, p, l) tuple pushed through both
 // implementations. `sqlUnreachable` marks a tuple the SQL side cannot physically
 // receive, because the mirror columns for th/p/l are `numeric` and the value is
 // not castable — those rows assert TS behaviour only, and the reason is recorded
@@ -80,26 +87,41 @@ function fx(label: string, parts: SkuParts): Fixture {
   return reason ? { label, parts, sqlUnreachable: reason } : { label, parts };
 }
 
-const BASE: SkuParts = { kode_barang: "ACP-4MM", warna: "004", th: 0.3, p: 4880, l: 1220 };
+const BASE: SkuParts = { brand: "ACP", warna: "4", th: 0.3, th_panel: 4, p: 4880, l: 1220 };
 const withTh = (th: SkuValue): SkuParts => ({ ...BASE, th });
-const withKode = (kode_barang: SkuValue): SkuParts => ({ ...BASE, kode_barang });
+const withPanel = (th_panel: SkuValue): SkuParts => ({ ...BASE, th_panel });
+const withKode = (brand: SkuValue): SkuParts => ({ ...BASE, brand });
 const withWarna = (warna: SkuValue): SkuParts => ({ ...BASE, warna });
 
 const FIXTURES: readonly Fixture[] = [
   // ── The PRD §5A subject itself ─────────────────────────────────────────────
   fx("PRD §5A Black Galaxy", BASE),
   fx("Black Galaxy, trailing-zero dimensions", {
-    kode_barang: "ACP-4MM",
-    warna: "004",
+    brand: "ACP",
+    warna: "4",
     th: "0.30",
+    th_panel: "4.00",
     p: "4880.00",
     l: "1220.000",
   }),
+  // The pair the whole 2026-09-11 remap exists for: an SO line and its stock
+  // row, each read through its OWN column names, must key identically.
+  fx("SO line vs FG row — the same panel from both sides", {
+    brand: "ACP",
+    warna: 4,
+    th: 0.3,
+    th_panel: 4,
+    p: 4880,
+    l: 1220,
+  }),
 
   // ── Rule 1: positional integrity — every empty form collapses to '-' ───────
-  fx("all NULL", { kode_barang: null, warna: null, th: null, p: null, l: null }),
+  fx("all NULL", { brand: null, warna: null, th: null, th_panel: null, p: null, l: null }),
   fx("all undefined (absent keys)", {}),
   fx("empty string kode", withKode("")),
+  fx("null panel thickness", withPanel(null)),
+  fx("panel thickness with trailing zeros", withPanel("4.00")),
+  fx("panel thickness tie 3.005", withPanel("3.005")),
   fx("empty string warna", withWarna("")),
   fx("whitespace-only kode (spaces)", withKode("   ")),
   fx("whitespace-only kode (tab/newline/CR)", withKode("\t\n\r ")),
@@ -218,19 +240,23 @@ const FIXTURES: readonly Fixture[] = [
   // ── Cross-segment: the same digits distributed differently must not collide ─
   fx("dimension order matters (4880×1220)", { ...BASE, p: 4880, l: 1220 }),
   fx("dimension order matters (1220×4880)", { ...BASE, p: 1220, l: 4880 }),
-  fx("kode/warna boundary is not smeared", { ...BASE, kode_barang: "ACP", warna: "4MM004" }),
-  fx("kode/warna boundary, the other way", { ...BASE, kode_barang: "ACP4MM", warna: "004" }),
+  fx("kode/warna boundary is not smeared", { ...BASE, brand: "ACP", warna: "4MM004" }),
+  fx("kode/warna boundary, the other way", { ...BASE, brand: "ACP4MM", warna: "004" }),
+  // 0.3mm of aluminium on a 4mm panel is NOT 4mm of aluminium on a 0.3mm panel.
+  fx("the two thicknesses are not interchangeable (0.3 skin / 4 panel)", { ...BASE, th: 0.3, th_panel: 4 }),
+  fx("the two thicknesses are not interchangeable (4 skin / 0.3 panel)", { ...BASE, th: 4, th_panel: 0.3 }),
 
   // ── Realistic catalogue shapes ────────────────────────────────────────────
-  fx("realistic ACP", { kode_barang: "ACP-3MM-PE", warna: "SILVER MET", th: 3, p: 4880, l: 1220 }),
+  fx("realistic ACP", { brand: "ACP-PE", warna: "118", th: 0.21, th_panel: 3, p: 4880, l: 1220 }),
   fx("realistic with spacing noise", {
-    kode_barang: " acp-3mm-pe ",
-    warna: "silver   met",
-    th: "3.00",
+    brand: " acp-pe ",
+    warna: "118",
+    th: "0.210",
+    th_panel: "3.00",
     p: "4880",
     l: "1220",
   }),
-  fx("long code", { ...BASE, kode_barang: "A".repeat(200) }),
+  fx("long code", { ...BASE, brand: "A".repeat(200) }),
 ];
 
 // ── Deterministic fuzz ───────────────────────────────────────────────────────
@@ -294,9 +320,10 @@ const FUZZ_FIXTURES: readonly Fixture[] = (() => {
   for (let i = 0; i < FUZZ_COUNT; i += 1) {
     out.push(
       fx(`fuzz #${i}`, {
-        kode_barang: rnd() < 0.1 ? null : fuzzText(rnd),
+        brand: rnd() < 0.1 ? null : fuzzText(rnd),
         warna: rnd() < 0.1 ? null : fuzzText(rnd),
         th: rnd() < 0.1 ? null : fuzzNumeric(rnd),
+        th_panel: rnd() < 0.1 ? null : fuzzNumeric(rnd),
         p: rnd() < 0.1 ? null : fuzzNumeric(rnd),
         l: rnd() < 0.1 ? null : fuzzNumeric(rnd),
       }),
@@ -312,9 +339,29 @@ const ALL_FIXTURES: readonly Fixture[] = [...FIXTURES, ...FUZZ_FIXTURES];
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("canonicalSkuKey — structural invariants (no database required)", () => {
-  it("uses the v1 composition kode_barang|warna|th|p|l", () => {
+  it("uses the v2 composition brand|warna|th|th_panel|p|l", () => {
     expect(SKU_SEGMENTS).toEqual(DEFAULT_SKU_SEGMENTS);
-    expect(canonicalSkuKey(BASE)).toBe("ACP-4MM|004|0.3|4880|1220");
+    expect(SKU_SEGMENTS).toEqual(["brand", "warna", "th", "th_panel", "p", "l"]);
+    expect(canonicalSkuKey(BASE)).toBe("ACP|4|0.3|4|4880|1220");
+  });
+
+  it("uses only columns that exist on BOTH sides of the join (the 2026-09-11 fix)", () => {
+    // The bug this replaced: `kode_barang` and a bare `th` do not exist on
+    // tbl_1203, so every SO line keyed as '-|4|-|4880|1220' while its stock row
+    // keyed as 'ACP-4MM|4|0.3|4880|1220'. Nothing could ever match, every
+    // commitment fell to the exceptions tray, and ATP silently equalled on-hand.
+    for (const segment of SKU_SEGMENTS) {
+      const src = SKU_SEGMENT_SOURCES[segment];
+      expect(src.so_line.length, segment).toBeGreaterThan(0);
+      expect(src.live_fg.length, segment).toBeGreaterThan(0);
+    }
+    // The mapping itself, as the product owner confirmed it on 2026-09-11.
+    expect(SKU_SEGMENT_SOURCES.th.so_line[0]).toBe("th_alu_skin");
+    expect(SKU_SEGMENT_SOURCES.th.live_fg[0]).toBe("th");
+    expect(SKU_SEGMENT_SOURCES.th_panel.so_line[0]).toBe("total_thickness_acp");
+    expect(SKU_SEGMENT_SOURCES.th_panel.live_fg[0]).toBe("t");
+    // And nothing that only one side has may be a segment.
+    expect(Object.keys(SKU_SEGMENT_KINDS)).not.toContain("kode_barang");
   });
 
   it("emits exactly one field per configured segment, for every fixture", () => {
@@ -325,7 +372,7 @@ describe("canonicalSkuKey — structural invariants (no database required)", () 
   });
 
   it("never lets the separator survive inside a segment (injection guard)", () => {
-    // If a '|' could survive normalization, a crafted kode_barang would forge a
+    // If a '|' could survive normalization, a crafted brand would forge a
     // different SKU's key and steal its commitments.
     for (const { label, parts } of ALL_FIXTURES) {
       for (const field of canonicalSkuKey(parts).split(SKU_SEGMENT_SEPARATOR)) {
@@ -349,17 +396,19 @@ describe("canonicalSkuKey — structural invariants (no database required)", () 
   });
 
   it("treats null, undefined, '' and whitespace-only as the same absent value", () => {
-    const dash = ["-", "-", "-", "-", "-"].join(SKU_SEGMENT_SEPARATOR);
-    expect(canonicalSkuKey({ kode_barang: null, warna: null, th: null, p: null, l: null })).toBe(dash);
+    const dash = new Array(SKU_SEGMENTS.length).fill("-").join(SKU_SEGMENT_SEPARATOR);
+    expect(
+      canonicalSkuKey({ brand: null, warna: null, th: null, th_panel: null, p: null, l: null }),
+    ).toBe(dash);
     expect(canonicalSkuKey({})).toBe(dash);
     expect(
-      canonicalSkuKey({ kode_barang: "", warna: "  ", th: "", p: "\t", l: undefined }),
+      canonicalSkuKey({ brand: "", warna: "  ", th: "", th_panel: null, p: "\t", l: undefined }),
     ).toBe(dash);
   });
 
   it("keeps a segment that normalizes away distinct from a shifted key", () => {
     // '###' → '-' must occupy its slot; it must not slide the later segments left.
-    expect(canonicalSkuKey({ ...BASE, warna: "###" })).toBe("ACP-4MM|-|0.3|4880|1220");
+    expect(canonicalSkuKey({ ...BASE, warna: "###" })).toBe("ACP|-|0.3|4|4880|1220");
   });
 
   it("rounds ties half away from zero on the decimal string, not the double", () => {
@@ -389,11 +438,19 @@ describe("canonicalSkuKey — structural invariants (no database required)", () 
   });
 
   it("whitelists the configured segment list and falls back to v1", () => {
-    expect(resolveSkuSegments(["warna", "kode_barang"])).toEqual(["warna", "kode_barang"]);
+    expect(resolveSkuSegments(["warna", "brand"])).toEqual(["warna", "brand"]);
     expect(resolveSkuSegments(["warna", "warna"])).toEqual(["warna"]);
-    expect(resolveSkuSegments(["kode_barang", "drop table"])).toEqual(["kode_barang"]);
+    expect(resolveSkuSegments(["brand", "drop table"])).toEqual(["brand"]);
     expect(resolveSkuSegments([])).toEqual(DEFAULT_SKU_SEGMENTS);
     expect(resolveSkuSegments(["nonsense"])).toEqual(DEFAULT_SKU_SEGMENTS);
+    // The retired v1 name is not a segment any more, so a stale env var falls
+    // back to the shipped composition rather than keying on a phantom column.
+    expect(resolveSkuSegments(["kode_barang"])).toEqual(DEFAULT_SKU_SEGMENTS);
+    // The ERP's own spellings are accepted, because they are what a reader of
+    // the API documentation has in front of them.
+    expect(resolveSkuSegments(["brand", "warna", "th_alu_skin", "total_thickness_acp", "p", "l"]))
+      .toEqual(DEFAULT_SKU_SEGMENTS);
+    expect(resolveSkuSegments(["t"])).toEqual(["th_panel"]);
   });
 });
 
@@ -465,7 +522,7 @@ describe.skipIf(!hasDb)("erp_sku_key(SQL) === canonicalSkuKey(TS) — parity (in
     // recreates the commitment views, and needless view churn would race other
     // suites sharing this database.
     const [probe] = await db<{ oid: string | null }[]>`
-      select to_regprocedure('erp_sku_key(text,text,numeric,numeric,numeric)')::text as oid
+      select to_regprocedure(${`erp_sku_key(${SKU_KEY_SIGNATURE})`})::text as oid
     `;
     if (!probe?.oid) await runErpStockMigrations(db);
 
@@ -473,9 +530,10 @@ describe.skipIf(!hasDb)("erp_sku_key(SQL) === canonicalSkuKey(TS) — parity (in
       v === null || v === undefined ? null : String(v);
 
     const labels = reachable.map((f) => f.label);
-    const kode = reachable.map((f) => asText(f.parts.kode_barang));
+    const brand = reachable.map((f) => asText(f.parts.brand));
     const warna = reachable.map((f) => asText(f.parts.warna));
     const th = reachable.map((f) => asText(f.parts.th));
+    const thPanel = reachable.map((f) => asText(f.parts.th_panel));
     const p = reachable.map((f) => asText(f.parts.p));
     const l = reachable.map((f) => asText(f.parts.l));
 
@@ -483,11 +541,13 @@ describe.skipIf(!hasDb)("erp_sku_key(SQL) === canonicalSkuKey(TS) — parity (in
     // th/p/l arrive as text and are cast to `numeric` here exactly as the mirror
     // column would coerce them on insert.
     const rows = await db<{ label: string; key: string }[]>`
-      select t.label, erp_sku_key(t.kode, t.warna, t.th::numeric, t.p::numeric, t.l::numeric) as key
+      select t.label,
+             erp_sku_key(t.brand, t.warna, t.th::numeric, t.th_panel::numeric,
+                         t.p::numeric, t.l::numeric) as key
       from unnest(
-        ${labels}::text[], ${kode}::text[], ${warna}::text[],
-        ${th}::text[], ${p}::text[], ${l}::text[]
-      ) as t(label, kode, warna, th, p, l)
+        ${labels}::text[], ${brand}::text[], ${warna}::text[],
+        ${th}::text[], ${thPanel}::text[], ${p}::text[], ${l}::text[]
+      ) as t(label, brand, warna, th, th_panel, p, l)
     `;
     for (const r of rows) sqlKeys.set(r.label, r.key);
   }, 60_000);
@@ -524,7 +584,9 @@ describe.skipIf(!hasDb)("erp_sku_key(SQL) === canonicalSkuKey(TS) — parity (in
     // for a row is what the TS function computes for the same row's fields.
     const key = canonicalSkuKey(BASE);
     expect(sqlKeys.get("PRD §5A Black Galaxy")).toBe(key);
-    expect(key).toBe("ACP-4MM|004|0.3|4880|1220");
+    expect(key).toBe("ACP|4|0.3|4|4880|1220");
+    // Both sides of the join, read through their own ERP column names, agree.
+    expect(sqlKeys.get("SO line vs FG row — the same panel from both sides")).toBe(key);
   });
 
   it("names the fixtures SQL cannot be given, rather than skipping them silently", () => {

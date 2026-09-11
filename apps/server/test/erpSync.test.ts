@@ -53,6 +53,7 @@ const {
   adaptLiveFgRow,
   adaptSoHeaderRow,
   adaptSoLineRow,
+  adaptWarnaRow,
   buildPageUrl,
   fetchPage,
   parseErpNumber,
@@ -75,6 +76,7 @@ function loadFixture(name: string): unknown[] {
 }
 
 const FIXTURES: Record<SelarasTable, unknown[]> = {
+  warna: loadFixture("selaras-warna.json"),
   so_header: loadFixture("selaras-so-header.json"),
   so_line: loadFixture("selaras-so-line.json"),
   live_fg: loadFixture("selaras-live-fg.json"),
@@ -82,6 +84,7 @@ const FIXTURES: Record<SelarasTable, unknown[]> = {
 
 /** ERP table name (what the URL carries) → our logical table name. */
 const ERP_TABLE_TO_LOGICAL: Record<string, SelarasTable> = {
+  tbl_1228_DBRMWarnaID: "warna",
   tbl_1202_SOSalesOrderNID: "so_header",
   tbl_1203_SOSalesOrderDetailNID: "so_line",
   tbl_1210_STLiveFGMX: "live_fg",
@@ -105,29 +108,27 @@ function rawUpdatedAtMs(row: unknown): number {
 
 // ── The fake ERP ─────────────────────────────────────────────────────────────
 //
-// Three DIFFERENT envelope shapes on purpose, one per table, so a single run
-// proves the A1 assumption and both tolerated alternatives at once:
-//   so_header → `{ data, meta: { page, total_pages } }`   (A1, the assumption)
-//   so_line   → `{ results, total }`                      (row count → page count)
-//   live_fg   → a bare array                              (no envelope at all)
-
-type Envelope = "a1" | "results_total" | "bare_array";
-
-const ENVELOPE_BY_TABLE: Record<SelarasTable, Envelope> = {
-  so_header: "a1",
-  so_line: "results_total",
-  live_fg: "bare_array",
-};
+// It answers with the VERIFIED envelope (2026-09-11) for every table:
+//   `{ success, table, meta: { count, total, total_pages, page, limit, offset,
+//      order_by, order_dir, filters }, data: [...] }`
+// The tolerated alternatives (bare array, `results`/`total`, …) are still
+// covered, as unit tests of readEnvelope() rather than as pretend ERP behaviour.
 
 interface ErpFault {
   /** `${table}:${page}` → HTTP status to answer with instead of data. */
   status?: Record<string, number>;
   /** `${table}:${page}` → answer 200 with a non-JSON body (a login page, say). */
   garbage?: Record<string, string>;
+  /** `${table}:${page}` → answer 200 with `success: false` (FIX 5). */
+  unsuccessful?: Record<string, true>;
+  /** `${table}:${page}` → answer with an envelope the verified API never sends. */
+  shape?: Record<string, "bare_array">;
 }
 
 let faults: ErpFault = {};
 let requestLog: string[] = [];
+/** Headers of the most recent request, lower-cased — the auth tests read these. */
+let lastRequestHeaders: Record<string, string> = {};
 
 function erpRespond(path: string): { statusCode: number; data: unknown; headers: Record<string, string> } {
   requestLog.push(path);
@@ -142,6 +143,13 @@ function erpRespond(path: string): { statusCode: number; data: unknown; headers:
 
   const status = faults.status?.[key];
   if (status !== undefined) return { statusCode: status, data: `upstream said ${status}`, headers: {} };
+  if (faults.unsuccessful?.[key]) {
+    return {
+      statusCode: 200,
+      data: { success: false, table: erpTable, message: "refused", meta: {}, data: [] },
+      headers: { "content-type": "application/json" },
+    };
+  }
   const garbage = faults.garbage?.[key];
   if (garbage !== undefined) {
     return { statusCode: 200, data: garbage, headers: { "content-type": "text/html" } };
@@ -157,18 +165,29 @@ function erpRespond(path: string): { statusCode: number; data: unknown; headers:
   const slice = matching.slice((page - 1) * limit, page * limit);
 
   const headers = { "content-type": "application/json" };
-  switch (ENVELOPE_BY_TABLE[table]) {
-    case "a1":
-      return {
-        statusCode: 200,
-        data: { data: slice, meta: { page, total_pages: Math.max(1, Math.ceil(matching.length / limit)) } },
-        headers,
-      };
-    case "results_total":
-      return { statusCode: 200, data: { results: slice, total: matching.length }, headers };
-    case "bare_array":
-      return { statusCode: 200, data: slice, headers };
+  if (faults.shape?.[key] === "bare_array") {
+    return { statusCode: 200, data: slice, headers };
   }
+  return {
+    statusCode: 200,
+    data: {
+      success: true,
+      table: erpTable,
+      meta: {
+        count: slice.length,
+        total: matching.length,
+        total_pages: Math.max(1, Math.ceil(matching.length / limit)),
+        page,
+        limit,
+        offset: (page - 1) * limit,
+        order_by: url.searchParams.get("order_by"),
+        order_dir: url.searchParams.get("order_dir"),
+        filters: {},
+      },
+      data: slice,
+    },
+    headers,
+  };
 }
 
 let mockAgent: MockAgent;
@@ -182,6 +201,9 @@ beforeAll(() => {
     .get("http://erp.test")
     .intercept({ path: (p: string) => p.startsWith("/api/"), method: "GET" })
     .reply((opts) => {
+      lastRequestHeaders = {};
+      const raw = (opts.headers ?? {}) as Record<string, unknown>;
+      for (const [k, v] of Object.entries(raw)) lastRequestHeaders[k.toLowerCase()] = String(v);
       const res = erpRespond(String(opts.path));
       return { statusCode: res.statusCode, data: res.data, responseOptions: { headers: res.headers } };
     })
@@ -197,14 +219,29 @@ afterAll(async () => {
 beforeEach(() => {
   faults = {};
   requestLog = [];
+  lastRequestHeaders = {};
 });
 
 // ── 1. The client's assumptions, isolated ────────────────────────────────────
 
-describe("selarasClient — URL contract (PRD §4, assumption A2)", () => {
+describe("selarasClient — URL contract (VERIFIED 2026-09-11)", () => {
+  it("reads rows from <base>/table/{table}, not <base>/{table}", () => {
+    // The pre-documentation client sent GET <base>/{table}, which would have
+    // 404'd on the very first real request.
+    for (const [table, erpTable] of [
+      ["warna", "tbl_1228_DBRMWarnaID"],
+      ["so_header", "tbl_1202_SOSalesOrderNID"],
+      ["so_line", "tbl_1203_SOSalesOrderDetailNID"],
+      ["live_fg", "tbl_1210_STLiveFGMX"],
+    ] as const) {
+      const url = new URL(buildPageUrl(table, { since: null, page: 1, limit: 10 }));
+      expect(url.pathname, table).toBe(`/api/table/${erpTable}`);
+    }
+  });
+
   it("builds the documented query string, with __gte so no boundary row is skipped", () => {
     const url = new URL(buildPageUrl("so_line", { since: new Date("2026-09-01T02:00:00Z"), page: 3, limit: 500 }));
-    expect(url.pathname).toBe("/api/tbl_1203_SOSalesOrderDetailNID");
+    expect(url.pathname).toBe("/api/table/tbl_1203_SOSalesOrderDetailNID");
     expect(url.searchParams.get("updated_at__gte")).toBe("2026-09-01T02:00:00.000Z");
     expect(url.searchParams.get("order_by")).toBe("updated_at");
     expect(url.searchParams.get("order_dir")).toBe("asc");
@@ -253,11 +290,25 @@ describe("readEnvelope — assumes A1, tolerates the alternatives (HANDOVER §2)
     },
   );
 
-  it("logs the observed shape ONCE, clearly enough to correct A1 from the log line", async () => {
+  it("says nothing when the ERP answers the verified shape", async () => {
     resetShapeNotices();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
-      // live_fg answers with a bare array; two fetches, one notice.
+      await fetchPage("live_fg", { since: null, page: 1, limit: PAGE_SIZE });
+      expect(warn.mock.calls.map((c) => String(c[0])).filter((m) => m.includes("envelope"))).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("logs an unexpected shape ONCE, clearly enough to correct the reader from the log line", async () => {
+    resetShapeNotices();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      // A body the verified envelope would never produce: a bare array. Two
+      // fetches, one notice — a warning every three minutes is a warning nobody
+      // reads.
+      faults = { shape: { "live_fg:1": "bare_array", "live_fg:2": "bare_array" } };
       await fetchPage("live_fg", { since: null, page: 1, limit: PAGE_SIZE });
       await fetchPage("live_fg", { since: null, page: 2, limit: PAGE_SIZE });
       const notices = warn.mock.calls.map((c) => String(c[0])).filter((m) => m.includes("envelope"));
@@ -273,6 +324,49 @@ describe("readEnvelope — assumes A1, tolerates the alternatives (HANDOVER §2)
 describe("auth — Selaras issues a KEY + TOKEN pair, not a bearer credential", () => {
   const KEY = "kcn_testkey_0000000000000000000000";
   const TOK = "testtoken_1111111111111111111111111111";
+
+  it("defaults each placement to ITS OWN verified credential names", async () => {
+    // The bug: header mode lower-cased whatever SELARAS_KEY_PARAM held and sent
+    // `secret_key:` as a header name. Verified 2026-09-11, the headers are
+    // X-Secret-Key / X-Secret-Token and the QUERY params are secret_key /
+    // secret_token — two different names, so one default cannot serve both.
+    const { config } = await import("../src/config.js");
+    expect(config.selarasKeyHeader).toBe("x-secret-key");
+    expect(config.selarasTokenHeader).toBe("x-secret-token");
+    expect(config.selarasKeyParam).toBe("secret_key");
+    expect(config.selarasTokenParam).toBe("secret_token");
+  });
+
+  it("sends the credential pair as X-Secret-Key / X-Secret-Token headers", async () => {
+    // Read off the wire: the fake ERP records the headers it was called with.
+    lastRequestHeaders = {};
+    const saved = { key: process.env["SELARAS_SECRET_KEY"], tok: process.env["SELARAS_SECRET_TOKEN"] };
+    vi.resetModules();
+    process.env["SELARAS_SECRET_KEY"] = KEY;
+    process.env["SELARAS_SECRET_TOKEN"] = TOK;
+    try {
+      const isolated = await import("../src/erp/selarasClient.js");
+      await isolated.fetchPage("so_header", { since: null, page: 1, limit: 2, retryDelayMs: 0 });
+      expect(lastRequestHeaders["x-secret-key"]).toBe(KEY);
+      expect(lastRequestHeaders["x-secret-token"]).toBe(TOK);
+      // …and never as the query-param spelling, which would be a 401.
+      expect(lastRequestHeaders["secret_key"]).toBeUndefined();
+      expect(lastRequestHeaders["secret_token"]).toBeUndefined();
+    } finally {
+      if (saved.key === undefined) delete process.env["SELARAS_SECRET_KEY"];
+      else process.env["SELARAS_SECRET_KEY"] = saved.key;
+      if (saved.tok === undefined) delete process.env["SELARAS_SECRET_TOKEN"];
+      else process.env["SELARAS_SECRET_TOKEN"] = saved.tok;
+      vi.resetModules();
+    }
+  });
+
+  it("redacts the header names' values too, not just the query params", async () => {
+    const { redactSecrets } = await import("../src/erp/selarasClient.js");
+    const out = redactSecrets(`X-Secret-Key: ${KEY}; x-secret-token: ${TOK}`);
+    expect(out).not.toContain(KEY);
+    expect(out).not.toContain(TOK);
+  });
 
   it("never puts the credential pair on the URL in the default header mode", async () => {
     const { buildPageUrl } = await import("../src/erp/selarasClient.js");
@@ -298,31 +392,88 @@ describe("auth — Selaras issues a KEY + TOKEN pair, not a bearer credential", 
   });
 });
 
-describe("adapters — one per table, indifferent to casing (A2)", () => {
-  it("adapts snake_case, camelCase and PascalCase rows alike", () => {
+describe("adapters — one per table, on the verified column names", () => {
+  it("reads the documented {table}_id primary key first (FIX 4)", () => {
+    expect(adaptSoHeaderRow(FIXTURES.so_header[0])?.id).toBe("SOH-1001");
+    expect(adaptSoLineRow(FIXTURES.so_line[0])?.id).toBe("SOL-2001");
+    expect(adaptLiveFgRow(FIXTURES.live_fg[0])?.sn_fg).toBe("FG-0001");
+    expect(adaptWarnaRow(FIXTURES.warna[0])?.id).toBe("4");
+    // The table-qualified name wins over a bare `id` carrying something else.
+    const both = adaptSoLineRow({ tbl_1203_SOSalesOrderDetailNID_id: "REAL", id: "LEGACY" });
+    expect(both?.id).toBe("REAL");
+    // …and the old spellings still work, so a mirror seeded before the remap
+    // keys the same way.
+    expect(adaptSoLineRow({ id: "LEGACY" })?.id).toBe("LEGACY");
+  });
+
+  it("adapts the documented fields, whatever casing they arrive in", () => {
     const header = adaptSoHeaderRow(FIXTURES.so_header[0]);
     expect(header?.id).toBe("SOH-1001");
     expect(header?.customer_name_text).toBe("PT Sinar Mandiri");
 
-    const line = adaptSoLineRow(FIXTURES.so_line[0]); // camelCase fixture
-    expect(line?.id).toBe("SOL-2001");
+    const line = adaptSoLineRow(FIXTURES.so_line[0]);
     expect(line?.qty_balance).toBe(319);
     expect(line?.estimate_delivery).toBe("2099-09-20");
+    expect(line?.brand_text).toBe("ACP Kencana");
+    expect(line?.warna_text).toBe("BLACK GALAXY");
 
-    const fg = adaptLiveFgRow(FIXTURES.live_fg[0]); // PascalCase fixture
-    expect(fg?.sn_fg).toBe("FG-0001");
+    const fg = adaptLiveFgRow(FIXTURES.live_fg[0]);
     expect(fg?.qty).toBe(2084);
     expect(fg?.lokasi).toBe("GD-01");
+    expect(fg?.kode_barang).toBe("ACP-4MM"); // display only, never in the key
+
+    // Casing tolerance is a property of the adapters, not of the fixtures.
+    const camel = adaptSoLineRow({
+      tbl_1203_SOSalesOrderDetailNID_id: "X", brand: "ACP", warna: 4,
+      thAluSkin: 0.3, TotalThicknessAcp: 4, P: 4880, l: 1220,
+    });
+    expect(camel?.th).toBe(0.3);
+    expect(camel?.th_panel).toBe(4);
+    expect(camel?.p).toBe(4880);
+  });
+
+  it("maps each side's OWN thickness columns onto the same two (the 2026-09-11 fix)", () => {
+    // tbl_1203 has th_alu_skin + total_thickness_acp; tbl_1210 has th + t.
+    const line = adaptSoLineRow(FIXTURES.so_line[0]);
+    const fg = adaptLiveFgRow(FIXTURES.live_fg[0]);
+    expect(line?.th).toBe(0.3);       // ← th_alu_skin
+    expect(line?.th_panel).toBe(4);   // ← total_thickness_acp
+    expect(fg?.th).toBe(0.3);         // ← th
+    expect(fg?.th_panel).toBe(4);     // ← t
+    // And the SO side must NOT pick up a bare `th`, which tbl_1203 does not
+    // have — a fallback probe for it would resurrect the wrong-column bug.
+    const sneaky = adaptSoLineRow({ tbl_1203_SOSalesOrderDetailNID_id: "X", th: 9.9, t: 9.9 });
+    expect(sneaky?.th).toBeNull();
+    expect(sneaky?.th_panel).toBeNull();
   });
 
   it("computes sku_key through canonicalSkuKey(), never its own copy (§7.4)", () => {
     const line = adaptSoLineRow(FIXTURES.so_line[0]);
     const fg = adaptLiveFgRow(FIXTURES.live_fg[0]);
-    const expected = canonicalSkuKey({ kode_barang: "ACP-4MM", warna: "004", th: 0.3, p: 4880, l: 1220 });
+    const expected = canonicalSkuKey({ brand: "ACP", warna: "4", th: 0.3, th_panel: 4, p: 4880, l: 1220 });
+    expect(expected).toBe("ACP|4|0.3|4|4880|1220");
     expect(line?.sku_key).toBe(expected);
     expect(fg?.sku_key).toBe(expected);
-    // Demand and supply must land on the SAME key or open_commitment under-counts.
+    // THE assertion of this whole remap: demand and supply land on the SAME key.
+    // Under the v1 composition the SO line keyed as '-|4|-|4880|1220' and nothing
+    // could ever match, so every SKU read as fully promiseable.
     expect(line?.sku_key).toBe(fg?.sku_key);
+  });
+
+  it("carries the soft-delete marker every table has (FIX 6)", () => {
+    expect(adaptSoLineRow(FIXTURES.so_line[0])?.deleted_at).toBeNull();
+    expect(adaptSoLineRow(FIXTURES.so_line[9])?.deleted_at).toBeInstanceOf(Date);
+    expect(adaptLiveFgRow(FIXTURES.live_fg[8])?.deleted_at).toBeInstanceOf(Date);
+    expect(adaptSoHeaderRow(FIXTURES.so_header[4])?.deleted_at).toBeInstanceOf(Date);
+    expect(adaptWarnaRow(FIXTURES.warna[2])?.deleted_at).toBeInstanceOf(Date);
+  });
+
+  it("reads the colour master, keeping the id AND a numeric form of it (FIX 7)", () => {
+    const w = adaptWarnaRow(FIXTURES.warna[0]);
+    expect(w?.id).toBe("4");
+    expect(w?.code_num).toBe(4);
+    expect(w?.rm_warna).toBe("BLACK GALAXY");
+    expect(adaptWarnaRow(FIXTURES.warna[3])).toBeNull(); // no id ⇒ unkeyable
   });
 
   it("normalizes messy-but-UNAMBIGUOUS values ('0.30', '4880.00', ' 004 ', dd/mm/yyyy) onto that same key", () => {
@@ -335,7 +486,7 @@ describe("adapters — one per table, indifferent to casing (A2)", () => {
 
   it("drops an unkeyable row instead of throwing", () => {
     expect(adaptSoHeaderRow(FIXTURES.so_header[3])).toBeNull(); // no id
-    expect(adaptLiveFgRow(FIXTURES.live_fg[4])).toBeNull(); // no serial
+    expect(adaptLiveFgRow(FIXTURES.live_fg[4])).toBeNull(); // no primary key
     expect(adaptLiveFgRow(null)).toBeNull();
     expect(adaptSoLineRow("ini bukan baris sama sekali")).toBeNull();
   });
@@ -444,14 +595,15 @@ describe("non-finite numerics are rejected at the adapter boundary (X11)", () =>
     expect(r.ambiguous).toBe(false);
   });
 
-  /** The FG fixture casing, so an override replaces the field instead of shadowing it. */
-  const FG_KEY = { th: "Th", p: "P", l: "L" } as const;
+  /** Each side's OWN column name for the same measurement (the 2026-09-11 map). */
+  const SO_KEY = { th: "th_alu_skin", th_panel: "total_thickness_acp", p: "p", l: "l" } as const;
+  const FG_KEY = { th: "th", th_panel: "t", p: "p", l: "l" } as const;
 
-  it.each(["th", "p", "l"] as const)(
+  it.each(["th", "th_panel", "p", "l"] as const)(
     "keeps a non-finite out of the sku_key-bearing column %s, on BOTH sides of the join",
     (column) => {
-      const line = adaptSoLineRow({ id: "X", kodeBarang: "ACP-4MM", warna: "004", th: 0.3, p: 4880, l: 1220, [column]: "NaN" });
-      const fg = adaptLiveFgRow({ SnFg: "X", KodeBarang: "ACP-4MM", Warna: "004", Th: 0.3, P: 4880, L: 1220, [FG_KEY[column]]: "Infinity" });
+      const line = adaptSoLineRow({ id: "X", brand: "ACP", warna: "4", th_alu_skin: 0.3, total_thickness_acp: 4, p: 4880, l: 1220, [SO_KEY[column]]: "NaN" });
+      const fg = adaptLiveFgRow({ sn_fg: "X", brand: "ACP", warna: "4", th: 0.3, t: 4, p: 4880, l: 1220, [FG_KEY[column]]: "Infinity" });
       expect(line?.[column]).toBeNull();
       expect(fg?.[column]).toBeNull();
       // Null degrades to the '-' placeholder, which is exactly what the SQL twin
@@ -465,20 +617,20 @@ describe("non-finite numerics are rejected at the adapter boundary (X11)", () =>
   );
 
   it.each(["qty_order", "qty_delivered"] as const)("nulls the nullable SO column %s", (column) => {
-    const row = adaptSoLineRow({ id: "X", qtyOrder: "NaN", qtyDelivered: "Infinity", qtyBalance: 5 });
+    const row = adaptSoLineRow({ id: "X", qty_order: "NaN", qty_delivered: "Infinity", qty_balance: 5 });
     expect(row?.[column]).toBeNull();
   });
 
   it.each(["qty_m2", "buffer_qty"] as const)("nulls the nullable FG column %s", (column) => {
-    const row = adaptLiveFgRow({ SnFg: "X", QtyM2: "NaN", BufferQty: "-Infinity", Qty: 5 });
+    const row = adaptLiveFgRow({ sn_fg: "X", qty_m2: "NaN", buffer_qty: "-Infinity", qty: 5 });
     expect(row?.[column]).toBeNull();
   });
 
   it("floors the two NOT NULL columns to 0 rather than writing NaN (A23)", () => {
     // `numeric not null` would happily accept NaN; 0 is the safe refusal, since
     // it reserves nothing and promises nothing.
-    expect(adaptSoLineRow({ id: "X", qtyBalance: "NaN" })?.qty_balance).toBe(0);
-    expect(adaptLiveFgRow({ SnFg: "X", Qty: "Infinity" })?.qty).toBe(0);
+    expect(adaptSoLineRow({ id: "X", qty_balance: "NaN" })?.qty_balance).toBe(0);
+    expect(adaptLiveFgRow({ sn_fg: "X", qty: "Infinity" })?.qty).toBe(0);
   });
 
   it("counts non-finites separately from ambiguous ones — they need different fixes", async () => {
@@ -521,6 +673,72 @@ describe("fetchPage — transport posture (§5)", () => {
       expect(res.error).toContain("non-JSON");
     }
     expect(requestLog).toHaveLength(1); // a shape fault; retrying would only hide it
+  });
+});
+
+describe("the verified envelope — success, and what a failed page must not do", () => {
+  it("reads the real envelope and flags it as the expected shape", () => {
+    const env = readEnvelope(
+      {
+        success: true,
+        table: "tbl_1203_SOSalesOrderDetailNID",
+        meta: { count: 1, total: 7, total_pages: 4, page: 1, limit: 2, offset: 0, order_by: "updated_at", order_dir: "asc", filters: {} },
+        data: [{ id: 1 }],
+      },
+      2,
+    );
+    expect(env.rows).toHaveLength(1);
+    expect(env.totalPages).toBe(4);
+    expect(env.success).toBe(true);
+    expect(env.matchedAssumption).toBe(true);
+  });
+
+  it("treats success:false as a FAILED page, not an empty one (FIX 5)", async () => {
+    faults = { unsuccessful: { "so_header:1": true } };
+    const res = await fetchPage("so_header", { since: null, page: 1, limit: PAGE_SIZE, retryDelayMs: 0 });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.error).toContain("success=false");
+      expect(res.retryable).toBe(false); // the ERP understood us and said no
+    }
+    expect(requestLog).toHaveLength(1);
+  });
+
+  it("reports success:null when the body carries no such field", () => {
+    expect(readEnvelope([{ id: 1 }], 10).success).toBeNull();
+    expect(readEnvelope({ data: [{ id: 1 }] }, 10).success).toBeNull();
+  });
+});
+
+describe("a 401 gets its own unmistakable line (FIX 5)", () => {
+  it("logs once per process, names the auth mode, and never prints a credential", async () => {
+    const { resetAuthNotices } = await import("../src/erp/selarasClient.js");
+    resetAuthNotices();
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      faults = { status: { "so_line:1": 401 } };
+      const first = await fetchPage("so_line", { since: null, page: 1, limit: PAGE_SIZE, retryDelayMs: 0 });
+      await fetchPage("so_line", { since: null, page: 1, limit: PAGE_SIZE, retryDelayMs: 0 });
+
+      const lines = error.mock.calls.map((c) => String(c[0])).filter((m) => m.includes("REJECTED OUR CREDENTIALS"));
+      expect(lines).toHaveLength(1); // once, not every three minutes
+      expect(lines[0]).toContain("401");
+      expect(lines[0]).toContain("X-Secret-Key");
+      expect(lines[0]).toContain("SELARAS_AUTH_MODE");
+      expect(lines[0]).not.toContain(TOKEN);
+      // The returned error points at that line rather than repeating it.
+      expect(first.ok).toBe(false);
+      if (!first.ok) expect(first.error).toContain("credentials rejected");
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it("says what a 400 usually means, since that is the other likely first-run fault", async () => {
+    faults = { status: { "so_line:1": 400 } };
+    const res = await fetchPage("so_line", { since: null, page: 1, limit: PAGE_SIZE, retryDelayMs: 0 });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toContain("unknown filter");
   });
 });
 

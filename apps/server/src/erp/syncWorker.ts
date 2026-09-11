@@ -33,7 +33,7 @@
 import postgres from "postgres";
 import { config, hasDatabase, hasErp } from "../config.js";
 import { getSql, type Sql } from "../db/client.js";
-import { checkCommitmentGate } from "../db/migrateErpStock.js";
+import { checkCommitmentGate, checkSkuKeyMatch } from "../db/migrateErpStock.js";
 import {
   redactSecrets,
   selarasClient,
@@ -44,6 +44,7 @@ import {
   type LiveFgRow,
   type SoHeaderRow,
   type SoLineRow,
+  type WarnaRow,
 } from "./selarasClient.js";
 
 type AnySql = Sql | postgres.TransactionSql<{}>;
@@ -87,6 +88,12 @@ export interface SyncTableResult {
   rows: number;
   /** Rows the ERP sent that no adapter could key. Dropped, never fatal. */
   dropped: number;
+  /**
+   * Rows the ERP marked `deleted_at` and that were therefore removed from the
+   * mirror (or never written). FIX 6: this is the routine deletion path; the
+   * hourly reconciliation sweep is only the backstop for hard deletes.
+   */
+  deleted: number;
   /**
    * Numeric strings refused as ambiguous under `SELARAS_NUMBER_FORMAT=auto`
    * (A22) — "1.234" is 1234 in id notation and 1.234 in en notation, so it is
@@ -202,9 +209,12 @@ async function upsertSoLines(tx: AnySql, rows: readonly SoLineRow[]): Promise<nu
       batch,
       "id",
       "so_id",
-      "kode_barang",
+      "brand",
+      "brand_text",
       "warna",
+      "warna_text",
       "th",
+      "th_panel",
       "p",
       "l",
       "qty_order",
@@ -220,9 +230,12 @@ async function upsertSoLines(tx: AnySql, rows: readonly SoLineRow[]): Promise<nu
     )}
     on conflict (id) do update set
       so_id             = excluded.so_id,
-      kode_barang       = excluded.kode_barang,
+      brand             = excluded.brand,
+      brand_text        = excluded.brand_text,
       warna             = excluded.warna,
+      warna_text        = excluded.warna_text,
       th                = excluded.th,
+      th_panel          = excluded.th_panel,
       p                 = excluded.p,
       l                 = excluded.l,
       qty_order         = excluded.qty_order,
@@ -248,8 +261,12 @@ async function upsertLiveFg(tx: AnySql, rows: readonly LiveFgRow[]): Promise<num
       batch,
       "sn_fg",
       "kode_barang",
+      "brand",
+      "brand_text",
       "warna",
+      "warna_text",
       "th",
+      "th_panel",
       "p",
       "l",
       "qty",
@@ -262,8 +279,12 @@ async function upsertLiveFg(tx: AnySql, rows: readonly LiveFgRow[]): Promise<num
     )}
     on conflict (sn_fg) do update set
       kode_barang    = excluded.kode_barang,
+      brand          = excluded.brand,
+      brand_text     = excluded.brand_text,
       warna          = excluded.warna,
+      warna_text     = excluded.warna_text,
       th             = excluded.th,
+      th_panel       = excluded.th_panel,
       p              = excluded.p,
       l              = excluded.l,
       qty            = excluded.qty,
@@ -278,16 +299,79 @@ async function upsertLiveFg(tx: AnySql, rows: readonly LiveFgRow[]): Promise<num
   return batch.length;
 }
 
-type AnyMirrorRow = SoHeaderRow | SoLineRow | LiveFgRow;
+/**
+ * The colour master (FIX 7). Tiny, and mirrored exactly like the others so it
+ * shares the cursor, the lock, the failure handling and the idempotency
+ * guarantee rather than growing a second, subtly different sync path.
+ */
+async function upsertWarna(tx: AnySql, rows: readonly WarnaRow[]): Promise<number> {
+  const batch = dedupeByKey(rows, (r) => r.id);
+  if (batch.length === 0) return 0;
+  await tx`
+    insert into erp_warna ${tx(batch, "id", "code_num", "rm_warna", "erp_updated_at")}
+    on conflict (id) do update set
+      code_num       = excluded.code_num,
+      rm_warna       = excluded.rm_warna,
+      erp_updated_at = excluded.erp_updated_at,
+      synced_at      = now()
+  `;
+  return batch.length;
+}
+
+type AnyMirrorRow = SoHeaderRow | SoLineRow | LiveFgRow | WarnaRow;
+
+/** The mirror's primary key for a row, whichever table it came from. */
+function rowKey(row: AnyMirrorRow): string {
+  return "id" in row ? row.id : row.sn_fg;
+}
 
 async function upsertPage(tx: AnySql, table: SelarasTable, rows: readonly AnyMirrorRow[]): Promise<number> {
   switch (table) {
+    case "warna":
+      return upsertWarna(tx, rows as readonly WarnaRow[]);
     case "so_header":
       return upsertSoHeaders(tx, rows as readonly SoHeaderRow[]);
     case "so_line":
       return upsertSoLines(tx, rows as readonly SoLineRow[]);
     case "live_fg":
       return upsertLiveFg(tx, rows as readonly LiveFgRow[]);
+  }
+}
+
+/**
+ * SOFT DELETES (FIX 6). Every ERP table carries `deleted_at`; a non-null value
+ * means the row is gone upstream. Deleting it here, in the same transaction as
+ * the page's upserts, is a far better deletion signal than the hourly
+ * reconciliation sweep: it is immediate, it is exact, and it costs one statement
+ * on a page that usually has nothing to delete.
+ *
+ * The sweep STAYS as the backstop — a row hard-deleted upstream still never
+ * appears on any page, and this path can only see what the cursor hands it.
+ *
+ * Three literal statements rather than one interpolated one, for the same reason
+ * `purgeAbsent()` is written that way: the table and column names are then not
+ * merely whitelisted, they are unreachable from any input.
+ */
+async function deleteRows(tx: AnySql, table: SelarasTable, ids: readonly string[]): Promise<number> {
+  if (ids.length === 0) return 0;
+  const keys = [...new Set(ids)];
+  switch (table) {
+    case "warna": {
+      const r = await tx`delete from erp_warna where id = any(${keys})`;
+      return r.count ?? 0;
+    }
+    case "so_header": {
+      const r = await tx`delete from erp_so_header where id = any(${keys})`;
+      return r.count ?? 0;
+    }
+    case "so_line": {
+      const r = await tx`delete from erp_so_line where id = any(${keys})`;
+      return r.count ?? 0;
+    }
+    case "live_fg": {
+      const r = await tx`delete from erp_live_fg where sn_fg = any(${keys})`;
+      return r.count ?? 0;
+    }
   }
 }
 
@@ -324,7 +408,7 @@ async function acquireLock(db: Sql, intervalMs: number): Promise<boolean> {
     with candidate as (
       select table_name
         from erp_sync_state
-       where table_name in ('so_header', 'so_line', 'live_fg')
+       where table_name = any(${[...SYNC_TABLES]})
          and (
            running = false
            or coalesce(greatest(last_ok_at, last_error_at), to_timestamp(0))
@@ -347,7 +431,7 @@ async function acquireLock(db: Sql, intervalMs: number): Promise<boolean> {
        set running = true
       from candidate c
      where s.table_name = c.table_name
-       and (select count(*) from candidate) = 3
+       and (select count(*) from candidate) = ${SYNC_TABLES.length}
        and (
          s.running = false
          or coalesce(greatest(s.last_ok_at, s.last_error_at), to_timestamp(0))
@@ -355,13 +439,13 @@ async function acquireLock(db: Sql, intervalMs: number): Promise<boolean> {
        )
     returning s.table_name
   `;
-  return claimed.length === 3;
+  return claimed.length === SYNC_TABLES.length;
 }
 
 async function releaseLock(db: Sql): Promise<void> {
   await db`
     update erp_sync_state set running = false
-     where table_name in ('so_header', 'so_line', 'live_fg')
+     where table_name = any(${[...SYNC_TABLES]})
   `;
 }
 
@@ -377,10 +461,14 @@ async function commitPage(
   db: Sql,
   table: SelarasTable,
   rows: readonly AnyMirrorRow[],
+  deletedIds: readonly string[],
   pageMaxUpdatedAt: Date | null,
-): Promise<number> {
+): Promise<{ written: number; removed: number }> {
   return db.begin(async (tx) => {
     const written = await upsertPage(tx, table, rows);
+    // Same transaction as the upserts and the cursor advance: a page either
+    // lands whole — additions, deletions and cursor — or not at all (ST-R7).
+    const removed = await deleteRows(tx, table, deletedIds);
     await tx`
       update erp_sync_state
          set cursor_value  = greatest(cursor_value, ${pageMaxUpdatedAt}::timestamptz),
@@ -390,8 +478,8 @@ async function commitPage(
              last_error_at = null
        where table_name = ${table}
     `;
-    return written;
-  }) as Promise<number>;
+    return { written, removed };
+  }) as Promise<{ written: number; removed: number }>;
 }
 
 /** A table pass that found nothing new is still a successful sync (ST-R7). */
@@ -424,7 +512,7 @@ function maxUpdatedAt(rows: readonly AnyMirrorRow[]): Date | null {
 }
 
 function pageSignature(table: SelarasTable, rows: readonly AnyMirrorRow[]): string {
-  const ids = rows.map((r) => ("id" in r ? r.id : r.sn_fg));
+  const ids = rows.map(rowKey);
   return `${table}:${ids.length}:${ids.join(",")}`;
 }
 
@@ -442,6 +530,7 @@ async function syncTable(
     pages: 0,
     rows: 0,
     dropped: 0,
+    deleted: 0,
     ambiguousNumbers: 0,
     nonFiniteNumbers: 0,
     cursorBefore,
@@ -491,10 +580,22 @@ async function syncTable(
     }
     previousSignature = signature;
 
+    // FIX 6 — partition the page. A row the ERP has soft-deleted is not mirrored
+    // and is removed if we already hold it; its `updated_at` still counts toward
+    // the cursor, because it IS a change we have now consumed.
     const pageMax = maxUpdatedAt(rows);
-    const written = await commitPage(db, table, rows, pageMax);
+    const live = rows.filter((r) => r.deleted_at === null);
+    const deletedIds = rows.filter((r) => r.deleted_at !== null).map(rowKey);
+    const { written, removed } = await commitPage(db, table, live, deletedIds, pageMax);
     result.pages += 1;
     result.rows += written;
+    result.deleted += removed;
+    if (deletedIds.length > 0) {
+      log.info(
+        `${table}: ${deletedIds.length} row(s) on page ${page} carry deleted_at — ` +
+          `${removed} removed from the mirror, none written`,
+      );
+    }
     if (pageMax && (result.cursorAfter === null || pageMax.getTime() > result.cursorAfter.getTime())) {
       result.cursorAfter = pageMax;
     }
@@ -582,6 +683,7 @@ function reportRefusals(
 
 /** Mirror table + primary key per logical table. Literal, whitelisted, never built from input. */
 const MIRROR_TABLES: Record<SelarasTable, { table: string; pk: string }> = {
+  warna: { table: "erp_warna", pk: "id" },
   so_header: { table: "erp_so_header", pk: "id" },
   so_line: { table: "erp_so_line", pk: "id" },
   live_fg: { table: "erp_live_fg", pk: "sn_fg" },
@@ -592,6 +694,10 @@ const RECONCILE_KEY_CHUNK = 5_000;
 
 async function mirrorCount(db: Sql, table: SelarasTable): Promise<number> {
   switch (table) {
+    case "warna": {
+      const r = await db<{ n: string }[]>`select count(*)::text as n from erp_warna`;
+      return Number(r[0]?.n ?? 0);
+    }
     case "so_header": {
       const r = await db<{ n: string }[]>`select count(*)::text as n from erp_so_header`;
       return Number(r[0]?.n ?? 0);
@@ -614,6 +720,13 @@ async function mirrorCount(db: Sql, table: SelarasTable): Promise<number> {
  */
 async function purgeAbsent(tx: AnySql, table: SelarasTable): Promise<number> {
   switch (table) {
+    case "warna": {
+      const r = await tx`
+        delete from erp_warna t
+         where not exists (select 1 from _erp_recon_keys k where k.k = t.id)
+      `;
+      return r.count ?? 0;
+    }
     case "so_header": {
       const r = await tx`
         delete from erp_so_header t
@@ -859,7 +972,7 @@ export async function evaluateStaleAlert(db: Sql, intervalMs: number, log: SyncL
   const rows = await db<FreshnessRow[]>`
     select table_name, last_ok_at, last_error, last_error_at
     from erp_sync_state
-    where table_name in ('so_header', 'so_line', 'live_fg')
+    where table_name = any(${[...SYNC_TABLES]})
     order by table_name
   `;
 
@@ -917,6 +1030,40 @@ async function checkCommitmentGateAfterSync(db: Sql, log: SyncLogger): Promise<v
     log.info(
       `RECOVERED ST-R7b: the commitment gate matches again — configured approved statuses ` +
         `[${report.configuredApprovals.join(", ")}] now select live commitments.`,
+    );
+  }
+}
+
+// ── ST-R5.2 SKU-key match check, on every run that mirrors demand ────────────
+//
+// The sibling of the commitment-gate check above, for the other silent way ATP
+// can collapse to on-hand: a key composition that does not match. The v2 key
+// (2026-09-11) is verified against the ERP's documented COLUMNS but has never
+// been run against real ROWS, so the run measures the overlap itself and shouts
+// when most of the live demand matches no stock at all.
+//
+// Latched exactly like the stale alert: once on the way in, once on recovery.
+// An alert that repeats every three minutes is an alert people filter out.
+
+let skuKeyAlertActive = false;
+
+/** Test seam: forget whether the sku-key match alert has already fired. */
+export function resetSkuKeyAlert(): void {
+  skuKeyAlertActive = false;
+}
+
+async function checkSkuKeyMatchAfterSync(db: Sql, log: SyncLogger): Promise<void> {
+  // Still EVALUATED every run (that is how recovery is noticed), but only
+  // allowed to speak the first time.
+  const sink = skuKeyAlertActive ? { error: () => {} } : { error: (m: string) => log.error(m) };
+  const report = await checkSkuKeyMatch(db, sink);
+  if (report.tripped) skuKeyAlertActive = true;
+  else if (skuKeyAlertActive) {
+    skuKeyAlertActive = false;
+    log.info(
+      `RECOVERED ST-R5.2: live commitments are matching stock again — ` +
+        `${report.unmatchedLines} of ${report.liveLines} line(s) unmatched, under the ` +
+        `${report.threshold} alert threshold.`,
     );
   }
 }
@@ -1117,6 +1264,7 @@ async function executeRun(deps: ErpSyncDeps): Promise<SyncRunResult> {
           pages: 0,
           rows: 0,
           dropped: 0,
+          deleted: 0,
           ambiguousNumbers: 0,
           nonFiniteNumbers: 0,
           error: message,
@@ -1150,8 +1298,8 @@ async function executeRun(deps: ErpSyncDeps): Promise<SyncRunResult> {
     log.warn(`run finished with errors on ${failed.join(", ")} — ${rows} rows in ${durationMs}ms`);
   }
 
-  // ── The two post-run checks. Both are WARN-ONLY and both are wrapped: a
-  // diagnostic that can abort a sync run is worse than no diagnostic (§7.7).
+  // ── The three post-run checks. All WARN-ONLY and all wrapped: a diagnostic
+  // that can abort a sync run is worse than no diagnostic (§7.7).
   try {
     await evaluateStaleAlert(db, intervalMs, log);
   } catch (err) {
@@ -1161,6 +1309,11 @@ async function executeRun(deps: ErpSyncDeps): Promise<SyncRunResult> {
     await checkCommitmentGateAfterSync(db, log);
   } catch (err) {
     log.error(`commitment-gate check failed (non-fatal) — ${redactSecrets(err)}`);
+  }
+  try {
+    await checkSkuKeyMatchAfterSync(db, log);
+  } catch (err) {
+    log.error(`sku-key match check failed (non-fatal) — ${redactSecrets(err)}`);
   }
 
   return { started: true, tables, durationMs };
