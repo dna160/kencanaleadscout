@@ -1103,15 +1103,31 @@ function shapeCommit(r: CommitRow): CommitLine {
  */
 const SYNC_WORKER_MODULE = "../erp/syncWorker.js";
 
+/** What a recompute reports back. Mirrors SkuKeyRecomputeResult in the worker. */
+interface SkuKeyRecomputeResult {
+  started: boolean;
+  skipped?: string;
+  ok: boolean;
+  updated: number;
+  tables: { table: string; ok: boolean; updated: number; error?: string }[];
+  durationMs: number;
+}
+
 interface SyncWorkerModule {
-  runErpSyncOnce: () => Promise<unknown>;
+  /** `full: true` clears every stored cursor first, then re-pulls every table. */
+  runErpSyncOnce: (overrides?: { full?: boolean; actor?: string | null }) => Promise<unknown>;
+  /** The cheap in-place repair. Absent on an older worker build; the route copes. */
+  recomputeSkuKeys?: () => Promise<SkuKeyRecomputeResult>;
 }
 
 async function loadSyncWorker(): Promise<SyncWorkerModule | null> {
   try {
     const mod: unknown = await import(SYNC_WORKER_MODULE);
-    const fn = (mod as Partial<SyncWorkerModule> | null)?.runErpSyncOnce;
-    return typeof fn === "function" ? { runErpSyncOnce: fn } : null;
+    const m = mod as Partial<SyncWorkerModule> | null;
+    const fn = m?.runErpSyncOnce;
+    if (typeof fn !== "function") return null;
+    const recompute = m?.recomputeSkuKeys;
+    return { runErpSyncOnce: fn, ...(typeof recompute === "function" ? { recomputeSkuKeys: recompute } : {}) };
   } catch {
     return null;
   }
@@ -1869,13 +1885,50 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
   }
 
   // ── 11 · POST /api/stock/sync — manual kick (§4.2) ──────────────────────────
-  // Idempotent by construction: the worker upserts by primary key, so kicking it
-  // twice yields identical mirror rows and identical ATP (§5). Returns at once
-  // if a run is already in flight — it never waits for the ERP.
+  //
+  // THREE MODES, one endpoint, because all three take the same run guard and a
+  // caller must never be able to start two of them at once.
+  //
+  //   {}                     — incremental. Unchanged, and the default: pull the
+  //                            window since each table's stored cursor.
+  //   { recompute: true }    — the CHEAP repair. Recompute every stored `sku_key`
+  //                            from the row's OWN mirrored columns. No ERP
+  //                            traffic, seconds, awaited so the count comes back
+  //                            in the response. Fixes a stale key composition.
+  //   { full: true }         — the EXPENSIVE repair. Clear every stored cursor
+  //                            and re-fetch every row (~137k SO lines, minutes).
+  //                            The only thing that fixes a row whose mirrored
+  //                            COLUMNS are wrong, because a cursor only ever
+  //                            moves forward and never revisits such a row.
+  //
+  // `full` and `recompute` REQUIRE an actor and are logged with it. The 137k-row
+  // re-pull is not something to trigger by accident, and "who pressed it" is the
+  // first question asked when the ERP suddenly sees a minutes-long burst.
+  //
+  // Idempotent by construction in every mode: the worker upserts by primary key,
+  // so kicking it twice yields identical mirror rows and identical ATP (§5).
   app.post<{ Body: Record<string, unknown> }>("/api/stock/sync", async (request, reply) => {
     const db = getSql();
     if (!db) return dbErr(reply);
-    if (!hasErp) return reply.code(503).send({ error: "ERP tidak terhubung." });
+
+    const body = request.body ?? {};
+    const full = body.full === true;
+    const recomputeOnly = body.recompute === true;
+    if (full && recomputeOnly) {
+      return reply.code(400).send({
+        error: "Pilih salah satu: hitung ulang kunci SKU atau tarik ulang penuh.",
+      });
+    }
+
+    // The recompute never speaks to the ERP, so an ERP that is down or not
+    // configured is no reason to refuse it — it is precisely the repair that
+    // still works in that state. Every other mode needs the ERP.
+    if (!hasErp && !recomputeOnly) return reply.code(503).send({ error: "ERP tidak terhubung." });
+
+    const actor = optStr(request.body?.actor);
+    if ((full || recomputeOnly) && !actor) {
+      return reply.code(400).send({ error: "Nama petugas wajib diisi." });
+    }
 
     const worker = await loadSyncWorker();
     if (!worker) return reply.code(503).send({ error: "Sinkronisasi ERP belum tersedia." });
@@ -1885,23 +1938,76 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
       // AMENDMENT 8: one signal, not three. A refused kick is a 409, so a client
       // that only reads the status code cannot mistake it for one that started.
       // The body still carries started/running for the shipped page's toast.
+      //
+      // This is also the guard on the full re-sync: a scheduled tick in flight
+      // refuses it HERE, before any cursor is cleared, and the worker refuses it
+      // a second time under the row lock if the tick starts in between.
       return reply.code(409).send({
-        error: "Sinkronisasi sedang berjalan.",
+        error: full
+          ? "Sinkronisasi sedang berjalan — tarik ulang penuh tidak bisa dimulai sekarang."
+          : "Sinkronisasi sedang berjalan.",
         started: false,
         running: true,
+        mode: full ? "full" : recomputeOnly ? "recompute" : "incremental",
         freshness: freshnessOf(rows),
       });
     }
 
-    const actor = optStr(request.body?.actor);
-    request.log.info({ actor }, "manual erp sync requested");
+    // ── The cheap repair. Awaited: it is two UPDATEs and no network, so the
+    // operator gets the row count back instead of having to go and read a log.
+    if (recomputeOnly) {
+      if (!worker.recomputeSkuKeys) {
+        return reply.code(503).send({ error: "Hitung ulang kunci SKU belum tersedia." });
+      }
+      request.log.info({ actor }, "sku_key recompute requested");
+      let result: SkuKeyRecomputeResult;
+      try {
+        result = await worker.recomputeSkuKeys();
+      } catch (err) {
+        request.log.error({ err }, "sku_key recompute failed");
+        return reply.code(500).send({ error: "Gagal menghitung ulang kunci SKU." });
+      }
+      if (!result.started) {
+        return reply.code(409).send({
+          error: "Sinkronisasi sedang berjalan.",
+          started: false,
+          running: true,
+          mode: "recompute",
+          freshness: freshnessOf(rows),
+        });
+      }
+      return {
+        started: true,
+        running: false,
+        mode: "recompute",
+        ok: result.ok,
+        updated: result.updated,
+        tables: result.tables,
+        duration_ms: result.durationMs,
+        freshness: freshnessOf(rows),
+      };
+    }
+
+    if (full) {
+      request.log.warn({ actor }, "FULL erp re-sync requested — every cursor cleared, every row re-pulled");
+    } else {
+      request.log.info({ actor }, "manual erp sync requested");
+    }
 
     // Fire and forget: the worker owns its own error handling and must never
     // throw out of an interval (§5), so a rejection here is logged and dropped.
-    void worker.runErpSyncOnce().catch((err: unknown) => {
-      request.log.error({ err }, "manual erp sync failed");
+    // A full re-sync takes minutes; waiting on it would hold the request open
+    // past every sane proxy timeout, and the progress is in the logs and in
+    // GET /api/stock/sync-status either way.
+    void worker.runErpSyncOnce(full ? { full: true, actor } : undefined).catch((err: unknown) => {
+      request.log.error({ err, full }, "manual erp sync failed");
     });
 
-    return { started: true, running: true, freshness: freshnessOf(rows) };
+    return {
+      started: true,
+      running: true,
+      mode: full ? "full" : "incremental",
+      freshness: freshnessOf(rows),
+    };
   });
 }

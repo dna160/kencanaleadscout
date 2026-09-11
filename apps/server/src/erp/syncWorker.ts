@@ -125,8 +125,18 @@ export interface SyncTableResult {
 
 export interface SyncRunResult {
   started: boolean;
-  /** Why nothing ran: another run holds the guard, or the ERP/DB is not configured. */
-  skipped?: "in_flight" | "disabled" | "locked";
+  /**
+   * Why nothing ran: another run holds the guard, the ERP/DB is not configured,
+   * or — full re-sync only — the cursor reset itself failed, in which case NO
+   * table was pulled and nothing was cleared (see `executeRun`).
+   */
+  skipped?: "in_flight" | "disabled" | "locked" | "cursor_reset_failed";
+  /** True when this pass cleared the stored cursors first and re-pulled everything. */
+  full: boolean;
+  /** Cursors actually cleared (0 on an incremental run, and on a first-ever full one). */
+  cursorsCleared: number;
+  /** The cheap in-place repair, always attempted first on a full re-sync. */
+  recompute?: SkuKeyRecomputeResult;
   tables: SyncTableResult[];
   durationMs: number;
 }
@@ -461,6 +471,172 @@ async function releaseLock(db: Sql): Promise<void> {
     update erp_sync_state set running = false
      where table_name = any(${[...SYNC_TABLES]})
   `;
+}
+
+/**
+ * Clear every stored cursor, so the next pass asks the ERP for the whole table
+ * rather than for the window since the last high-water mark. THE ONLY repair for
+ * a row that was mirrored WRONG and has since fallen behind the cursor.
+ *
+ * WHY THIS HAS TO EXIST. Parsing and key composition are applied at WRITE time:
+ * `sku_key`, `p`, `l`, `th` and the rest are computed by the adapter and stored
+ * as plain columns (A14). A cursor only ever moves forward, so a change to how a
+ * value is read — `SELARAS_NUMBER_FORMAT` going from `auto` to `id`, a new key
+ * composition, a fixed adapter — reaches exactly the rows that are re-fetched
+ * AFTER it and no others. Rows behind the cursor keep whatever the old rules
+ * produced, forever, and no amount of incremental syncing will ever revisit them.
+ * Production hit this: rows mirrored under `auto` had "2.440" refused as
+ * structurally ambiguous, so `p`/`l` were written NULL and their stored key ends
+ * `|-|-`. The config is right now; the rows are still wrong.
+ *
+ * ONE STATEMENT, therefore one transaction, therefore all-or-nothing: there is no
+ * state in which half the tables are due a full pull and half are not. It is
+ * called ONLY from inside the guarded run, after the lock is held, immediately
+ * before the pull that consumes it — a cleared cursor set that nothing follows
+ * would turn the NEXT scheduled tick into a surprise 137k-row re-pull.
+ *
+ * Re-pulling is SAFE, only slow: every write is an upsert by primary key, so a
+ * row that is re-fetched and re-written unchanged is byte-identical (§5).
+ */
+async function clearCursors(db: Sql): Promise<number> {
+  const cleared = await db<{ table_name: string }[]>`
+    update erp_sync_state
+       set cursor_value = null
+     where table_name = any(${[...SYNC_TABLES]})
+       and cursor_value is not null
+    returning table_name
+  `;
+  return cleared.length;
+}
+
+// ── Repair step 1: recompute the stored sku_key in place (NO ERP traffic) ────
+//
+// THE TWO STALE-KEY SITUATIONS, AND WHICH REPAIR EACH ONE NEEDS. Both look
+// identical from the unmatched alarm — "97.4% of live demand matches no stock" —
+// and they have completely different costs, so telling them apart matters.
+//
+//   (a) THE COLUMNS ARE INTACT, THE KEY IS STALE.
+//       `brand`/`warna`/`th`/`th_panel`/`p`/`l` in the mirror are right; only the
+//       COMPOSITION of the key changed (a segment added, dropped or reordered, or
+//       the normalisation rules edited). The key is a pure function of those six
+//       columns, and `erp_sku_key()` is the SQL twin of the TypeScript that wrote
+//       it (ST-R5.1, byte-identical by test), so the correct key can be derived
+//       from what is already stored. This step does exactly that: two UPDATEs,
+//       no ERP request, seconds rather than minutes. THIS IS THE CHEAP REPAIR
+//       AND IT SHOULD ALWAYS BE TRIED FIRST.
+//
+//   (b) THE COLUMNS THEMSELVES ARE WRONG.
+//       The row was mirrored under parsing rules that produced the wrong VALUE —
+//       `SELARAS_NUMBER_FORMAT=auto` refusing "2.440" as structurally ambiguous
+//       and writing `p`/`l` as NULL is the production case. Recomputing from the
+//       stored columns here reproduces the same broken key, because the inputs
+//       are the broken thing. Recompute reports 0 rows changed and the numbers
+//       do not move. The ONLY repair is to ask the ERP for those rows again,
+//       which means clearing the cursors — see `clearCursors()`.
+//
+// A run of this step that changes 0 rows is therefore not a no-op result: it is
+// the diagnosis. It says "the stored keys already agree with the stored columns",
+// which rules out (a) and leaves (b).
+//
+// Two literal statements rather than one interpolated one, the same posture as
+// `purgeAbsent()` and `deleteRows()`: the table and column names are then not
+// merely whitelisted, they are unreachable from any input.
+
+/** The two mirrored tables that carry a stored `sku_key`. warna and so_header do not. */
+export const SKU_KEYED_TABLES = ["so_line", "live_fg"] as const;
+
+export type SkuKeyedTable = (typeof SKU_KEYED_TABLES)[number];
+
+export interface SkuKeyRecomputeTableResult {
+  table: SkuKeyedTable;
+  ok: boolean;
+  /** Rows whose stored key disagreed with `erp_sku_key()` over their own columns. */
+  updated: number;
+  error?: string;
+}
+
+export interface SkuKeyRecomputeResult {
+  started: boolean;
+  skipped?: "in_flight" | "disabled" | "locked";
+  ok: boolean;
+  tables: SkuKeyRecomputeTableResult[];
+  /** Total rows rekeyed across both tables. 0 means situation (b), not "nothing wrong". */
+  updated: number;
+  durationMs: number;
+}
+
+/**
+ * `is distinct from` rather than `<>`: a NULL on either side must count as a
+ * disagreement, not evaporate into NULL and quietly skip the row. `sku_key` is
+ * NOT NULL in the schema and `erp_sku_key()` is total (every segment coalesces to
+ * '-'), so neither side should ever be NULL — which is precisely why the
+ * comparison must not depend on that being true.
+ *
+ * `synced_at` is deliberately NOT touched. It records when a row was last
+ * CONFIRMED AGAINST THE ERP, and this step never speaks to the ERP.
+ */
+async function recomputeTable(db: Sql, table: SkuKeyedTable): Promise<number> {
+  switch (table) {
+    case "so_line": {
+      const r = await db`
+        update erp_so_line
+           set sku_key = erp_sku_key(brand, warna, th, th_panel, p, l)
+         where sku_key is distinct from erp_sku_key(brand, warna, th, th_panel, p, l)
+      `;
+      return r.count ?? 0;
+    }
+    case "live_fg": {
+      const r = await db`
+        update erp_live_fg
+           set sku_key = erp_sku_key(brand, warna, th, th_panel, p, l)
+         where sku_key is distinct from erp_sku_key(brand, warna, th, th_panel, p, l)
+      `;
+      return r.count ?? 0;
+    }
+  }
+}
+
+/**
+ * The step itself, assuming the run guard is ALREADY HELD. Never throws: a
+ * repair that cannot run must not take the pull down with it, because the pull
+ * is the repair for the other situation.
+ */
+async function recomputeSkuKeyStep(db: Sql, log: SyncLogger): Promise<SkuKeyRecomputeResult> {
+  const startedAt = Date.now();
+  const tables: SkuKeyRecomputeTableResult[] = [];
+  for (const table of SKU_KEYED_TABLES) {
+    try {
+      const updated = await recomputeTable(db, table);
+      tables.push({ table, ok: true, updated });
+    } catch (err) {
+      const message = redactSecrets(err);
+      tables.push({ table, ok: false, updated: 0, error: message });
+      log.error(
+        `sku-key recompute ${table}: failed, no row rekeyed — ${message}. The mirror is unchanged ` +
+          `(one UPDATE, one transaction), so nothing is half-repaired.`,
+      );
+    }
+  }
+
+  const updated = tables.reduce((n, t) => n + t.updated, 0);
+  const ok = tables.every((t) => t.ok);
+  const durationMs = Date.now() - startedAt;
+  const per = tables.map((t) => `${t.table} ${t.ok ? `${t.updated}` : "FAILED"}`).join(", ");
+  if (updated > 0) {
+    log.warn(
+      `sku-key recompute: rekeyed ${updated} row(s) in place (${per}) in ${durationMs}ms — their stored ` +
+        `columns were intact and only the key composition was stale, so no ERP traffic was needed. ` +
+        `This is the CHEAP repair; ATP should move on the next read.`,
+    );
+  } else if (ok) {
+    log.info(
+      `sku-key recompute: 0 row(s) changed (${per}) in ${durationMs}ms — every stored key already agrees ` +
+        `with erp_sku_key() over that row's OWN columns. So the keys are not stale: the COLUMNS are ` +
+        `wrong (values refused or misparsed at write time), and only re-fetching those rows from the ` +
+        `ERP can fix them.`,
+    );
+  }
+  return { started: true, ok, tables, updated, durationMs };
 }
 
 /**
@@ -1174,6 +1350,19 @@ export interface ErpSyncDeps {
   pageSize: number;
   intervalMs: number;
   log: SyncLogger;
+  /**
+   * FULL RE-SYNC. Clears every stored cursor — inside the guarded run, after the
+   * lock is held — and then pulls each table from the beginning. Absent or false
+   * is the ordinary incremental pass, byte for byte as before.
+   *
+   * Not a knob to leave on: it re-fetches every mirrored row (~137k SO lines at
+   * the time of writing). It exists because parsing and key composition are
+   * applied at WRITE time, so a fix to either reaches only rows that are pulled
+   * again — see `clearCursors()` for the full argument.
+   */
+  full?: boolean;
+  /** Who asked for it. Audit only; logged verbatim on a full re-sync. */
+  actor?: string | null;
 }
 
 /**
@@ -1194,8 +1383,8 @@ export function isErpSyncRunning(): boolean {
   return inFlight !== null;
 }
 
-function idleResult(skipped: SyncRunResult["skipped"]): SyncRunResult {
-  return { started: false, skipped, tables: [], durationMs: 0 };
+function idleResult(skipped: SyncRunResult["skipped"], full = false): SyncRunResult {
+  return { started: false, skipped, full, cursorsCleared: 0, tables: [], durationMs: 0 };
 }
 
 function idleReconcileResult(skipped: ReconcileRunResult["skipped"]): ReconcileRunResult {
@@ -1212,11 +1401,15 @@ function idleReconcileResult(skipped: ReconcileRunResult["skipped"]): ReconcileR
  * callers pass nothing.
  */
 export async function runErpSyncOnce(overrides: Partial<ErpSyncDeps> = {}): Promise<SyncRunResult> {
-  if (inFlight) return idleResult("in_flight");
+  const full = overrides.full === true;
+  // The in-process half of the guard, and the reason a full re-sync can never be
+  // started twice: the second caller is refused here without touching the DB, so
+  // no cursor is cleared on its behalf.
+  if (inFlight) return idleResult("in_flight", full);
 
   const db = overrides.db ?? getSql();
   const erpEnabled = overrides.client !== undefined || hasErp;
-  if (!db || !erpEnabled) return idleResult("disabled");
+  if (!db || !erpEnabled) return idleResult("disabled", full);
 
   const deps: ErpSyncDeps = {
     db,
@@ -1224,9 +1417,76 @@ export async function runErpSyncOnce(overrides: Partial<ErpSyncDeps> = {}): Prom
     pageSize: overrides.pageSize ?? config.stock.syncPageSize,
     intervalMs: overrides.intervalMs ?? config.stock.syncIntervalMs,
     log: overrides.log ?? defaultSyncLogger,
+    full,
+    actor: overrides.actor ?? null,
   };
 
   const run = executeRun(deps).finally(() => {
+    inFlight = null;
+  });
+  inFlight = run;
+  return run;
+}
+
+/**
+ * Run the sku_key recompute ON ITS OWN — repair (a) above, without the re-pull.
+ *
+ * This is the entry point a FUTURE key-composition change should use. The key is
+ * a pure function of six mirrored columns, so when only the composition changed
+ * the correct key is derivable from what is already stored and there is no reason
+ * to ask the ERP for 137k rows again. Two UPDATEs, seconds, no network.
+ *
+ * It does NOT require the ERP to be configured — it never talks to it — which is
+ * also what makes it the right thing to reach for while the ERP is down.
+ *
+ * It DOES take the same guard as the pull and the sweep: this writes `sku_key`,
+ * and so does the pull's upsert. Running both at once on the same row would be a
+ * race between two writers that happen to agree today and need not tomorrow.
+ *
+ * NEVER REJECTS.
+ */
+export async function recomputeSkuKeys(
+  overrides: Partial<Pick<ErpSyncDeps, "db" | "intervalMs" | "log">> = {},
+): Promise<SkuKeyRecomputeResult> {
+  const idle = (skipped: SkuKeyRecomputeResult["skipped"]): SkuKeyRecomputeResult => ({
+    started: false,
+    skipped,
+    ok: false,
+    tables: [],
+    updated: 0,
+    durationMs: 0,
+  });
+
+  if (inFlight) return idle("in_flight");
+
+  const db = overrides.db ?? getSql();
+  if (!db) return idle("disabled");
+
+  const log = overrides.log ?? defaultSyncLogger;
+  const intervalMs = overrides.intervalMs ?? config.stock.syncIntervalMs;
+
+  const run = (async (): Promise<SkuKeyRecomputeResult> => {
+    let locked = false;
+    try {
+      locked = await acquireLock(db, intervalMs);
+    } catch (err) {
+      log.error(`sku-key recompute: could not read the run guard — ${redactSecrets(err)}`);
+      return idle("locked");
+    }
+    if (!locked) {
+      log.info("sku-key recompute: a sync run holds the guard — nothing was rekeyed");
+      return idle("locked");
+    }
+    try {
+      return await recomputeSkuKeyStep(db, log);
+    } finally {
+      try {
+        await releaseLock(db);
+      } catch (err) {
+        log.error(`sku-key recompute: could not release the run guard — ${redactSecrets(err)}`);
+      }
+    }
+  })().finally(() => {
     inFlight = null;
   });
   inFlight = run;
@@ -1331,22 +1591,80 @@ async function executeReconcile(deps: ErpSyncDeps): Promise<ReconcileRunResult> 
 
 async function executeRun(deps: ErpSyncDeps): Promise<SyncRunResult> {
   const { db, client, pageSize, intervalMs, log } = deps;
+  const full = deps.full === true;
   const startedAt = Date.now();
   const tables: SyncTableResult[] = [];
+  let recompute: SkuKeyRecomputeResult | undefined;
+  let cursorsCleared = 0;
 
   let locked = false;
   try {
     locked = await acquireLock(db, intervalMs);
   } catch (err) {
     log.error(`could not read the run guard — ${redactSecrets(err)}`);
-    return idleResult("locked");
+    return idleResult("locked", full);
   }
   if (!locked) {
-    log.info("another sync run holds the guard — skipping this tick");
-    return idleResult("locked");
+    // A full re-sync is refused here exactly like a tick is: the SCHEDULED sync
+    // and the manual re-pull share one guard, so they can never interleave, and
+    // a refused full re-sync has cleared nothing (the clearing is below the lock).
+    log.info(
+      full
+        ? "FULL RE-SYNC refused — another sync run holds the guard. No cursor was cleared; retry once it finishes."
+        : "another sync run holds the guard — skipping this tick",
+    );
+    return idleResult("locked", full);
   }
 
   try {
+    // ── Full re-sync preamble. Everything here is INSIDE the lock and ahead of
+    // the pull that consumes it, which is what makes "never reset a cursor
+    // unless the run that follows actually starts" true by construction.
+    if (full) {
+      log.warn(
+        `FULL RE-SYNC starting${deps.actor ? ` (requested by ${redactSecrets(deps.actor)})` : ""} — this ` +
+          `re-fetches EVERY row of ${SYNC_TABLES.join(", ")} from the ERP, not just the window since the ` +
+          `last cursor. Expect it to take minutes and to log one 'pulling with updated_at__gte=(none — ` +
+          `full pull)' line per table. Every write is an idempotent upsert by primary key, so the mirror ` +
+          `stays readable and correct throughout (§5).`,
+      );
+
+      // STEP 1 — the cheap repair, always attempted first. It costs two UPDATEs
+      // and no ERP request, and when it is the right tool it makes the re-pull
+      // unnecessary. When it changes 0 rows it has still told us something: the
+      // stored keys agree with the stored columns, so the columns are the fault.
+      recompute = await recomputeSkuKeyStep(db, log);
+
+      // STEP 2 — clear the cursors. One statement, so all-or-nothing: there is
+      // no state where some tables are due a full pull and others are not.
+      try {
+        cursorsCleared = await clearCursors(db);
+        log.warn(
+          `full re-sync: cleared ${cursorsCleared} stored cursor(s) — each table now pulls from the ` +
+            `beginning. Cursors only ever move FORWARD, so this is the only way a row that was mirrored ` +
+            `under retired parsing rules is ever re-read.`,
+        );
+      } catch (err) {
+        // Nothing was cleared (one statement, one transaction) and nothing has
+        // been pulled. Refuse the run rather than silently downgrading it to an
+        // incremental pass that would look, in the logs, like a full one.
+        log.error(
+          `FULL RE-SYNC ABORTED before any table was pulled — could not clear the stored cursors: ` +
+            `${redactSecrets(err)}. No cursor changed and no row was re-fetched; the mirror is exactly ` +
+            `as it was. Safe to retry.`,
+        );
+        return {
+          started: false,
+          skipped: "cursor_reset_failed",
+          full: true,
+          cursorsCleared: 0,
+          recompute,
+          tables: [],
+          durationMs: Date.now() - startedAt,
+        };
+      }
+    }
+
     // Order matters: lines reference headers, and live_fg last so on-hand is the
     // freshest half of the ATP subtraction (§5).
     for (const table of SYNC_TABLES) {
@@ -1391,10 +1709,19 @@ async function executeRun(deps: ErpSyncDeps): Promise<SyncRunResult> {
   const durationMs = Date.now() - startedAt;
   const rows = tables.reduce((n, t) => n + t.rows, 0);
   const failed = tables.filter((t) => !t.ok).map((t) => t.table);
+  const label = full ? "FULL re-sync" : "run";
   if (failed.length === 0) {
-    log.info(`run ok — ${rows} rows across ${tables.length} tables in ${durationMs}ms`);
+    log.info(`${label} ok — ${rows} rows across ${tables.length} tables in ${durationMs}ms`);
   } else {
-    log.warn(`run finished with errors on ${failed.join(", ")} — ${rows} rows in ${durationMs}ms`);
+    // A full re-sync that fails partway is a PARTIALLY re-pulled mirror, which is
+    // a perfectly readable one: every page that committed committed whole, and
+    // each failed table kept the cursor its last good page left behind, so the
+    // next ordinary tick resumes from there rather than starting over.
+    log.warn(
+      `${label} finished with errors on ${failed.join(", ")} — ${rows} rows in ${durationMs}ms. ` +
+        `The mirror is readable: committed pages are intact and each failed table's cursor sits at its ` +
+        `last COMMITTED page, so the re-pull resumes there instead of restarting.`,
+    );
   }
 
   // ── The three post-run checks. All WARN-ONLY and all wrapped: a diagnostic
@@ -1415,7 +1742,7 @@ async function executeRun(deps: ErpSyncDeps): Promise<SyncRunResult> {
     log.error(`sku-key match check failed (non-fatal) — ${redactSecrets(err)}`);
   }
 
-  return { started: true, tables, durationMs };
+  return { started: true, full, cursorsCleared, recompute, tables, durationMs };
 }
 
 /**
