@@ -112,7 +112,12 @@ const MIN_SECRET_LEN = 6;
 
 function secretValues(): string[] {
   const out: string[] = [];
-  for (const s of [config.selarasToken, config.databaseUrl]) {
+  for (const s of [
+    config.selarasToken,
+    config.selarasSecretKey,
+    config.selarasSecretToken,
+    config.databaseUrl,
+  ]) {
     if (typeof s === "string" && s.length >= MIN_SECRET_LEN) out.push(s);
   }
   return out;
@@ -147,7 +152,18 @@ export function redactSecrets(input: unknown): string {
   for (const secret of secretValues()) s = s.split(secret).join("***");
   s = s.replace(/(bearer\s+)[^\s"',;)}\]]+/gi, "$1***");
   s = s.replace(/(authorization"?\s*[:=]\s*"?)[^\s"',;)}\]]+/gi, "$1***");
-  s = s.replace(/([?&](?:token|access_token|api_key|apikey|key|secret)=)[^&\s]+/gi, "$1***");
+  s = s.replace(
+    /([?&](?:token|access_token|api_key|apikey|key|secret|secret_key|secret_token)=)[^&\s]+/gi,
+    "$1***",
+  );
+  // `query` auth mode puts the pair on the URL, so the CONFIGURED names are
+  // redacted too — a deployment may rename them, and a URL is the single most
+  // likely thing to reach a log line.
+  for (const name of [config.selarasKeyParam, config.selarasTokenParam]) {
+    if (!/^[A-Za-z0-9_.-]{1,64}$/.test(name)) continue;
+    s = s.replace(new RegExp(`([?&]${name}=)[^&\\s]+`, "gi"), "$1***");
+    s = s.replace(new RegExp(`("?${name}"?\\s*[:=]\\s*"?)[^\\s"',;)}\\]]+`, "gi"), "$1***");
+  }
   return s;
 }
 
@@ -780,7 +796,21 @@ export function buildPageUrl(table: SelarasTable, opts: { since?: Date | null; p
   url.searchParams.set("order_dir", "asc");
   url.searchParams.set("limit", String(opts.limit));
   url.searchParams.set("page", String(opts.page));
+  applyQueryAuth(url);
   return url.toString();
+}
+
+/**
+ * Credentials in the query string, when `SELARAS_AUTH_MODE=query`.
+ *
+ * Kept in one function so that a URL carrying secrets is produced in exactly one
+ * place — which is also why `redactSecrets()` strips these parameter names: a
+ * URL is the single most likely thing to end up in a log line or an error.
+ */
+export function applyQueryAuth(url: URL): void {
+  if (config.selarasAuthMode !== "query") return;
+  if (config.selarasSecretKey) url.searchParams.set(config.selarasKeyParam, config.selarasSecretKey);
+  if (config.selarasSecretToken) url.searchParams.set(config.selarasTokenParam, config.selarasSecretToken);
 }
 
 /**
@@ -798,6 +828,7 @@ export function buildKeyPageUrl(table: SelarasTable, opts: { page: number; limit
   url.searchParams.set("fields", SELARAS_KEY_FIELDS[table]);
   url.searchParams.set("order_by", SELARAS_KEY_FIELDS[table]);
   url.searchParams.set("order_dir", "asc");
+  applyQueryAuth(url);
   url.searchParams.set("limit", String(opts.limit));
   url.searchParams.set("page", String(opts.page));
   return url.toString();
@@ -833,7 +864,16 @@ async function requestOnce(url: string, timeoutMs: number, dispatcher?: Dispatch
   };
   // Bearer auth (§5). The token exists in exactly this one expression; it is
   // never interpolated into a URL, a log line or an error message.
-  if (config.selarasToken) headers["authorization"] = `Bearer ${config.selarasToken}`;
+  // Auth (§5). Selaras issues a key + token PAIR, so a single bearer credential
+  // cannot authenticate against it; `bearer` is kept only for the pre-Selaras
+  // shape. Every credential reference in this file is inside this one block.
+  if (config.selarasAuthMode === "bearer") {
+    if (config.selarasToken) headers["authorization"] = `Bearer ${config.selarasToken}`;
+  } else if (config.selarasAuthMode === "header") {
+    if (config.selarasSecretKey) headers[config.selarasKeyParam.toLowerCase()] = config.selarasSecretKey;
+    if (config.selarasSecretToken) headers[config.selarasTokenParam.toLowerCase()] = config.selarasSecretToken;
+  }
+  // `query` mode puts them on the URL — see applyQueryAuth().
 
   const res = await request(url, {
     method: "GET",

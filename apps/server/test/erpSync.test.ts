@@ -270,6 +270,34 @@ describe("readEnvelope — assumes A1, tolerates the alternatives (HANDOVER §2)
   });
 });
 
+describe("auth — Selaras issues a KEY + TOKEN pair, not a bearer credential", () => {
+  const KEY = "kcn_testkey_0000000000000000000000";
+  const TOK = "testtoken_1111111111111111111111111111";
+
+  it("never puts the credential pair on the URL in the default header mode", async () => {
+    const { buildPageUrl } = await import("../src/erp/selarasClient.js");
+    const url = buildPageUrl("so_line", { since: null, page: 1, limit: 10 });
+    expect(url).not.toContain(KEY);
+    expect(url).not.toContain(TOK);
+    expect(url).not.toContain("secret_key");
+    expect(url).not.toContain("secret_token");
+  });
+
+  it("redacts the credential pair out of a URL, an error and a JSON blob", async () => {
+    const { redactSecrets } = await import("../src/erp/selarasClient.js");
+    const samples = [
+      `https://erp.example.com/t?secret_key=${KEY}&secret_token=${TOK}`,
+      `{"secret_key":"${KEY}","secret_token":"${TOK}"}`,
+      `401 Unauthorized: secret_token=${TOK}`,
+    ];
+    for (const raw of samples) {
+      const out = redactSecrets(raw);
+      expect(out, raw).not.toContain(KEY);
+      expect(out, raw).not.toContain(TOK);
+    }
+  });
+});
+
 describe("adapters — one per table, indifferent to casing (A2)", () => {
   it("adapts snake_case, camelCase and PascalCase rows alike", () => {
     const header = adaptSoHeaderRow(FIXTURES.so_header[0]);

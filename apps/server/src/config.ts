@@ -111,8 +111,29 @@ export const config = {
   /**
    * Bearer token for the ERP mirror. SECRET: never log it, never echo it into a
    * response or an error message (CONTRACTS §7.9).
+   *
+   * Used only when `selarasAuthMode` is `bearer`. Selaras itself authenticates
+   * with a KEY + TOKEN pair (below), not a single bearer credential.
    */
   selarasToken: str("SELARAS_TOKEN"),
+  /**
+   * Selaras issues two credentials — a `secret_key` and a `secret_token` — so a
+   * single `Authorization: Bearer` cannot authenticate against it at all.
+   *
+   * The credential NAMES are known (`secret_key` / `secret_token`); what is not
+   * yet confirmed from the live documentation is whether they travel as headers
+   * or as query parameters. Both are supported and the placement is one env var,
+   * so settling it is a config change and never a code change.
+   *
+   * SECRET, both of them: never logged, never echoed into a response (§7.9).
+   */
+  selarasSecretKey: str("SELARAS_SECRET_KEY"),
+  selarasSecretToken: str("SELARAS_SECRET_TOKEN"),
+  /** `header` (default) · `query` · `bearer` (the pre-Selaras single-token mode). */
+  selarasAuthMode: oneOf("SELARAS_AUTH_MODE", ["header", "query", "bearer"] as const, "header"),
+  /** Parameter/header names for the pair. Defaults match the issued credentials. */
+  selarasKeyParam: str("SELARAS_KEY_PARAM", "secret_key"),
+  selarasTokenParam: str("SELARAS_TOKEN_PARAM", "secret_token"),
   /** Per-request timeout against the ERP mirror. */
   selarasTimeoutMs: int("SELARAS_TIMEOUT_MS", 20_000),
   /**
@@ -188,4 +209,14 @@ export const config = {
 export const hasDatabase = Boolean(config.databaseUrl);
 /** ERP disabled when no base URL: every surface degrades, nothing throws (§7.7). */
 export const hasErp = Boolean(config.selarasBaseUrl);
+/**
+ * True when a credential is actually present for the configured mode. The base
+ * URL alone enables the module; this says whether a request can be authorized.
+ * Kept separate so an unauthenticated misconfiguration is a loud 401 in the sync
+ * log rather than a silently disabled integration.
+ */
+export const hasErpCredentials =
+  config.selarasAuthMode === "bearer"
+    ? Boolean(config.selarasToken)
+    : Boolean(config.selarasSecretKey && config.selarasSecretToken);
 
