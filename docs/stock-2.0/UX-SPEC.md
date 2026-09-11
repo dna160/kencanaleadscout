@@ -1247,3 +1247,270 @@ Render the server's `error` string under the offending field in `--danger` 12px,
 move focus to that field, and leave every other value untouched. Never clear a
 form because the server said no.
 
+---
+
+## 8. Responsive strategy
+
+Mobile-first at **380px** (`CONTRACTS §6`). Two breakpoints only — the inherited
+CSS already uses 560px for the modal, so reuse it rather than inventing a scale.
+
+| Range | Name | Who |
+|---|---|---|
+| ≤559px | **phone** | sales reps (primary), PPIC supervisor checking in (secondary) |
+| 560–959px | **tablet / small laptop** | |
+| ≥960px | **desk** | PPIC (primary) |
+
+`.wrap` stays at the inherited `max-width` (960px on `/stock`, 1000px on
+`/stock-ppic`) with 16px side padding. Never let the page body scroll
+horizontally; only the containers named below may.
+
+### 8.1 `/stock` — phone-first
+
+| Element | ≤559px | ≥560px |
+|---|---|---|
+| Item list | **Stacked cards** (§5.2). The `<table>` is not rendered at all — a four-column table at 380px either truncates the colour name or shrinks the ATP number, and both defeat the page. | Inherited `<table>` inside `.scrollx` |
+| Toolbar | Search full width on its own row; the selects pair two-per-row via the inherited `flex:1 1 46%`; checkboxes on their own row. Exactly the 1.0 behaviour. | one row, wrapping |
+| Totals strip | `.counts` wraps to 2–3 rows of `.countchip`. Nothing is dropped — the four state counts are the page's summary. | one row |
+| Banner / offbox | full width, above everything | same |
+| Detail sheet | bottom sheet, `border-radius:16px 16px 0 0`, `max-height:92vh` (inherited) | centred modal (inherited ≥560px rule) |
+| Header | `h1` + freshness stack; `PPIC ↗` stays on the right, `white-space:nowrap` | same |
+
+The ATP block never shrinks below 22px. If a five-digit number plus unit
+overflows at 380px, the unit wraps to a second line — the number does not
+shrink and never truncates.
+
+### 8.2 `/stock-ppic` — desk-first, phone-survivable
+
+| Element | ≤559px | 560–959px | ≥960px |
+|---|---|---|---|
+| Tab strip | horizontally scrollable `.tabs` with `scroll-snap`, active tab scrolled into view on load | same | all five fit, no scroll |
+| Every data table | `.scrollx` horizontal scroll with **sticky first column** (`position:sticky;left:0;background:var(--card);z-index:1`) so the SKU stays anchored | `.scrollx` | full width |
+| Columns dropped (Tinjau Pesanan) | none — the table scrolls instead. Dropping `Customer` or `Sisa Pesanan` on a phone would make a triage decision impossible, and a triage decision made on partial information is worse than one deferred. | none | none |
+| Bulk select | **not offered** — no checkbox column, no bulk bar (§6.8) | offered | offered |
+| Undo tray | offered, collapsed by default with `Baru Ditutup (3) ▾` | offered | offered |
+| Pager | `←` / `Hal. 1/84` / `→` | full | full above + below |
+| Penyesuaian form | fully stacked, one field per row; the `− / + / qty` triple stays on one row | stacked | two columns (form left, audit right) at ≥960px |
+| Sinkronisasi cards | stacked | stacked | 3-up grid |
+| Inline confirm expander (§6.6.2) | full-width row, buttons stacked full-width, `min-height:var(--tap)` | inline | inline |
+
+**Not offered on a phone, deliberately:** bulk selection and bulk close; the
+`Salin semua` bulk copy on Belum Cocok (clipboard of 31 keys is a desktop
+workflow); the side-by-side Penyesuaian layout. Nothing else is removed — a
+supervisor must be able to read every number and close a single row from the
+plant floor.
+
+### 8.3 Rules that hold at every width
+
+- Touch targets ≥ `var(--tap)` (§9.1) at **all** widths, not just phone. PPIC
+  works with a mouse but also on a 13" touchscreen laptop.
+- Sticky `header` never exceeds 68px tall; the tab strip is **not** sticky
+  (two stacked sticky bars eat a phone screen).
+- The bulk bar (§6.8) is `position:sticky;bottom:0` — the only bottom-sticky
+  element, and it exists only while a selection exists.
+- Tables never use `table-layout:fixed`; Indonesian customer names need to wrap.
+- No `min-width` greater than 320px on any element.
+
+---
+
+## 9. Accessibility
+
+### 9.1 Touch targets
+
+The inherited `select`/`input`/`textarea` rule already sets `min-height:44px`.
+These do not:
+
+| Inherited | Current | Required |
+|---|---|---|
+| `button.btn` | 40px | 44px on every **row action and primary action** → add `.tap` |
+| `button.mini` | 34px | 44px in the stale queue, undo tray and pager → `.mini.tap` |
+| `.chkline` | already 44px | unchanged |
+| `.banner button` (×) | ~20px | removed entirely (§4.2) |
+| `.fchip` | ~30px | 44px via `.tab`/`.fchip` min-height in §1.3 |
+
+`.mini` without `.tap` survives only inside the archive modal, which sales no
+longer opens. Row actions in a 4,158-row list are tapped thousands of times; 34px
+is a mis-tap that closes the wrong commitment.
+
+### 9.2 Contrast — computed against the inherited palette
+
+sRGB relative luminance, WCAG 2.1 formula. AA normal text = 4.5:1; AA large
+(≥24px, or ≥18.66px bold) = 3:1; non-text UI = 3:1.
+
+| Foreground | Background | Ratio | Verdict |
+|---|---|---|---|
+| `--ink` | `--card` | **15.67** | AAA |
+| `--ink` | `--bg` | **14.22** | AAA |
+| `--muted` | `--card` | **4.83** | AA — passes, with no margin |
+| `--muted` | `--bg` | **4.39** | ✗ **FAILS AA** |
+| `--muted` | `#fafbfc` (inherited `th`/`.card h2` ground) | **4.67** | AA |
+| `--ink-2` (added) | `--card` | **7.58** | AAA |
+| `--ink-2` | `--bg` | **6.88** | AAA |
+| `--accent` | `--card` | **5.38** | AA |
+| `--card` | `--accent` (button text) | **5.38** | AA |
+| `--danger` | `--card` | **5.35** | AA — and the ATP number at 22px/800 is "large", needing only 3:1 |
+| `--danger` | `--bg` | **4.86** | AA |
+| `--card` | `--danger` (danger button) | **5.35** | AA |
+| `--ok-ink` | `--ok-bg` (`tersedia` chip) | **4.57** | AA |
+| `--warn-ink` | `--warn-bg` (`habis` chip) | **4.51** | AA — the tightest pass in the system |
+| `--neg-ink` | `--neg-bg` (`perlu_produksi` chip) | **5.30** | AA |
+| `--neutral-ink` | `--neutral-bg` (`kosong` chip) | **6.87** | AAA |
+| `#6b7280` on `#f3f4f6` — inherited `.chip.age` | | **4.39** | ✗ **FAILS AA** — reason `--neutral-ink` exists |
+| `--warn-ink-strong` | `--warn-bg` (stale banner) | **6.39** | AAA |
+| `--offline-ink` | `--offline-bg` | **9.15** | AAA |
+| `--age-old-ink` | `--age-old-bg` | **6.38** | AAA |
+| `--age-ancient-ink` | `--age-ancient-bg` | **5.30** | AA |
+| `#c7cfde` (header sub) | `--ink` | **10.01** | AAA |
+| `#ffd27a` (`.pplink`) | `--ink` | **11.01** | AAA |
+| `--card` on `#166534` (`.toast.ok`) | | **7.13** | AAA |
+| `--card` on `#b45309` (`.toast.warn`) | | **5.02** | AA |
+| `--card` on `--danger` (`.toast.err`) | | **5.35** | AA |
+| `--card` on `--ink` (`.toast`) | | **15.67** | AAA |
+| `--focus` | `--card` | **6.70** | far above the 3:1 non-text minimum |
+| `--focus` | `--bg` | **6.08** | ditto |
+
+**Two consequences are binding:**
+
+1. **`--muted` may never be used for text on `--bg`.** It fails at 4.39:1. In
+   practice that means: no caption, helper line, `.metaline` or `.foot` may sit
+   directly on the page ground — put it inside a `.card` (white) or use
+   `--ink-2`. The inherited `.foot` and `.metaline` rules are `--muted`; on both
+   new pages they are only ever rendered **inside** `.card`, which is white.
+   Check this in review; it is the easiest rule here to break by accident.
+2. **`.chip.age` is not used on any new surface.** `.chip.umur` replaces it
+   everywhere. The inherited rule stays for the archive modal only.
+
+`--line` on `--card` is 1.24:1 — far below 3:1, but table rules and card borders
+are decorative separators, not the sole carrier of any meaning, so 1.4.11 does
+not bite. The one place it would is the offline box and the stale banner, whose
+tinted grounds are ~1.1:1 against `--card`; both therefore carry a 1px border
+(`--offline-line`, `--warn-line`) **and** state their meaning in text. Do not
+remove those borders.
+
+### 9.3 Focus
+
+- `:focus-visible` ring defined in §1.3 — 3px `--focus`, 2px offset. On the dark
+  header it flips to `--card`. There is currently **no** focus style in the
+  inherited CSS; this is the addition that makes both pages keyboard-usable.
+- **Focus order** follows DOM order, and DOM order follows reading order:
+  header → banner/offbox → (PPIC: actor field → tab strip) → toolbar/filters →
+  result count → table rows → pager. No `tabindex` above 0 anywhere.
+- **Card rows** on the phone layout are `role="button" tabindex="0"` and respond
+  to `Enter` and `Space` as well as click.
+- **Tab strip**: `role="tablist"`, arrow-key navigation (`←`/`→` move, `Home`/
+  `End` jump), roving `tabindex` (active tab `0`, others `-1`), `Enter`/`Space`
+  activates. `aria-selected` on the active tab; the panel carries
+  `aria-labelledby` pointing at it.
+- **Modals and the bottom sheet**: on open, focus moves to the `<h3>`
+  (`tabindex="-1"`); `Tab` cycles within the sheet; `Esc` closes; on close focus
+  returns to the element that opened it. Background gets `inert` where supported,
+  else `aria-hidden="true"`.
+- **The inline confirm expander** (§6.6.2): focus moves to the reason input on
+  open; `Esc` collapses and returns focus to the `Tutup` button that opened it.
+- **A failed write returns focus** to the control that failed (§7.8), so a
+  keyboard user is not left focused on a button that vanished.
+- **Never move focus on a poll.** Ever. (§6.9.)
+
+### 9.4 Screen-reader announcements when a poll changes numbers under the user
+
+One polite live region per page, the last element in `<body>`:
+
+```html
+<div id="srlive" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+```
+
+Rules — deliberately quiet, because a 30s poll that narrates itself is unusable:
+
+| Event | Announcement | Throttle |
+|---|---|---|
+| Poll succeeds, nothing visible changed | *silence* | — |
+| Poll succeeds, N visible ATP values changed | `Data ERP diperbarui pukul 14:05. 3 angka berubah.` | at most once per 60s |
+| A row the user is focused on changed | `Black Galaxy sekarang 3.837 lembar, Tersedia.` — announced instead of the generic message | immediate |
+| `freshness.stale` becomes true | `Peringatan: data ERP belum diperbarui sejak 11:42.` | once per transition |
+| `freshness.stale` becomes false | `Data ERP sudah diperbarui.` | once per transition |
+| `erp_connected` becomes false | `ERP tidak terhubung.` | once per transition |
+| Write succeeds / fails | the toast text, mirrored into `#srlive` | per action |
+| Page/filter change loads | `Menampilkan 50 dari 1.204 baris.` | per load |
+
+- The banner is `role="status"` (implicit `aria-live="polite"`); do **not** also
+  push its text into `#srlive` — it would be read twice.
+- Toasts are **not** `aria-live` themselves; they are mirrored into `#srlive` so
+  there is exactly one announcement channel and no double-reads.
+- `aria-live` is never placed on the table, `<tbody>`, or any row container. A
+  polite region on a 50-row table announces the entire table on every poll.
+- The visual delta flash (`.f-up`/`.f-dn`) and the announcement are driven by the
+  same diff, so a sighted and a screen-reader user learn the same fact.
+
+### 9.5 Not by colour alone
+
+Every state carries a word (`Tersedia`, `Habis`, `Kosong`, `Perlu Produksi`).
+Every negative number carries a `−`. The delta flash is accompanied by the
+number actually changing. The `Tutup` variant is distinguished by button label
+and by an inline confirm, not only by button colour. A user with full
+achromatopsia loses nothing on either page.
+
+### 9.6 The rest
+
+- `<html lang="id">` — inherited, keep it. Do not add `lang="en"` to any label.
+- Every `<table>` gets a `<caption class="sr-only">` naming it
+  (`Daftar stok per SKU`, `Antrean pesanan dengan ETA lewat`).
+- Every icon-only or glyph element (`⚠️`, `🔌`, `←`, `→`, `×`) is
+  `aria-hidden="true"` with the meaning in adjacent text or `aria-label`.
+- Every form control has a real `<label for>`; placeholders are never the label.
+- Numbers use `font-variant-numeric:tabular-nums` so columns align and a magnifier
+  user can compare rows down the column.
+- `prefers-reduced-motion` is honoured by the inherited rule; it disables the
+  skeleton pulse, the delta flash, the toast entrance and the spinner animation.
+  The spinner must therefore also carry text (`Menutup…`), never spin alone.
+- Zoom to 200% at 380px must not clip anything: no fixed heights on text
+  containers, no `overflow:hidden` on a row.
+
+---
+
+## 10. Removals — gone from the DOM, not hidden
+
+Both developers must be able to `grep` their finished file and find **zero**
+hits for each token below. `display:none`, `hidden`, a CSS class, or a commented-
+out block are all failures: a hidden booking form is still a booking form to a
+screen reader, to a keyboard user, and to anyone who opens devtools.
+
+### 10.1 `/stock` (WP-5)
+
+| Removed | grep for |
+|---|---|
+| Rep picker (the `Atas nama (sales)` select + free-text fallback) | `repSel`, `repFree`, `repFreeWrap`, `selectedRep`, `loadReps`, `onRepChange`, `REPS`, `/api/sales-reps`, `optgroup` |
+| `stk_rep` persistence | `stk_rep` — and add `localStorage.removeItem("stk_rep")` on boot so a rep's old name is not left behind in their browser |
+| Booking modal + qty field | `bkBg`, `bkModal`, `bkQty`, `openBooking`, `data-book`, `＋ Booking`, `POST /api/stock/bookings` |
+| "Booking Saya" card | `mineCard`, `mineBody`, `mineCount`, `loadMine` |
+| Cancel-booking action | `/cancel`, `batalkan booking` |
+| Riwayat (booking history) modal | `rwBg`, `rwModal`, `openRiwayat`, `/items/:id/riwayat` — **replaced** by the §5.3 SKU detail sheet, which is a new component, not a renamed one |
+| Overbooked badge + the "Hanya overbooked" checkbox | `.badge`, `OVERBOOKED`, `onlyOver`, `overbooked` |
+| Booking status labels | `STLABEL`, `confirmed`, `overbooked`, `approved`, `rejected`, `cancelled`, `completed`, `outstanding` |
+| The old advisory banner + its dismissal | `stk_banner_x`, `bannerX`, `wajib konfirmasi ulang ke tim PPIC` |
+| `upload`-shaped freshness (`SUMMARY.upload`, filename in the header) | `SUMMARY.upload`, `filename` |
+
+### 10.2 `/stock-ppic` (WP-6)
+
+| Removed | grep for |
+|---|---|
+| **Excel upload control** and its whole parsing stack | `<input type="file"`, `id="file"`, `accept=".xlsx"`, `XLSX`, `cdnjs.cloudflare.com`, `preview`, `parseErr`, `looksLikeHeader`, `headerScore`, `KNOWN`, `NAME_HDRS`, `QTY_HDRS`, `POST /api/stock/uploads` |
+| — including the `<script src>` tag pulling SheetJS | the page must load **zero** external scripts; `CONTRACTS §6` says no dependency |
+| End-of-day export + "Buat Stock Check Baru" | `expEod`, `genCheck`, `Akhir Hari`, `Export Laporan` |
+| Verify queue (approve / reject) | `vqBody`, `vqCount`, `data-approve`, `data-reject`, `verify(`, `Setujui`, `Tolak`, `.btn.approve`, `Antrean Verifikasi` |
+| Booking Outstanding + **Penuhi** | `outBody`, `outCount`, `data-fulfil`, `Penuhi`, `fulfilled_item_id`, `/fulfill` |
+| **LAMA long-booking tracker** | `trackBody`, `Tracker Booking`, `chip.lama`, `b.long`, `active_long`, `LAMA` |
+| "Semua Booking" list + its status filter chips | `allBody`, `stFilters`, `DEDUCTING_SET` |
+| Upload history + archive panel | `histBody`, `archivePanel`, `Riwayat Upload` |
+| `complete` / `cancel` booking actions | `/complete`, `/cancel` |
+
+### 10.3 What is kept
+
+- `#actor` (`Petugas PPIC`) and `stk_actor` persistence — still required; every
+  write records an actor (`CONTRACTS §7.8`).
+- The `PPIC ↗` / `Halaman Sales ↗` cross-links in both headers.
+- `stk_sort` persistence on `/stock`.
+- Every inherited helper: `$`, `esc`, `NF`, `wib`, `wibShort`, `dur`, `ageSec`,
+  `toast`, `eq`, the modal open/close pattern, the 30s poll, the 60s age tick.
+- The archive **endpoints** stay readable server-side (ST-R14). Neither page
+  calls them. If someone later wants the frozen booking history on screen, that
+  is a new, separately specified surface — not a revived card.
+
