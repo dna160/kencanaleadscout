@@ -1166,10 +1166,18 @@ the owner's audit control.
 tab the Tripwire already flags as holding two incompatible kinds of thing.
 AMENDMENT 20 shipped with a screen; AMENDMENT 21 shipped with four counters
 precisely so its consequence was data rather than inference. This one ships with
-`totals.autoclosed_aged_widened` — the count of rows the age arm closed that the
-status gate would not have — and a boot log line naming the flag, so the size of
-the move is readable before and after rather than discovered by an operator
+`totals.autoclosed_aged_widened` and a boot log line naming the flag, so the size
+of the move is readable before and after rather than discovered by an operator
 opening a shorter queue with no explanation.
+
+**The counter is deliberately independent of the flag**, which makes it a preview
+as well as a measurement. It counts rows past the threshold that the status gate
+would *not* match — so with the flag ON those rows sit in
+`v_autoclosed_commitments` and the number is what the widening **closed**, and
+with it OFF the identical rows sit in `v_stale_commitments` and the same number is
+what it **would** close. Deploy with the flag off, read the figure, turn it on
+against it. It can never land on `v_live_commitments` in either setting, because
+past the threshold implies past the liveness window.
 
 ### Resolved: the intermittent test failure
 
@@ -1180,3 +1188,20 @@ lock on relations the concurrently-running route suite reads — and the two sid
 reached those relations in different orders. A textbook deadlock. The probes now
 build **session-temp** views instead, touching nothing shared. The isolation was
 fixed, not the assertion, which is what the write-up asked for.
+
+
+### The widening, quantified on real fixtures
+
+Against PRD §5A's Black Galaxy population — 76 approved lines, 8 live (319
+sheets), 68 phantoms (1,810), **none carrying `DO`**:
+
+```
+autoclosed_lines: 27    widened_auto: 27      totals.autoclosed_aged_widened = 27
+stale_lines:      41    widened_stale: 0      ATP unchanged at 3,849
+```
+
+27 phantoms — 703 sheets — leave the review queue and the promiseable figure does
+not move. That `autoclosed_lines` and `widened_auto` are **both 27** is the whole
+point: on this population *every* auto-close is one AMENDMENT 20's status gate
+would have missed, because nothing here is `DO`. That is the owner's complaint,
+measured.

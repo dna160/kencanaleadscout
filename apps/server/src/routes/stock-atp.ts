@@ -332,6 +332,25 @@ export interface SummaryTotals {
    */
   autoclosed_commitments: number;
   /**
+   * AMENDMENT 22, and the number that makes the widening state its own size:
+   * lines past `STOCK_AUTOCLOSE_AFTER_DAYS` whose `status_order` is NOT in
+   * `STOCK_AUTOCLOSE_STATUSES` — precisely the population the age arm reaches
+   * only because it stopped asking about status.
+   *
+   * IT COUNTS THE SAME ROWS IN BOTH SETTINGS OF THE FLAG, which is the point.
+   * With `STOCK_AUTOCLOSE_AGE_ANY_STATUS` ON it is a subset of
+   * `autoclosed_commitments` and says how much review work the widening removed.
+   * With it OFF the identical rows are still in the stale queue, so it is a subset
+   * of `stale_commitments` and says how much it WOULD remove — a preview that
+   * costs no deploy cycle to read. `autoclosed_spb_partial_held` measures its own
+   * setting's population the same way.
+   *
+   * ATP consequence: nil, in both settings and by construction. Every line counted
+   * here is past a threshold that sits above the liveness window, so it was
+   * already outside `open_commitment` before any rule looked at it.
+   */
+  autoclosed_aged_widened: number;
+  /**
    * ST-R22 rule 2, measured separately from the rule beside it because its
    * consequence is different in kind. Lines the GOODS-OUT rule closed
    * (`autoclose_basis = 'summary_spb'`), a subset of `autoclosed_commitments`.
@@ -499,6 +518,8 @@ interface AggregateRow {
   stale_lines: string | null;
   autoclosed_committed: string | null;
   autoclosed_lines: string | null;
+  /** AMENDMENT 22 — the widening's own population, per SKU. See SummaryTotals. */
+  aged_widened_lines: string | null;
   /** ST-R22 rule 2 — the four SPB counters, per SKU. See SummaryTotals. */
   autoclosed_spb_lines: string | null;
   autoclosed_spb_reserving_lines: string | null;
@@ -514,6 +535,8 @@ interface EngineItem extends SkuItem {
   undated_lines: number;
   stale_lines: number;
   autoclosed_lines: number;
+  /** AMENDMENT 22 — the widening's own measurement, summed into totals. */
+  aged_widened_lines: number;
   /** ST-R22 rule 2 — the SPB rule's own measurement, summed into totals. */
   autoclosed_spb_lines: number;
   autoclosed_spb_reserving_lines: number;
@@ -665,7 +688,11 @@ async function loadItems(
     stale as (
       select sku_key,
              sum(qty_balance) as stale_committed,
-             count(*)         as stale_lines
+             count(*)         as stale_lines,
+             -- AMENDMENT 22, the OFF half of the counter: with the widening off
+             -- these rows are still here, in the queue a human works. Counted from
+             -- the view's own flag so the rule stays spelled once (§7.3).
+             count(*) filter (where autoclose_aged_widened) as aged_widened_lines
       from v_stale_commitments ${f}
       group by sku_key
     ),
@@ -675,6 +702,10 @@ async function loadItems(
       select sku_key,
              sum(qty_balance) as autoclosed_committed,
              count(*)         as autoclosed_lines,
+             -- AMENDMENT 22, the ON half: the same flag, on the rows the widening
+             -- moved here. Summed with the stale half so the total is the size of
+             -- the change in either setting.
+             count(*) filter (where autoclose_aged_widened) as aged_widened_lines,
              -- ST-R22 rule 2, measured apart from rule 1 because its consequence
              -- differs in kind: the SPB rule can close a LIVE line, and then ATP
              -- moves. autoclose_reserving is the view's own answer to whether the
@@ -748,6 +779,8 @@ async function loadItems(
            coalesce(stale.stale_lines, 0)::text   as stale_lines,
            coalesce(autoclosed.autoclosed_committed, 0)::text as autoclosed_committed,
            coalesce(autoclosed.autoclosed_lines, 0)::text     as autoclosed_lines,
+           (coalesce(autoclosed.aged_widened_lines, 0) + coalesce(stale.aged_widened_lines, 0))::text
+             as aged_widened_lines,
            coalesce(autoclosed.autoclosed_spb_lines, 0)::text as autoclosed_spb_lines,
            coalesce(autoclosed.autoclosed_spb_reserving_lines, 0)::text
              as autoclosed_spb_reserving_lines,
@@ -816,6 +849,7 @@ async function loadItems(
       undated_lines: numOf(r.undated_lines),
       stale_lines: numOf(r.stale_lines),
       autoclosed_lines: numOf(r.autoclosed_lines),
+      aged_widened_lines: numOf(r.aged_widened_lines),
       autoclosed_spb_lines: numOf(r.autoclosed_spb_lines),
       autoclosed_spb_reserving_lines: numOf(r.autoclosed_spb_reserving_lines),
       autoclosed_spb_released: round2(numOf(r.autoclosed_spb_released)),
@@ -1351,6 +1385,7 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
       stale_commitments: 0,
       undated_commitments: 0,
       autoclosed_commitments: 0,
+      autoclosed_aged_widened: 0,
       autoclosed_spb: 0,
       autoclosed_spb_reserving: 0,
       autoclosed_spb_partial_held: 0,
@@ -1364,6 +1399,10 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
       // ST-R22: how much review work the machine took off PPIC's desk. Zero stock
       // moved with it — see the field's doc comment.
       totals.autoclosed_commitments += it.autoclosed_lines;
+      // AMENDMENT 22: how big the widening actually is, on this mirror. Counted in
+      // BOTH settings of the flag — with it off these rows are still in the stale
+      // queue — so the owner reads the size of the change before or after making it.
+      totals.autoclosed_aged_widened += it.aged_widened_lines;
       // ST-R22 rule 2, and the reason it is counted separately: unlike rule 1 this
       // one MOVES ATP. `autoclosed_spb_reserving` is the population the movement
       // comes from and `autoclosed_spb_atp_delta` is the movement itself, so the

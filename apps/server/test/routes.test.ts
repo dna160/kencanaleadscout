@@ -1211,6 +1211,53 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
       });
     });
 
+    it("/summary states the SIZE of the widening in totals.autoclosed_aged_widened", async () => {
+      // The counter the Architect ruled in: without it this change ships into the
+      // PPIC tab with no number attached to it, and nobody — owner or operator —
+      // can say how many rows moved. Deltas, because the totals strip is global.
+      const W = parts("A22-CNT");
+      const FIVE_YEARS = 365 * 5;
+      await inRollback(async (tx) => {
+        const before = (await GET<SummaryResponse>("/api/stock/summary")).body.totals;
+        await seedWarna(tx);
+        await seedLines(tx, [
+          // Four aged lines at statuses the auto-close set does NOT contain: the
+          // widening's own population.
+          ...["Open", "Waiting", "Proses Produksi", null].map((st, i) => ({
+            id: `${P}-a22-cnt-w${i}`,
+            qty_balance: 7,
+            eta: FIVE_YEARS,
+            parts: W,
+            status_order: st,
+          })),
+          // Aged AND already in the configured set — closed before AMENDMENT 22,
+          // so it is counted in autoclosed_commitments but NOT in the widening.
+          {
+            id: `${P}-a22-cnt-do`, qty_balance: 7, eta: FIVE_YEARS, parts: W,
+            status_order: AUTOCLOSE_STATUS,
+          },
+          // Inside the threshold, and live/undated: none of these are the widening.
+          { id: `${P}-a22-cnt-mid`, qty_balance: 7, eta: STALE_ETA, parts: W, status_order: "Waiting" },
+          { id: `${P}-a22-cnt-live`, qty_balance: 7, eta: 5, parts: W, status_order: "Waiting" },
+          { id: `${P}-a22-cnt-und`, qty_balance: 7, eta: null, parts: W, status_order: "Waiting" },
+        ]);
+        const t = (await GET<SummaryResponse>("/api/stock/summary")).body.totals;
+
+        // Four lines, and exactly four: not the DO line that AMENDMENT 20 already
+        // closed, not the one inside the threshold, not the live or undated ones.
+        expect(t.autoclosed_aged_widened - before.autoclosed_aged_widened).toBe(4);
+        // A strict subset of the rule-agnostic total, which grew by five.
+        expect(t.autoclosed_commitments - before.autoclosed_commitments).toBe(5);
+        // And the SPB rule is untouched by any of it — no documents here.
+        expect(t.autoclosed_spb - before.autoclosed_spb).toBe(0);
+        expect(t.autoclosed_spb_atp_delta - before.autoclosed_spb_atp_delta).toBe(0);
+        // What still needs a person: the one inside the threshold, and the undated
+        // one that no age rule may ever touch.
+        expect(t.stale_commitments - before.stale_commitments).toBe(1);
+        expect(t.undated_commitments - before.undated_commitments).toBe(1);
+      });
+    });
+
     it("the review queue can no longer hold a line past the auto-close threshold", async () => {
       // A CONSEQUENCE the PPIC page inherits, and worth pinning because it is not
       // obvious: with the age arm no longer asking about status, `segment=stale`

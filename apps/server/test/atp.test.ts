@@ -1269,6 +1269,83 @@ describe.skipIf(!hasDb)("ATP over the real schema", () => {
       });
     });
 
+    it("the boot log announces the widening when it is on, and says nothing when it is off", async () => {
+      // The change is ATP-neutral but it is NOT invisible: it moves lines out of
+      // the queue a human works. An operator must never learn that by noticing
+      // their queue got shorter overnight, so boot says it and names the counter.
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        warn.mockClear();
+        buildCommitmentViewSql(commitmentRuleConfig({ autocloseAgeAnyStatus: true }));
+        const on = warn.mock.calls.flat().join(" ");
+        expect(on).toContain("STOCK_AUTOCLOSE_AGE_ANY_STATUS");
+        expect(on).toContain("totals.autoclosed_aged_widened"); // where to read the size
+        expect(on).toContain("RELEASES NO STOCK");              // and what it does not do
+
+        warn.mockClear();
+        buildCommitmentViewSql(commitmentRuleConfig({ autocloseAgeAnyStatus: false }));
+        expect(warn.mock.calls.flat().join(" ")).not.toContain("STOCK_AUTOCLOSE_AGE_ANY_STATUS");
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it("the counter sizes the widening in BOTH settings — the same rows, wherever they sit", async () => {
+      // `totals.autoclosed_aged_widened` is what lets the owner turn this on
+      // against a figure instead of a hope, so the property that matters is that
+      // it counts the SAME population with the flag off as with it on. Off, those
+      // rows are in the stale queue; on, they are in the machine's set. Asserted
+      // over both, from the views' own flag — never a re-spelled rule.
+      const C = `${P}-a22-c`;
+      await inRollback(async (tx) => {
+        await seedLines(tx, [
+          // Seven five-year-old lines. Index 0 is the CONFIGURED auto-close status,
+          // so it is not part of the widening; the other six are exactly the
+          // population AMENDMENT 22 added.
+          ...STATUSES.map((st, i) => ({
+            id: `${C}-old-${i}`,
+            qty_balance: 10,
+            eta: FIVE_YEARS,
+            status_order: st,
+          })),
+          // Everything the counter must NOT pick up.
+          { id: `${C}-mid`, qty_balance: 10, eta: STALE_ETA, status_order: "Waiting" },
+          { id: `${C}-live`, qty_balance: 10, eta: 5, status_order: "Waiting" },
+          { id: `${C}-undated`, qty_balance: 10, eta: null, status_order: "Waiting" },
+        ]);
+        const off = await probeRules(tx, { autocloseAgeAnyStatus: false });
+
+        const widenedIn = async (relation: CommitmentView, v: Probe): Promise<number> => {
+          const rows = await tx.unsafe(
+            `select count(*)::text as n from ${relation}${v}
+              where id like $1 and autoclose_aged_widened`,
+            [`${C}%`],
+          );
+          return Number((rows as { n: string }[])[0]!.n);
+        };
+
+        // ON: the widened rows are in the machine's set, and nowhere else.
+        expect(await widenedIn("v_autoclosed_commitments", "")).toBe(6);
+        expect(await widenedIn("v_stale_commitments", "")).toBe(0);
+
+        // OFF: the identical six rows, still in the queue a human works.
+        expect(await widenedIn("v_stale_commitments", off)).toBe(6);
+        expect(await widenedIn("v_autoclosed_commitments", off)).toBe(0);
+
+        // So the figure /summary adds up is the same either way — which is what
+        // makes it a preview as well as a measurement.
+        const total = async (v: Probe): Promise<number> =>
+          (await widenedIn("v_autoclosed_commitments", v)) + (await widenedIn("v_stale_commitments", v));
+        expect(await total("")).toBe(await total(off));
+        expect(await total("")).toBe(6);
+
+        // It can never land on the live view, in either setting: past the
+        // auto-close threshold implies past the liveness window.
+        expect(await widenedIn("v_live_commitments", "")).toBe(0);
+        expect(await widenedIn("v_live_commitments", off)).toBe(0);
+      });
+    });
+
     it("a line that is BOTH aged and SPB now states the age — and the SPB ATP counter is untouched", async () => {
       // A CONSEQUENCE the /summary counters inherit, pinned so it is deliberate
       // rather than discovered. `autoclose_basis` names the aged rule first, and

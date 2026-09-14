@@ -364,13 +364,44 @@ export function buildCommitmentViewSql(
    * Cancelled and unapproved lines are filtered out by the spine's WHERE before
    * any of this is evaluated, so widening the status set reaches none of them.
    */
-  const agedStatusArm = cfg.autocloseAgeAnyStatus
-    ? "true"
-    : `coalesce(l.status_order, '') = any (${autocloseStatuses})`;
-  const autoclosedAged = `coalesce(
-        ${agedStatusArm}
-        and l.estimate_delivery < current_date - ${autocloseDays}
-      , false)`;
+
+  /**
+   * The age arm's two atoms, each spelled ONCE so the rule, its OFF setting and
+   * the counter that measures the difference cannot drift apart.
+   *
+   * Both are NULL-proofed into two-valued booleans before anything combines them.
+   * `status_order` may be NULL and `NULL = any(...)` is NULL, not false; an
+   * un-coalesced NULL would propagate through the `not (...)` arms below and drop
+   * the line out of EVERY view — a silent inflation of ATP and a breach of §7.6.
+   * `estimate_delivery` may be NULL and `NULL < date` is likewise NULL, which is
+   * exactly how an undated line is kept out of the age arm (see above).
+   */
+  const agedPastThreshold = `coalesce(l.estimate_delivery < current_date - ${autocloseDays}, false)`;
+  const autocloseStatusMatch = `coalesce(coalesce(l.status_order, '') = any (${autocloseStatuses}), false)`;
+
+  const autoclosedAged = cfg.autocloseAgeAnyStatus
+    ? agedPastThreshold
+    : `(${autocloseStatusMatch} and ${agedPastThreshold})`;
+
+  /**
+   * AMENDMENT 22'S OWN POPULATION, carried on the row: past the age threshold, at
+   * a status the configured auto-close set does NOT contain. Exactly the lines the
+   * widening added to the age arm's reach, and nothing else.
+   *
+   * DELIBERATELY INDEPENDENT OF THE FLAG, which is what makes it useful. With the
+   * widening ON these rows are in `v_autoclosed_commitments` and the count says
+   * how many lines the change closed. With it OFF the very same rows are in
+   * `v_stale_commitments` — they are dated and past the window — and the count
+   * says how many it WOULD close. So an operator can deploy with the flag off,
+   * read the number off /summary, and turn the rule on against a figure rather
+   * than a hope. `totals.autoclosed_spb_partial_held` measures its own setting's
+   * population the same way, for the same reason.
+   *
+   * It can never appear on `v_live_commitments`: past the auto-close threshold
+   * implies past the liveness window, since boot refuses to let that ordering
+   * invert without saying so.
+   */
+  const agedWidened = `(${agedPastThreshold} and not ${autocloseStatusMatch})`;
 
   /**
    * ST-R22 rule 2 — an SO line carrying an SPB has already left the warehouse
@@ -467,6 +498,27 @@ export function buildCommitmentViewSql(
     );
   }
 
+  // AMENDMENT 22's announcement. Not an ordering problem and not a safety alarm —
+  // the ATP delta is provably zero — but the SAME CLASS OF FACT as the warning
+  // below it: a config value that changes WHICH POPULATION the machine decides
+  // for. That must never be something an operator discovers by noticing their
+  // queue got shorter overnight, so it says so at boot and names the counter that
+  // measures it.
+  if (cfg.autocloseAgeAnyStatus) {
+    console.warn(
+      "[migrateErpStock] STOCK_AUTOCLOSE_AGE_ANY_STATUS is ON. The age arm of the auto-close rule " +
+        `now IGNORES status_order: any approved line whose estimate_delivery is more than ${autocloseDays} ` +
+        "days past is auto-closed, not just the ones whose status is " +
+        `${safeAutocloseStatuses(cfg.autocloseStatuses).join(" / ") || "(none configured)"}. ` +
+        "This RELEASES NO STOCK — that " +
+        `threshold sits above the ${windowDays}-day liveness window, so every line it can reach was ` +
+        "already outside open_commitment — but it does move lines out of the human review queue. Read " +
+        "totals.autoclosed_aged_widened on /api/stock/summary for exactly how many; it counts the same " +
+        "population whether this is on or off, so it is also the preview. Undated lines are NOT affected: " +
+        "no line is ever auto-closed for its AGE without a real estimate_delivery.",
+    );
+  }
+
   // ST-R22 rule 2's equivalent alarm. There is no ordering to protect here —
   // the SPB rule is ATP-moving BY DESIGN — so what must not happen silently is
   // the cross-check being switched off, because that is the one setting under
@@ -514,6 +566,10 @@ export function buildCommitmentViewSql(
            -- above the liveness window), which is that rule's zero-delta claim
            -- restated as data.
            ((${autoclosed}) and ${liveEta}) as autoclose_reserving,
+           -- AMENDMENT 22's population, exposed so /summary can state the size of
+           -- the widening — in either setting of the flag — without re-spelling
+           -- the age rule or the status set (§7.3).
+           ${agedWidened} as autoclose_aged_widened,
            -- The SPB rule's two atoms, exposed so that /summary can count what the
            -- REQUIRE_FULL cross-check is holding back without re-spelling the rule.
            ${hasSpb} as has_spb,
