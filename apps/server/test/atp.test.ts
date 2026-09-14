@@ -24,7 +24,13 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { canonicalSkuKey, type SkuParts } from "../src/erp/sku.js";
 import { closeDatabase, getSql } from "../src/db/client.js";
-import { runErpStockMigrations } from "../src/db/migrateErpStock.js";
+import {
+  applyCommitmentViews,
+  buildCommitmentViewSql,
+  commitmentRuleConfig,
+  type CommitmentRuleConfig,
+  runErpStockMigrations,
+} from "../src/db/migrateErpStock.js";
 import { config } from "../src/config.js";
 
 const hasDb = Boolean(process.env.DATABASE_URL);
@@ -101,6 +107,21 @@ type LineRow = {
    * used need to be able to set it — and set it very old.
    */
   po_date_days_ago?: number;
+  /**
+   * ST-R22 rule 2 (2026-09-14). The goods-out document. Absent by default, so
+   * every fixture written before this rule existed still describes a line the
+   * rule does not touch.
+   */
+  summary_spb?: string | null;
+  /** Context only — no rule reads it. Mirrored beside the SPB (one migration). */
+  summary_do?: string | null;
+  /**
+   * Shipment state, for the REQUIRE_FULL cross-check. Defaults keep the historic
+   * behaviour of this file: `qty_order = qty_balance`, `qty_delivered = 0` — a
+   * line with an outstanding remainder, i.e. NOT fully shipped.
+   */
+  qty_order?: number;
+  qty_delivered?: number;
 };
 
 async function seedFg(tx: Tx, rows: readonly FgRow[]): Promise<void> {
@@ -143,13 +164,14 @@ async function seedLines(tx: Tx, rows: readonly LineRow[]): Promise<void> {
       insert into erp_so_line (
         id, so_id, brand, warna, th, th_panel, p, l,
         qty_order, qty_delivered, qty_balance,
-        status_order, approval, estimate_delivery, sn_fg, sku_key
+        status_order, approval, estimate_delivery, summary_spb, summary_do, sn_fg, sku_key
       ) values (
         ${r.id}, ${soId}, ${String(parts.brand ?? "")}, ${String(parts.warna ?? "")},
         ${Number(parts.th ?? 0)}, ${Number(parts.th_panel ?? 0)},
         ${Number(parts.p ?? 0)}, ${Number(parts.l ?? 0)},
-        ${r.qty_balance}, ${0}, ${r.qty_balance},
+        ${r.qty_order ?? r.qty_balance}, ${r.qty_delivered ?? 0}, ${r.qty_balance},
         ${r.status_order ?? "Open"}, ${r.approval ?? "Approved"}, ${eta},
+        ${r.summary_spb ?? null}, ${r.summary_do ?? null},
         ${null}, ${canonicalSkuKey(parts)}
       )
     `;
@@ -907,6 +929,359 @@ describe.skipIf(!hasDb)("ATP over the real schema", () => {
     });
   });
 
+  // ── ST-R22 rule 2 — the SPB (goods-out) auto-close ───────────────────────
+
+  describe("ST-R22 rule 2 — a line carrying an SPB has already left the warehouse", () => {
+    /** A realistic goods-out document number. Its PRESENCE is the whole rule. */
+    const SPB = "SPB/2026/09/0042";
+
+    /** Views built from the real builder at knobs other than the deployed ones. */
+    async function withRules(tx: Tx, over: Partial<CommitmentRuleConfig>): Promise<void> {
+      // NEVER a hand-written predicate: this is the shipped builder, so a test at
+      // REQUIRE_FULL=false is still testing the rule the server would run (§7.3).
+      await applyCommitmentViews(tx, buildCommitmentViewSql(commitmentRuleConfig(over)));
+    }
+
+    it("the knobs are config, and both default to the SAFE reading", () => {
+      expect(config.stock.autocloseOnSpb).toBe(true);
+      // The cross-check defaults ON. Off, the rule closes partially shipped lines —
+      // an SPB plus a genuine remainder still owed — and releases stock a customer
+      // is waiting for. On, it only removes balances against goods already gone.
+      expect(config.stock.autocloseSpbRequireFull).toBe(true);
+    });
+
+    it("the mirror carries summary_spb and summary_do, and the views expose them", async () => {
+      const cols = await db!<{ column_name: string }[]>`
+        select column_name from information_schema.columns
+        where table_schema = 'public' and table_name = 'erp_so_line'
+      `;
+      expect(cols.map((c) => c.column_name)).toEqual(
+        expect.arrayContaining(["summary_spb", "summary_do"]),
+      );
+      const viewCols = await db!<{ column_name: string }[]>`
+        select column_name from information_schema.columns
+        where table_schema = 'public' and table_name = 'v_autoclosed_commitments'
+      `;
+      expect(viewCols.map((c) => c.column_name)).toEqual(
+        expect.arrayContaining([
+          "summary_spb",
+          "summary_do",
+          "has_spb",
+          "fully_shipped",
+          // The measurement the whole change is judged on: was this line reserving
+          // when the machine closed it?
+          "autoclose_reserving",
+        ]),
+      );
+    });
+
+    it("a row mirrored before the column shipped (NULL spb) is NOT a candidate", async () => {
+      // Existing mirrored rows get the column on migrate and carry NULL until they
+      // are re-synced. NULL is not an SPB, so the rule is a no-op over them — it
+      // never closes a line on the strength of a column it has not read.
+      await inRollback(async (tx) => {
+        await seedLines(tx, [
+          { id: `${P}-spb-null`, qty_balance: 10, eta: 5, qty_order: 10, qty_delivered: 10 },
+        ]);
+        expect(await idsIn(tx, "v_autoclosed_commitments")).toEqual([]);
+        expect(await idsIn(tx, "v_live_commitments")).toEqual([`${P}-spb-null`]);
+      });
+    });
+
+    it("a fully shipped LIVE line with an SPB is auto-closed, and ATP rises by EXACTLY its balance", async () => {
+      // The consequence this rule was weighed on. PRD §5A: Live FG qty is gross and
+      // already fell when the goods shipped, so the standing balance was counting
+      // the same units a second time. Removing it restores truth — and the size of
+      // the correction is asserted to the sheet, not described.
+      await inRollback(async (tx) => {
+        await seedFg(tx, [{ sn_fg: `${P}-fg-spb`, qty: 1000 }]);
+        await seedLines(tx, [
+          {
+            id: `${P}-spb-live`,
+            qty_balance: 120,
+            eta: 5,
+            qty_order: 400,
+            qty_delivered: 400,
+            summary_spb: SPB,
+            summary_do: "DO/2026/09/0042",
+          },
+        ]);
+        const after = await atpFor(tx, BG_KEY);
+        expect(await idsIn(tx, "v_autoclosed_commitments")).toEqual([`${P}-spb-live`]);
+        expect(await idsIn(tx, "v_live_commitments")).toEqual([]);
+        expect(await idsIn(tx, "v_stale_commitments")).toEqual([]);
+        expect(after.committed).toBe(0);
+        expect(after.atp).toBe(1000);
+
+        // ST-R21 over the machine: reinstating hands the line back to the liveness
+        // rule, which is what makes the delta measurable in both directions.
+        await tx`
+          insert into stock_commitment_overrides (so_line_id, state, reason, actor)
+          values (${`${P}-spb-live`}, 'reinstated', 'PPIC: SPB salah input', ${ACTOR})
+        `;
+        const reinstated = await atpFor(tx, BG_KEY);
+        expect(reinstated.committed).toBe(120);
+        expect(after.atp - reinstated.atp).toBe(120); // exactly the balance, no more
+        expect(await idsIn(tx, "v_live_commitments")).toEqual([`${P}-spb-live`]);
+      });
+    });
+
+    it("an UNDATED line with an SPB is auto-closed too, and that is where the delta bites", async () => {
+      // AMENDMENT 20 kept undated lines out of the AGED rule because it aged off a
+      // date they do not have. This rule reads a DOCUMENT, not a date, so an undated
+      // line is a candidate like any other — and being live, it is exactly the
+      // population whose closure moves ATP. Flagged, not hidden.
+      await inRollback(async (tx) => {
+        await seedFg(tx, [{ sn_fg: `${P}-fg-spbu`, qty: 500 }]);
+        await seedLines(tx, [
+          {
+            id: `${P}-spb-undated`,
+            qty_balance: 90,
+            eta: null,
+            qty_order: 90,
+            qty_delivered: 90,
+            summary_spb: SPB,
+          },
+        ]);
+        expect(await idsIn(tx, "v_autoclosed_commitments")).toEqual([`${P}-spb-undated`]);
+        const a = await atpFor(tx, BG_KEY);
+        expect(a.committed).toBe(0);
+        expect(a.atp).toBe(500);
+
+        const [row] = await tx`
+          select undated, autoclose_basis, autoclose_reserving
+          from v_autoclosed_commitments where id = ${`${P}-spb-undated`}
+        `;
+        expect(row).toMatchObject({
+          undated: true,
+          autoclose_basis: "summary_spb",
+          autoclose_reserving: true,
+        });
+      });
+    });
+
+    it("a STALE line with an SPB is auto-closed and ATP does not move at all", async () => {
+      // Same rule, other population: this one had already failed the liveness
+      // window, so closing it is pure queue hygiene. The two cases differ only in
+      // whether the line was reserving — which is what `autoclose_reserving` says.
+      await inRollback(async (tx) => {
+        await seedFg(tx, [{ sn_fg: `${P}-fg-spbs`, qty: 800 }]);
+        await seedLines(tx, [
+          {
+            id: `${P}-spb-stale`,
+            qty_balance: 300,
+            eta: WINDOW_DAYS + 30,
+            qty_order: 300,
+            qty_delivered: 300,
+            summary_spb: SPB,
+          },
+        ]);
+        const closed = await atpFor(tx, BG_KEY);
+        expect(await idsIn(tx, "v_autoclosed_commitments")).toEqual([`${P}-spb-stale`]);
+        expect(closed.atp).toBe(800);
+
+        await tx`
+          insert into stock_commitment_overrides (so_line_id, state, reason, actor)
+          values (${`${P}-spb-stale`}, 'reinstated', 'audit', ${ACTOR})
+        `;
+        const reinstated = await atpFor(tx, BG_KEY);
+        expect(reinstated.atp - closed.atp).toBe(0); // it was never in the sum
+        expect(reinstated.stale_committed).toBe(300);
+
+        const [row] = await tx`
+          select autoclose_reserving from v_stale_commitments where id = ${`${P}-spb-stale`}
+        `;
+        expect(row).toMatchObject({ autoclose_reserving: false });
+      });
+    });
+
+    it("a PARTIALLY shipped line with an SPB is NOT auto-closed under the default", async () => {
+      // The whole point of the cross-check. This line has a goods-out document AND
+      // a genuine remainder still owed; closing it would release stock a customer is
+      // actually waiting for. It stays live, keeps reserving, stays a human's call.
+      await inRollback(async (tx) => {
+        await seedFg(tx, [{ sn_fg: `${P}-fg-spbp`, qty: 1000 }]);
+        await seedLines(tx, [
+          {
+            id: `${P}-spb-partial`,
+            qty_balance: 150,
+            eta: 5,
+            qty_order: 400,
+            qty_delivered: 250,
+            summary_spb: SPB,
+          },
+        ]);
+        expect(await idsIn(tx, "v_autoclosed_commitments")).toEqual([]);
+        expect(await idsIn(tx, "v_live_commitments")).toEqual([`${P}-spb-partial`]);
+        const a = await atpFor(tx, BG_KEY);
+        expect(a.committed).toBe(150);
+        expect(a.atp).toBe(850);
+
+        // …and the view says WHY it was held back, which is what /summary counts.
+        const [row] = await tx`
+          select has_spb, fully_shipped from v_live_commitments where id = ${`${P}-spb-partial`}
+        `;
+        expect(row).toMatchObject({ has_spb: true, fully_shipped: false });
+      });
+    });
+
+    it("…and IS auto-closed with STOCK_AUTOCLOSE_SPB_REQUIRE_FULL off — releasing the remainder", async () => {
+      await inRollback(async (tx) => {
+        await seedFg(tx, [{ sn_fg: `${P}-fg-spbp2`, qty: 1000 }]);
+        await seedLines(tx, [
+          {
+            id: `${P}-spb-partial`,
+            qty_balance: 150,
+            eta: 5,
+            qty_order: 400,
+            qty_delivered: 250,
+            summary_spb: SPB,
+          },
+        ]);
+        const held = await atpFor(tx, BG_KEY);
+        await withRules(tx, { autocloseSpbRequireFull: false });
+        const released = await atpFor(tx, BG_KEY);
+
+        expect(await idsIn(tx, "v_autoclosed_commitments")).toEqual([`${P}-spb-partial`]);
+        // The relaxation's price, stated as a number: 150 lembar of stock that is
+        // still owed to somebody becomes promiseable again.
+        expect(released.atp - held.atp).toBe(150);
+      });
+    });
+
+    it("with STOCK_AUTOCLOSE_ON_SPB off, an SPB changes nothing", async () => {
+      await inRollback(async (tx) => {
+        await seedLines(tx, [
+          {
+            id: `${P}-spb-off`,
+            qty_balance: 10,
+            eta: 5,
+            qty_order: 10,
+            qty_delivered: 10,
+            summary_spb: SPB,
+          },
+        ]);
+        await withRules(tx, { autocloseOnSpb: false });
+        expect(await idsIn(tx, "v_autoclosed_commitments")).toEqual([]);
+        expect(await idsIn(tx, "v_live_commitments")).toEqual([`${P}-spb-off`]);
+      });
+    });
+
+    it("blank, whitespace and the ERP's '-' placeholder are NOT an SPB", async () => {
+      // Reading any of these as a document would auto-close every line in the
+      // mirror that has the column populated at all — the largest single way this
+      // rule could go wrong, so it is pinned on every spelling seen in the data.
+      await inRollback(async (tx) => {
+        await seedFg(tx, [{ sn_fg: `${P}-fg-blank`, qty: 100 }]);
+        await seedLines(tx, [
+          { id: `${P}-spb-empty`, qty_balance: 1, eta: 5, qty_order: 1, qty_delivered: 1, summary_spb: "" },
+          { id: `${P}-spb-spaces`, qty_balance: 1, eta: 5, qty_order: 1, qty_delivered: 1, summary_spb: "   " },
+          { id: `${P}-spb-dash`, qty_balance: 1, eta: 5, qty_order: 1, qty_delivered: 1, summary_spb: "-" },
+          { id: `${P}-spb-dashes`, qty_balance: 1, eta: 5, qty_order: 1, qty_delivered: 1, summary_spb: " -- " },
+          { id: `${P}-spb-real`, qty_balance: 1, eta: 5, qty_order: 1, qty_delivered: 1, summary_spb: SPB },
+          // A real document number that merely CONTAINS dashes must survive.
+          { id: `${P}-spb-hyphenated`, qty_balance: 1, eta: 5, qty_order: 1, qty_delivered: 1, summary_spb: "SPB-0007" },
+        ]);
+        expect(await idsIn(tx, "v_autoclosed_commitments")).toEqual([
+          `${P}-spb-hyphenated`,
+          `${P}-spb-real`,
+        ]);
+        expect(await idsIn(tx, "v_live_commitments")).toEqual([
+          `${P}-spb-dash`,
+          `${P}-spb-dashes`,
+          `${P}-spb-empty`,
+          `${P}-spb-spaces`,
+        ]);
+        // Four blanks still reserving, two documents closed.
+        expect((await atpFor(tx, BG_KEY)).committed).toBe(4);
+      });
+    });
+
+    it("an unknown qty_order cannot prove full shipment, so the line stays with a human", async () => {
+      await inRollback(async (tx) => {
+        await seedLines(tx, [
+          { id: `${P}-spb-noqty`, qty_balance: 5, eta: 5, summary_spb: SPB },
+        ]);
+        await tx`update erp_so_line set qty_order = null, qty_delivered = 99 where id = ${`${P}-spb-noqty`}`;
+        expect(await idsIn(tx, "v_autoclosed_commitments")).toEqual([]);
+        expect(await idsIn(tx, "v_live_commitments")).toEqual([`${P}-spb-noqty`]);
+      });
+    });
+
+    it("when BOTH rules fire on one line, the basis is single and stable", async () => {
+      // A row states ONE set of grounds. The aged rule is named when both apply, so
+      // a line that already qualified under AMENDMENT 20 keeps the narration it had
+      // before this rule shipped.
+      await inRollback(async (tx) => {
+        await seedLines(tx, [
+          // both: a DO line past the threshold that also carries an SPB
+          {
+            id: `${P}-spb-both`, qty_balance: 5, eta: AUTOCLOSE_DAYS + 10,
+            status_order: AUTOCLOSE_STATUS, qty_order: 5, qty_delivered: 5, summary_spb: SPB,
+          },
+          // aged only
+          { id: `${P}-spb-aged`, qty_balance: 5, eta: AUTOCLOSE_DAYS + 10, status_order: AUTOCLOSE_STATUS },
+          // spb only
+          { id: `${P}-spb-only`, qty_balance: 5, eta: 5, qty_order: 5, qty_delivered: 5, summary_spb: SPB },
+        ]);
+        const rows = await tx`
+          select id, autoclose_basis, autoclose_reserving
+          from v_autoclosed_commitments where id like ${`${P}%`} order by id
+        `;
+        expect(rows).toEqual([
+          { id: `${P}-spb-aged`, autoclose_basis: "estimate_delivery", autoclose_reserving: false },
+          { id: `${P}-spb-both`, autoclose_basis: "estimate_delivery", autoclose_reserving: false },
+          { id: `${P}-spb-only`, autoclose_basis: "summary_spb", autoclose_reserving: true },
+        ]);
+      });
+    });
+
+    it("a confirm-close still beats the machine, and reinstate works under EITHER rule", async () => {
+      await inRollback(async (tx) => {
+        await seedLines(tx, [
+          { id: `${P}-spb-flip`, qty_balance: 40, eta: 5, qty_order: 40, qty_delivered: 40, summary_spb: SPB },
+          { id: `${P}-aged-flip`, qty_balance: 40, eta: 400, status_order: AUTOCLOSE_STATUS },
+        ]);
+        expect(await idsIn(tx, "v_autoclosed_commitments")).toEqual([
+          `${P}-aged-flip`,
+          `${P}-spb-flip`,
+        ]);
+        for (const id of [`${P}-spb-flip`, `${P}-aged-flip`]) {
+          await tx`
+            insert into stock_commitment_overrides (so_line_id, state, reason, actor)
+            values (${id}, 'closed', 'dikonfirmasi manual', ${ACTOR})
+          `;
+        }
+        // A human close removes a line from every set — one mechanism, both rules.
+        expect(await idsIn(tx, "v_autoclosed_commitments")).toEqual([]);
+        expect(await idsIn(tx, "v_live_commitments")).toEqual([]);
+        expect(await idsIn(tx, "v_stale_commitments")).toEqual([]);
+
+        await tx`
+          update stock_commitment_overrides set state = 'reinstated', updated_at = now()
+          where so_line_id like ${`${P}%`}
+        `;
+        // …and one reinstate hands each line back to the liveness rule.
+        expect(await idsIn(tx, "v_live_commitments")).toEqual([`${P}-spb-flip`]);
+        expect(await idsIn(tx, "v_stale_commitments")).toEqual([`${P}-aged-flip`]);
+        expect(await idsIn(tx, "v_autoclosed_commitments")).toEqual([]);
+      });
+    });
+
+    it("dead demand with an SPB stays dead — the rule is not a back door", async () => {
+      await inRollback(async (tx) => {
+        await seedLines(tx, [
+          { id: `${P}-spb-dead-1`, qty_balance: 5, eta: 5, qty_order: 5, qty_delivered: 5, summary_spb: SPB, approval: "Waiting" },
+          { id: `${P}-spb-dead-2`, qty_balance: 5, eta: 5, qty_order: 5, qty_delivered: 5, summary_spb: SPB, status_order: CANCELLED[0] ?? "Cancelled" },
+          { id: `${P}-spb-dead-3`, qty_balance: 0, eta: 5, qty_order: 5, qty_delivered: 5, summary_spb: SPB },
+        ]);
+        expect(await idsIn(tx, "v_autoclosed_commitments")).toEqual([]);
+        expect(await idsIn(tx, "v_live_commitments")).toEqual([]);
+        expect(await idsIn(tx, "v_stale_commitments")).toEqual([]);
+      });
+    });
+  });
+
   // ── Dead demand must not reserve ─────────────────────────────────────────
 
   describe("dead demand reserves nothing", () => {
@@ -978,7 +1353,8 @@ describe.skipIf(!hasDb)("ATP over the real schema", () => {
       // autoclosed (ST-R22) — DO, and past the threshold
       { id: `${P}-p-auto-do`, qty_balance: 3, eta: 900, status_order: "DO" },
       { id: `${P}-p-auto-edge`, qty_balance: 3, eta: AUTOCLOSE_DAYS + 1, status_order: "DO" },
-      // DO but UNDATED — never a candidate at any po_date, so it stays LIVE.
+      // DO but UNDATED — never a candidate for the AGED rule at any po_date, and
+      // it carries no SPB either, so it stays LIVE.
       {
         id: `${P}-p-undated-do`,
         qty_balance: 4,
@@ -986,6 +1362,33 @@ describe.skipIf(!hasDb)("ATP over the real schema", () => {
         status_order: "DO",
         so_id: `${P}-so-oldpo`,
         po_date_days_ago: 900,
+      },
+      // autoclosed by ST-R22 rule 2 — an SPB on a fully shipped line, in each of
+      // the three shapes the ETA can take. These are the rows that make the
+      // partition worth re-running: rule 2 removes lines from LIVE, which rule 1
+      // never did, so a covering failure here would be a silent ATP inflation.
+      {
+        id: `${P}-p-spb-live`, qty_balance: 6, eta: 5,
+        qty_order: 6, qty_delivered: 6, summary_spb: "SPB/1", summary_do: "DO/1",
+      },
+      {
+        id: `${P}-p-spb-undated`, qty_balance: 6, eta: null,
+        qty_order: 6, qty_delivered: 6, summary_spb: "SPB/2",
+      },
+      {
+        id: `${P}-p-spb-stale`, qty_balance: 6, eta: WINDOW_DAYS + 5,
+        qty_order: 6, qty_delivered: 6, summary_spb: "SPB/3",
+      },
+      // An SPB with a genuine remainder still owed: held back by REQUIRE_FULL, so
+      // it stays LIVE and must still be covered by the partition.
+      {
+        id: `${P}-p-spb-partial`, qty_balance: 6, eta: 5,
+        qty_order: 10, qty_delivered: 4, summary_spb: "SPB/4",
+      },
+      // A blank/placeholder SPB is not a document — it stays LIVE.
+      {
+        id: `${P}-p-spb-placeholder`, qty_balance: 6, eta: 5,
+        qty_order: 6, qty_delivered: 6, summary_spb: "-",
       },
       // outside the universe — dead demand
       { id: `${P}-p-dead-draft`, qty_balance: 5, eta: 5, approval: "Waiting" },
@@ -1107,6 +1510,15 @@ describe.skipIf(!hasDb)("ATP over the real schema", () => {
         expect(live.length).toBeGreaterThanOrEqual(5);
         expect(stale.length).toBeGreaterThanOrEqual(3);
         expect(auto.length).toBeGreaterThanOrEqual(2);
+        // …and BOTH machine rules are exercised, not just the older one.
+        const bases = await tx`
+          select distinct autoclose_basis from v_autoclosed_commitments
+          where id like ${`${P}%`} order by autoclose_basis
+        `;
+        expect(bases).toEqual([
+          { autoclose_basis: "estimate_delivery" },
+          { autoclose_basis: "summary_spb" },
+        ]);
         expect(u.length).toBeLessThan((all as unknown[]).length); // dead demand exists
       });
     });

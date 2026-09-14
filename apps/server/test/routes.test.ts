@@ -209,6 +209,12 @@ type LineRow = {
   customer?: string;
   /** Days before today for the header's `po_date` (AMENDMENT 12). ST-R22 only. */
   po_date_days_ago?: number;
+  /** ST-R22 rule 2: the goods-out document, and the delivery-order context beside it. */
+  summary_spb?: string | null;
+  summary_do?: string | null;
+  /** Shipment state for the REQUIRE_FULL cross-check. Defaults: ordered = balance, none shipped. */
+  qty_order?: number;
+  qty_delivered?: number;
 };
 
 async function seedFg(tx: Tx, rows: readonly FgRow[]): Promise<void> {
@@ -246,12 +252,13 @@ async function seedLines(tx: Tx, rows: readonly LineRow[]): Promise<void> {
       insert into erp_so_line (
         id, so_id, brand, warna, th, th_panel, p, l,
         qty_order, qty_delivered, qty_balance,
-        status_order, approval, estimate_delivery, sn_fg, sku_key
+        status_order, approval, estimate_delivery, summary_spb, summary_do, sn_fg, sku_key
       ) values (
         ${r.id}, ${soId}, ${String(pa.brand ?? "")}, ${String(pa.warna ?? "")},
         ${Number(pa.th ?? 0)}, ${Number(pa.th_panel ?? 0)}, ${Number(pa.p ?? 0)}, ${Number(pa.l ?? 0)},
-        ${r.qty_balance}, ${0}, ${r.qty_balance},
+        ${r.qty_order ?? r.qty_balance}, ${r.qty_delivered ?? 0}, ${r.qty_balance},
         ${r.status_order ?? "Open"}, ${r.approval ?? "Approved"}, ${eta},
+        ${r.summary_spb ?? null}, ${r.summary_do ?? null},
         ${null}, ${canonicalSkuKey(pa)}
       )
     `;
@@ -1212,6 +1219,175 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
       // to migrate, and flipping the config back restores the queue exactly.
       await inRollback(async (tx) => {
         await seedR22(tx);
+        const digest = await mirrorDigest(tx);
+        await GET("/api/stock/stale-commitments?segment=autoclosed&limit=500");
+        await GET("/api/stock/summary");
+        expect(await mirrorDigest(tx)).toEqual(digest);
+        expect(await overrideRows(tx)).toEqual([]);
+      });
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 2b · ST-R22 rule 2 — the SPB auto-close, and MEASURING what it costs
+  //
+  // Rule 1 could be shipped on an argument (its threshold sits above the liveness
+  // window, so its ATP delta is zero by construction). Rule 2 cannot: it closes
+  // LIVE lines, so its consequence has to be a number the API reports. These
+  // tests pin those numbers.
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("GET /summary — the SPB rule's four counters (ST-R22 rule 2)", () => {
+    const SL = parts("SPB-LIVE");   // fully shipped, live   → closed, ATP moves
+    const SS = parts("SPB-STALE");  // fully shipped, stale  → closed, ATP still
+    const SP = parts("SPB-PART");   // partially shipped     → held back
+    const KSL = canonicalSkuKey(SL);
+    const KSS = canonicalSkuKey(SS);
+    const KSP = canonicalSkuKey(SP);
+    const SPB = "SPB/2026/09/0042";
+
+    async function seedSpb(tx: Tx): Promise<void> {
+      await seedWarna(tx);
+      await seedFg(tx, [
+        { sn_fg: `${P}-spb-fg-l`, qty: 1000, parts: SL },
+        { sn_fg: `${P}-spb-fg-s`, qty: 1000, parts: SS },
+        { sn_fg: `${P}-spb-fg-p`, qty: 1000, parts: SP },
+      ]);
+      await seedLines(tx, [
+        // Live and reserving until the rule fires. THE population that moves ATP.
+        {
+          id: `${P}-spb-live`, qty_balance: 120, eta: 5, parts: SL,
+          qty_order: 400, qty_delivered: 400, summary_spb: SPB, summary_do: "DO/2026/09/0042",
+        },
+        // Already outside the sum: same rule, zero consequence.
+        {
+          id: `${P}-spb-stale`, qty_balance: 70, eta: 400, parts: SS,
+          qty_order: 70, qty_delivered: 70, summary_spb: SPB,
+        },
+        // An SPB and a genuine remainder still owed — what REQUIRE_FULL holds back.
+        {
+          id: `${P}-spb-partial`, qty_balance: 50, eta: 5, parts: SP,
+          qty_order: 200, qty_delivered: 150, summary_spb: SPB,
+        },
+      ]);
+    }
+
+    it("reports how many lines it closed, how many were reserving, and the ATP delta", async () => {
+      await inRollback(async (tx) => {
+        // Deltas, because the totals strip is global to this database.
+        const before = (await GET<SummaryResponse>("/api/stock/summary")).body.totals;
+        await seedSpb(tx);
+        const { body } = await GET<SummaryResponse>("/api/stock/summary");
+        const t = body.totals;
+
+        // Two lines closed on SPB grounds (live + stale), both also counted in the
+        // rule-agnostic total beside them.
+        expect(t.autoclosed_spb - before.autoclosed_spb).toBe(2);
+        expect(t.autoclosed_commitments - before.autoclosed_commitments).toBe(2);
+        // …of which exactly ONE was reserving when it was closed.
+        expect(t.autoclosed_spb_reserving - before.autoclosed_spb_reserving).toBe(1);
+        // …and the ATP that moved is exactly that line's balance. Not the other's.
+        expect(t.autoclosed_spb_atp_delta - before.autoclosed_spb_atp_delta).toBe(120);
+        // One partial line held back by the cross-check — the population the owner
+        // is deciding about when they consider relaxing REQUIRE_FULL.
+        expect(t.autoclosed_spb_partial_held - before.autoclosed_spb_partial_held).toBe(1);
+      });
+    });
+
+    it("the ATP delta lands on the LIVE population and nowhere else", async () => {
+      await inRollback(async (tx) => {
+        await seedSpb(tx);
+        const { body } = await GET<SummaryResponse>("/api/stock/summary");
+        const item = (k: string) => body.items.find((i) => i.sku_key === k)!;
+
+        // Live line: it stopped reserving, so ATP is the whole 1,000 on hand.
+        expect(item(KSL).committed).toBe(0);
+        expect(item(KSL).atp).toBe(1000);
+        expect(item(KSL).autoclosed_committed).toBe(120);
+        // Stale line: it was never in the sum, so nothing moved — same ATP it had.
+        expect(item(KSS).committed).toBe(0);
+        expect(item(KSS).atp).toBe(1000);
+        expect(item(KSS).autoclosed_committed).toBe(70);
+        // Partial line: still reserving, because a customer is still owed it.
+        expect(item(KSP).committed).toBe(50);
+        expect(item(KSP).atp).toBe(950);
+        expect(item(KSP).autoclosed_committed).toBe(0);
+      });
+    });
+
+    it("each closed row states its grounds, its documents, and whether it was reserving", async () => {
+      await inRollback(async (tx) => {
+        await seedSpb(tx);
+        const { body } = await GET<PagedResponse<CommitLine>>(
+          "/api/stock/stale-commitments?segment=autoclosed&limit=500",
+        );
+        const rows = (body.rows ?? body.items).filter((r) => r.so_line_id.startsWith(`${P}-spb-`));
+        expect(rows.map((r) => r.so_line_id).sort()).toEqual([`${P}-spb-live`, `${P}-spb-stale`]);
+
+        const live = rows.find((r) => r.so_line_id === `${P}-spb-live`)!;
+        expect(live.autoclosed).toBe(true);
+        // Not 'estimate_delivery': this line's grounds are the document, and its
+        // ETA is five days old — a reader must never be told it aged out.
+        expect(live.autoclose_basis).toBe("summary_spb");
+        expect(live.autoclose_reserving).toBe(true);
+        expect(live.summary_spb).toBe(SPB);
+        expect(live.summary_do).toBe("DO/2026/09/0042");
+        expect(live.state).toBe("autoclosed");
+
+        const stale = rows.find((r) => r.so_line_id === `${P}-spb-stale`)!;
+        expect(stale.autoclose_basis).toBe("summary_spb");
+        expect(stale.autoclose_reserving).toBe(false); // closing it moved nothing
+        expect(stale.summary_do).toBeNull();
+      });
+    });
+
+    it("the held-back partial line is still in the review queue, with its documents visible", async () => {
+      await inRollback(async (tx) => {
+        await seedSpb(tx);
+        const { body } = await GET<PagedResponse<CommitLine>>(
+          "/api/stock/stale-commitments?segment=all&limit=500",
+        );
+        const rows = (body.rows ?? body.items).filter((r) => r.so_line_id.startsWith(`${P}-spb-`));
+        // Neither auto-closed line is in the review queue; the partial one is not
+        // there either — it is dated and inside the window, i.e. an ordinary live
+        // commitment. What matters is that it is NOT auto-closed.
+        expect(rows.map((r) => r.so_line_id)).not.toContain(`${P}-spb-live`);
+
+        const { body: detail } = await GET<SkuDetailResponse>(
+          `/api/stock/sku/${encodeURIComponent(KSP)}`,
+        );
+        const held = detail.live_commitments.find((r) => r.so_line_id === `${P}-spb-partial`)!;
+        expect(held.autoclosed).toBe(false);
+        expect(held.summary_spb).toBe(SPB); // the screen can show why it nearly was
+        expect(held.qty_delivered).toBe(150);
+        expect(held.qty_order).toBe(200);
+        expect(detail.autoclosed_commitments).toEqual([]);
+      });
+    });
+
+    it("reinstating an SPB-closed line puts the reservation back, through the one override path", async () => {
+      await inRollback(async (tx) => {
+        await seedSpb(tx);
+        const closed = (await GET<SummaryResponse>("/api/stock/summary")).body.items
+          .find((i) => i.sku_key === KSL)!;
+        expect(closed.atp).toBe(1000);
+
+        const { status } = await POST<OverrideResponse>(
+          `/api/stock/stale-commitments/${P}-spb-live/reinstate`,
+          { actor: ACTOR },
+        );
+        expect(status).toBe(200);
+
+        const after = (await GET<SummaryResponse>("/api/stock/summary")).body.items
+          .find((i) => i.sku_key === KSL)!;
+        expect(after.committed).toBe(120);
+        expect(closed.atp - after.atp).toBe(120); // exactly what the rule released
+      });
+    });
+
+    it("auto-closing on an SPB writes nothing — it is a derived classification", async () => {
+      await inRollback(async (tx) => {
+        await seedSpb(tx);
         const digest = await mirrorDigest(tx);
         await GET("/api/stock/stale-commitments?segment=autoclosed&limit=500");
         await GET("/api/stock/summary");

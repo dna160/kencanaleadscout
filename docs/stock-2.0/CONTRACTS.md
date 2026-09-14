@@ -1046,3 +1046,64 @@ review-shaped tab is where the ambiguity stops being cosmetic.
   must never re-spell a server-side rule — but it means the UI cannot answer
   *"why 180?"*. Exposing the two config values read-only on `/summary` would let
   the copy state the real rule without hard-coding it. Small, unbuilt.
+
+
+## AMENDMENT 21 — an SPB closes a line regardless of its date (ST-R22)
+
+**Ruled after a `[CHALLENGE]` that found a real contradiction.** AMENDMENT 20 says
+an undated line is *"never auto-closed, at any age"*. This rule auto-closes an
+undated line that carries an SPB. Both are correct, and the reason they coexist
+is the distinction that matters most in this whole module.
+
+**AMENDMENT 20 refused to infer from an absence.** The withdrawn `po_date`
+fallback would have said *"we have no delivery date, the order is old, therefore
+it is probably done"* — a guess about a line we know nothing about, in the
+over-promising direction.
+
+**This rule reads a document.** An SPB is positive evidence that goods physically
+left the warehouse. That is not an inference from missing data; it is a fact the
+ERP recorded. A line with no date and no SPB is still unknown and still reserves.
+A line with an SPB is known, whatever its date says.
+
+So AMENDMENT 20's "never" is hereby **scoped to the age basis**: no line is ever
+auto-closed *because of how old it is* unless it has a real `estimate_delivery`.
+Documentary evidence is a separate and stronger ground.
+
+**The rule:** `summary_spb` present ⇒ auto-closed. Blank, whitespace and the `'-'`
+placeholder count as absent. Config: `STOCK_AUTOCLOSE_ON_SPB` (default true) and
+`STOCK_AUTOCLOSE_SPB_REQUIRE_FULL` (default **true**).
+
+**Why REQUIRE_FULL defaults on.** The justification for closing an SPB line is
+PRD §5A: Live FG `qty` is **gross** and falls only when goods ship, so once an SPB
+exists the on-hand has already dropped and a standing balance **double-counts the
+same unit twice** — once by leaving stock, again by still being committed.
+Removing it *restores* truth. **But that argument holds only for a fully-shipped
+line.** A partial shipment has an SPB *and* a genuine remainder owed to a
+customer, and closing it releases stock someone is waiting for. So a line
+qualifies only when `coalesce(qty_delivered,0) >= qty_order` — ST-R22's
+cross-check, proposed in the PRD and never built until now. An unknown
+`qty_order` cannot prove full shipment and fails closed.
+
+**Unlike AMENDMENT 20, this rule moves ATP.** Fully-shipped **live** lines rise by
+exactly their balance; fully-shipped **stale** lines move zero. Both asserted.
+`totals.autoclosed_spb`, `autoclosed_spb_reserving`, `autoclosed_spb_partial_held`
+and `autoclosed_spb_atp_delta` expose the consequence as data rather than
+inference — `autoclose_reserving` is a column that is true exactly for rows the
+liveness rule would otherwise have kept live, so the sum of their balances **is**
+the delta.
+
+**`summary_spb` is a new column.** Migration adds it in place with no re-pull
+required and no data loss, but **every already-mirrored row carries NULL until it
+is next fetched**, and NULL is not an SPB. The rule therefore does nothing until a
+**full re-sync** has run — it will never close a line on the strength of a column
+nobody has read.
+
+## The Tripwire has fired
+
+A second machine-decided population now exists, which is the condition recorded
+earlier for resolving `Tinjau Pesanan`'s dual meaning **structurally** rather than
+with more copy. The `Keputusan Sistem` surface is now due. The rows already carry
+everything it needs: `autoclose_basis`, `autoclose_reserving`, `summary_spb` and
+`summary_do`. Deferred deliberately until after the first full re-sync, so the
+operator gets their numbers before the furniture moves — but it is next, not
+someday.

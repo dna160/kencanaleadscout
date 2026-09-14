@@ -223,6 +223,18 @@ export interface CommitLine {
    * the population that reserves stock. 'YYYY-MM-DD'.
    */
   po_date: string | null;
+  /**
+   * ST-R22 rule 2 — the goods-out document (*Surat Pengantar Barang*). Present ⇒
+   * the goods for this line have already left the warehouse, which is the entire
+   * basis of the SPB auto-close. Blank and the ERP's `'-'` placeholder mean "no
+   * document" and are treated as absent by the rule; they are passed through here
+   * exactly as mirrored so a screen shows what the ERP actually holds.
+   *
+   * NULL on every row mirrored before the column shipped, until it is re-synced.
+   */
+  summary_spb: string | null;
+  /** The delivery-order document. Review-screen context; no rule reads it. */
+  summary_do: string | null;
   /** AMENDMENT 1 — approved, undelivered, nobody scheduled it. Still reserves. */
   undated: boolean;
   /** Days past ETA; null when undated. Negative when the ETA is in the future. */
@@ -235,8 +247,23 @@ export interface CommitLine {
    * (which date that age was measured from).
    */
   autoclosed: boolean;
-  /** The date column `age_days` was measured from; null unless auto-closed. */
+  /**
+   * WHICH machine rule closed it, and therefore what its grounds are:
+   * `'estimate_delivery'` — the aged delivery-order rule, and `age_days` is the
+   * age it was measured on; `'summary_spb'` — the goods-out rule, and the SPB
+   * itself is the evidence. Null unless auto-closed. Stable when both rules fire
+   * on one line: the aged rule is named, so a row's narration cannot change
+   * because a second rule shipped beside it.
+   */
   autoclose_basis: string | null;
+  /**
+   * True when this line was RESERVING stock at the moment the machine closed it —
+   * i.e. ATP rose by its `qty_balance` when it did. Always false for the aged-DO
+   * rule (that threshold sits above the liveness window, which is its zero-delta
+   * guarantee); it is the SPB rule that can carry it, and the summary counts the
+   * rows that do.
+   */
+  autoclose_reserving: boolean;
   /**
    * 'live' reserves stock · 'stale' is quarantined · 'autoclosed' was closed by
    * the ST-R22 rule · 'closed' was confirm-closed by a human.
@@ -304,6 +331,37 @@ export interface SummaryTotals {
    * always zero — `undated_commitments` is what still needs a human.
    */
   autoclosed_commitments: number;
+  /**
+   * ST-R22 rule 2, measured separately from the rule beside it because its
+   * consequence is different in kind. Lines the GOODS-OUT rule closed
+   * (`autoclose_basis = 'summary_spb'`), a subset of `autoclosed_commitments`.
+   */
+  autoclosed_spb: number;
+  /**
+   * Of those, the ones that were LIVE AND RESERVING when the machine closed them.
+   * THIS is the number that matters: the aged-DO rule's count here is
+   * structurally zero, and every line counted here raised ATP by its balance.
+   * A non-zero value is not an alarm — it is the phantom double-count PRD §5A
+   * predicts (Live FG qty already fell when the goods shipped) — but it is the
+   * number to watch, and the one to compare against a PPIC sanity check.
+   */
+  autoclosed_spb_reserving: number;
+  /**
+   * What `STOCK_AUTOCLOSE_SPB_REQUIRE_FULL` is HOLDING BACK: live, reserving lines
+   * that carry an SPB but are only PARTIALLY shipped (`qty_delivered < qty_order`).
+   * They keep reserving and stay a human's decision, because their remainder is
+   * real demand rather than a phantom. Turning the cross-check off hands exactly
+   * this population to the machine, so it is the number to read before doing so.
+   * Zero while the rule itself is off — nothing is being held back by a rule that
+   * is not running.
+   */
+  autoclosed_spb_partial_held: number;
+  /**
+   * The ATP the SPB rule actually released, in lembar: Σ `qty_balance` over the
+   * `autoclosed_spb_reserving` lines. Derived on read like every other number here
+   * (§0) — it is the measured consequence of the rule, not a stored decision.
+   */
+  autoclosed_spb_atp_delta: number;
   /** ST-R5.3 unmatched demand, counted in SO LINES. */
   exceptions: number;
   /**
@@ -441,6 +499,11 @@ interface AggregateRow {
   stale_lines: string | null;
   autoclosed_committed: string | null;
   autoclosed_lines: string | null;
+  /** ST-R22 rule 2 — the four SPB counters, per SKU. See SummaryTotals. */
+  autoclosed_spb_lines: string | null;
+  autoclosed_spb_reserving_lines: string | null;
+  autoclosed_spb_released: string | null;
+  spb_partial_held_lines: string | null;
   adjustment: string | null;
 }
 
@@ -451,6 +514,11 @@ interface EngineItem extends SkuItem {
   undated_lines: number;
   stale_lines: number;
   autoclosed_lines: number;
+  /** ST-R22 rule 2 — the SPB rule's own measurement, summed into totals. */
+  autoclosed_spb_lines: number;
+  autoclosed_spb_reserving_lines: number;
+  autoclosed_spb_released: number;
+  spb_partial_held_lines: number;
 }
 
 /**
@@ -586,6 +654,10 @@ async function loadItems(
              sum(qty_balance)                                       as committed,
              count(*)                                               as live_lines,
              count(*) filter (where estimate_delivery is null)      as undated_lines,
+             -- ST-R22 rule 2: lines the REQUIRE_FULL cross-check is holding back —
+             -- an SPB, a genuine remainder still owed, and still reserving. Read
+             -- off the view's own flags, so the rule stays spelled once (§7.3).
+             count(*) filter (where has_spb and not fully_shipped)   as spb_partial_held_lines,
              to_char(min(estimate_delivery), 'YYYY-MM-DD')          as nearest_eta
       from v_live_commitments ${f}
       group by sku_key
@@ -602,7 +674,18 @@ async function loadItems(
     autoclosed as (
       select sku_key,
              sum(qty_balance) as autoclosed_committed,
-             count(*)         as autoclosed_lines
+             count(*)         as autoclosed_lines,
+             -- ST-R22 rule 2, measured apart from rule 1 because its consequence
+             -- differs in kind: the SPB rule can close a LIVE line, and then ATP
+             -- moves. autoclose_reserving is the view's own answer to whether the
+             -- line was reserving when we closed it, so this sum IS the ATP delta.
+             count(*) filter (where autoclose_basis = 'summary_spb')
+               as autoclosed_spb_lines,
+             count(*) filter (where autoclose_basis = 'summary_spb' and autoclose_reserving)
+               as autoclosed_spb_reserving_lines,
+             coalesce(sum(qty_balance) filter (
+               where autoclose_basis = 'summary_spb' and autoclose_reserving
+             ), 0) as autoclosed_spb_released
       from v_autoclosed_commitments ${f}
       group by sku_key
     ),
@@ -659,11 +742,16 @@ async function loadItems(
            coalesce(live.committed, 0)::text      as committed,
            coalesce(live.live_lines, 0)::text     as live_lines,
            coalesce(live.undated_lines, 0)::text  as undated_lines,
+           coalesce(live.spb_partial_held_lines, 0)::text as spb_partial_held_lines,
            live.nearest_eta                       as nearest_eta,
            coalesce(stale.stale_committed, 0)::text as stale_committed,
            coalesce(stale.stale_lines, 0)::text   as stale_lines,
            coalesce(autoclosed.autoclosed_committed, 0)::text as autoclosed_committed,
            coalesce(autoclosed.autoclosed_lines, 0)::text     as autoclosed_lines,
+           coalesce(autoclosed.autoclosed_spb_lines, 0)::text as autoclosed_spb_lines,
+           coalesce(autoclosed.autoclosed_spb_reserving_lines, 0)::text
+             as autoclosed_spb_reserving_lines,
+           coalesce(autoclosed.autoclosed_spb_released, 0)::text as autoclosed_spb_released,
            coalesce(adj.adjustment, 0)::text      as adjustment
     from keys k
     left join ident i    on i.sku_key    = k.sku_key
@@ -728,6 +816,10 @@ async function loadItems(
       undated_lines: numOf(r.undated_lines),
       stale_lines: numOf(r.stale_lines),
       autoclosed_lines: numOf(r.autoclosed_lines),
+      autoclosed_spb_lines: numOf(r.autoclosed_spb_lines),
+      autoclosed_spb_reserving_lines: numOf(r.autoclosed_spb_reserving_lines),
+      autoclosed_spb_released: round2(numOf(r.autoclosed_spb_released)),
+      spb_partial_held_lines: numOf(r.spb_partial_held_lines),
     };
   });
 }
@@ -864,8 +956,11 @@ interface CommitRow {
   sales_name_text: string | null;
   line_state: string;
   undated: boolean;
+  summary_spb: string | null;
+  summary_do: string | null;
   autoclosed: boolean;
   autoclose_basis: string | null;
+  autoclose_reserving: boolean;
   age_days: string | null;
   unmatched: boolean;
   ov_state: string | null;
@@ -904,7 +999,8 @@ function commitSource(db: Sql, segment: CommitSegment) {
            v.th, v.th_panel, v.p, v.l,
            v.qty_order, v.qty_delivered, v.qty_balance, v.status_order, v.approval,
            v.estimate_delivery, v.po_date, v.so_number, v.customer_name_text, v.sales_name_text,
-           v.autoclosed, v.autoclose_basis
+           v.summary_spb, v.summary_do,
+           v.autoclosed, v.autoclose_basis, v.autoclose_reserving
   `;
 
   const fromLive = db`${cols}, 'live'::text as line_state from v_live_commitments v`;
@@ -926,10 +1022,13 @@ function commitSource(db: Sql, segment: CommitSegment) {
              l.th, l.th_panel, l.p, l.l,
              l.qty_order, l.qty_delivered, l.qty_balance, l.status_order, l.approval,
              l.estimate_delivery, h.po_date, h.so_number, h.customer_name_text, h.sales_name_text,
-             -- A confirm-closed line is a HUMAN decision, whatever the ST-R22 rule
+             l.summary_spb, l.summary_do,
+             -- A confirm-closed line is a HUMAN decision, whatever the ST-R22 rules
              -- would have said about it: an operator with a name and a reason
-             -- closed it, and that is what the audit trail must show.
-             false as autoclosed, null::text as autoclose_basis
+             -- closed it, and that is what the audit trail must show. It released
+             -- whatever it released under its own audited record, not a machine's.
+             false as autoclosed, null::text as autoclose_basis,
+             false as autoclose_reserving
       from erp_so_line l
       left join erp_so_header h on h.id = l.so_id
     ) v
@@ -1077,7 +1176,8 @@ async function loadCommitments(
            to_char(c.po_date, 'YYYY-MM-DD') as po_date,
            c.so_number, c.customer_name_text, c.sales_name_text,
            c.line_state,
-           c.autoclosed, c.autoclose_basis,
+           c.summary_spb, c.summary_do,
+           c.autoclosed, c.autoclose_basis, c.autoclose_reserving,
            (c.estimate_delivery is null) as undated,
            case when c.estimate_delivery is null then null
                 else (current_date - c.estimate_delivery)::text end as age_days,
@@ -1167,10 +1267,13 @@ function shapeCommit(r: CommitRow): CommitLine {
     approval: r.approval,
     estimate_delivery: r.estimate_delivery,
     po_date: r.po_date,
+    summary_spb: r.summary_spb,
+    summary_do: r.summary_do,
     undated: Boolean(r.undated),
     age_days: numOrNull(r.age_days),
     autoclosed: Boolean(r.autoclosed),
     autoclose_basis: r.autoclose_basis,
+    autoclose_reserving: Boolean(r.autoclose_reserving),
     state: lineState,
     unmatched: Boolean(r.unmatched),
     override: r.ov_state
@@ -1248,6 +1351,10 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
       stale_commitments: 0,
       undated_commitments: 0,
       autoclosed_commitments: 0,
+      autoclosed_spb: 0,
+      autoclosed_spb_reserving: 0,
+      autoclosed_spb_partial_held: 0,
+      autoclosed_spb_atp_delta: 0,
       exceptions: 0,
       exception_skus: 0,
     };
@@ -1257,6 +1364,15 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
       // ST-R22: how much review work the machine took off PPIC's desk. Zero stock
       // moved with it — see the field's doc comment.
       totals.autoclosed_commitments += it.autoclosed_lines;
+      // ST-R22 rule 2, and the reason it is counted separately: unlike rule 1 this
+      // one MOVES ATP. `autoclosed_spb_reserving` is the population the movement
+      // comes from and `autoclosed_spb_atp_delta` is the movement itself, so the
+      // owner reads the consequence off the same endpoint as the count.
+      totals.autoclosed_spb += it.autoclosed_spb_lines;
+      totals.autoclosed_spb_reserving += it.autoclosed_spb_reserving_lines;
+      totals.autoclosed_spb_atp_delta += it.autoclosed_spb_released;
+      // What REQUIRE_FULL is holding back — still live, still a human's call.
+      totals.autoclosed_spb_partial_held += it.spb_partial_held_lines;
       // AMENDMENT 12: the engine already counts these per item; summing them is
       // the whole implementation, and it retires the page's counting probe.
       totals.undated_commitments += it.undated_lines;
@@ -1268,6 +1384,10 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
         totals.exception_skus += 1;
       }
     }
+
+    // Float addition over per-SKU sums; round once at the edge like every other
+    // quantity on this endpoint (§0 — derived on read, never stored).
+    totals.autoclosed_spb_atp_delta = round2(totals.autoclosed_spb_atp_delta);
 
     const body: SummaryResponse = {
       freshness: freshnessOf(syncState),

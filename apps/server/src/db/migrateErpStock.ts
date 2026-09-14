@@ -25,9 +25,12 @@
  * predicate (ST-R17) is spelled exactly once, in the shared view spine below —
  * v_live_commitments, v_stale_commitments and v_autoclosed_commitments are three
  * mutually exclusive slices of ONE predicate string, not three predicates (§7.3);
- * the ST-R22 auto-close rule is likewise one string, sliced the same way. The
- * canonical SKU key is spelled exactly twice — erp/sku.ts and erp_sku_key()
- * below (§7.4).
+ * ST-R22's auto-close is likewise ONE string, sliced the same way — and it stays
+ * one string now that it carries TWO rules (aged delivery order, and the SPB
+ * goods-out rule of 2026-09-14): they are disjuncts of a single `autoclosed`
+ * expression, not a second mechanism, so `autoclose_basis` is the only thing that
+ * distinguishes them downstream. The canonical SKU key is spelled exactly twice —
+ * erp/sku.ts and erp_sku_key() below (§7.4).
  */
 import type { Sql } from "./client.js";
 import { getSql } from "./client.js";
@@ -211,10 +214,358 @@ function safeAutocloseAfterDays(raw: number): number {
   return 180;
 }
 
+/**
+ * A boolean config value as a SQL literal. Trivial, and deliberately a function:
+ * it is the boolean half of the same discipline `safeStatuses()` applies to the
+ * status sets — a config value reaches SQL only through something whose output
+ * set is closed. This one can emit exactly `true` or `false`, whatever the env
+ * var said, because `bool()` in config.ts has already collapsed it to a boolean.
+ */
+function sqlBool(value: boolean): "true" | "false" {
+  return value ? "true" : "false";
+}
+
 /** `array['Cancelled','Void','Batal']`, or a typed empty array when the set is empty. */
 function statusArraySql(statuses: readonly string[]): string {
   if (statuses.length === 0) return "array[]::text[]";
   return `array[${statuses.map((s) => `'${s}'`).join(", ")}]`;
+}
+
+/**
+ * The knobs the commitment views are built from. A struct rather than a read of
+ * `config` inside the builder, for one reason: the RULES become testable at
+ * settings other than the deployed ones. `STOCK_AUTOCLOSE_SPB_REQUIRE_FULL` is
+ * exactly such a knob — a test has to be able to see what the machine does with
+ * it off, and the only honest way to check that is to build the real views from
+ * the real builder, never to re-spell the predicate in a test.
+ */
+export interface CommitmentRuleConfig {
+  windowDays: number;
+  cancelledStatuses: readonly string[];
+  approvedStatuses: readonly string[];
+  autocloseStatuses: readonly string[];
+  autocloseAfterDays: number;
+  autocloseOnSpb: boolean;
+  autocloseSpbRequireFull: boolean;
+}
+
+/** The deployed settings, with named overrides for a caller that is exploring. */
+export function commitmentRuleConfig(
+  over: Partial<CommitmentRuleConfig> = {},
+): CommitmentRuleConfig {
+  return {
+    windowDays: config.stock.staleWindowDays,
+    cancelledStatuses: config.stock.cancelledStatuses,
+    approvedStatuses: config.stock.approvedStatuses,
+    autocloseStatuses: config.stock.autocloseStatuses,
+    autocloseAfterDays: config.stock.autocloseAfterDays,
+    autocloseOnSpb: config.stock.autocloseOnSpb,
+    autocloseSpbRequireFull: config.stock.autocloseSpbRequireFull,
+    ...over,
+  };
+}
+
+/**
+ * THE commitment rules, as SQL, in the only place they exist (§7.3): the ST-R17
+ * liveness predicate and both ST-R22 auto-close rules. Returns `[view name, view
+ * body]` pairs; it touches no database, so it is also readable as the spec.
+ */
+export function buildCommitmentViewSql(
+  cfg: CommitmentRuleConfig,
+): ReadonlyArray<readonly [string, string]> {
+  const windowDays = safeWindowDays(cfg.windowDays);
+  const cancelled = statusArraySql(safeCancelledStatuses(cfg.cancelledStatuses));
+  // ST-R7b: the commitment gate is config, not a literal (OQ-1). Same validated
+  // whitelist path as the cancelled set — nothing unvalidated reaches SQL.
+  const approved = statusArraySql(safeApprovedStatuses(cfg.approvedStatuses));
+  // ST-R22 auto-close, same validated whitelist path again (§2.3: this block is
+  // the ONLY place any config value is spliced into SQL in this repo).
+  const autocloseStatuses = statusArraySql(
+    safeAutocloseStatuses(cfg.autocloseStatuses),
+  );
+  const autocloseDays = safeAutocloseAfterDays(cfg.autocloseAfterDays);
+  // ST-R22 rule 2's two knobs. Booleans, so the "whitelist" that keeps them out
+  // of SQL's reach is a type: `sqlBool()` can only ever emit the two SQL keywords
+  // and never the env string that produced them. Same discipline as the status
+  // sets above — a config value is validated into a closed set of outputs before
+  // it is spliced, and NOTHING else in this file is spliced at all.
+  const spbEnabled = sqlBool(cfg.autocloseOnSpb);
+  const spbRequireFull = cfg.autocloseSpbRequireFull;
+
+  /**
+   * ST-R22 — "delivered but never closed", spelled ONCE.
+   *
+   * A line whose `status_order` says a delivery order was issued, and whose
+   * DELIVERY DATE is more than `autocloseDays` old, is treated as fully
+   * delivered: the goods went out, the ERP just never zeroed `qty_balance`.
+   *
+   * THE AGE BASIS IS `estimate_delivery` AND NOTHING ELSE (product-owner
+   * ruling, 2026-09-11). An earlier draft aged an undated line off its header's
+   * `po_date`; that was withdrawn deliberately and must not be "restored".
+   * The difference is the entire risk profile of this feature:
+   *
+   *   - a DO line with an OLD ETA is already outside the 60-day liveness
+   *     window, so it is already excluded from `open_commitment`. Auto-closing
+   *     it moves ATP by exactly ZERO — it only stops demanding a human
+   *     decision. Pure queue hygiene.
+   *   - a DO line with NO ETA is LIVE and reserving right now (AMENDMENT 1).
+   *     Auto-closing it would have RAISED ATP by its whole balance — a machine
+   *     silently releasing stock that is already owed to a customer, which is
+   *     the exact over-promising failure this module exists to prevent.
+   *
+   * So an undated line has no age for this purpose and is never a candidate,
+   * at any `po_date`. It stays live, keeps reserving, and stays in the
+   * `undated` review segment as an audit item for PPIC to resolve with the
+   * order's owner — a human decision, which is where releasing stock belongs.
+   *
+   * NULL-proofed on purpose: `status_order` may be NULL, and `NULL = any(...)`
+   * is NULL, not false. An un-coalesced NULL here would propagate through the
+   * `not (...)` arm below and drop the line out of EVERY view — a silent
+   * inflation of ATP and a breach of §7.6. `coalesce(…, false)` makes the whole
+   * thing a two-valued boolean, so the three sets stay a true partition.
+   *
+   * ST-R21 reversibility rides on the last clause: a machine decision must be
+   * undoable exactly like a human one, so a `reinstated` override lifts the
+   * auto-close and hands the line straight back to the liveness rule.
+   */
+  const autoclosedAged = `coalesce(
+        coalesce(l.status_order, '') = any (${autocloseStatuses})
+        and l.estimate_delivery < current_date - ${autocloseDays}
+      , false)`;
+
+  /**
+   * ST-R22 rule 2 — an SO line carrying an SPB has already left the warehouse
+   * (product-owner ruling, 2026-09-14). SPB = *Surat Pengantar Barang*, the
+   * goods-out document; `tbl_1203.summary_spb` carries it.
+   *
+   * WHAT IS DIFFERENT ABOUT THIS RULE, and it is the whole of its risk: the aged
+   * rule above only ever touched lines that had ALREADY failed the liveness
+   * window, so its ATP delta was provably zero. This one can touch a LIVE,
+   * RESERVING line — a recent or undated line with an SPB is reserving right now
+   * (AMENDMENT 1) — and closing such a line RAISES ATP by its balance.
+   *
+   * That is a correction, not a release, and here is why. PRD §5A establishes
+   * that Live FG `qty` is GROSS: it is reduced only when goods physically ship
+   * (`qty_booking` is unused, 0/1,464 rows). So if an SPB exists, on-hand has
+   * already dropped for those goods. A balance still standing against them is a
+   * PHANTOM THAT DOUBLE-COUNTS — the same unit subtracted twice, once by leaving
+   * the warehouse and again by still reading as "committed". Removing it restores
+   * truth; it does not over-promise.
+   *
+   * THAT ARGUMENT HOLDS ONLY FOR A FULLY SHIPPED LINE. A partially shipped one
+   * has an SPB *and* a genuine remainder still owed: the goods that left are
+   * already out of on-hand, but the rest are not, and the remaining balance is
+   * real demand, not a phantom. Auto-closing it releases stock a customer is
+   * actually waiting for — the exact failure this module exists to prevent. Hence
+   * `STOCK_AUTOCLOSE_SPB_REQUIRE_FULL`, default ON: the safe reading, with
+   * `totals.autoclosed_spb_partial_held` on /summary measuring precisely what it
+   * holds back so the owner can relax it against numbers rather than a guess.
+   *
+   * BLANK IS NOT AN SPB. An empty string means "no document", and this ERP also
+   * writes a `'-'` placeholder, so the test is "something is left after trimming
+   * spaces and dashes" rather than `is not null`. Getting this wrong would
+   * auto-close every line in the mirror that has the column populated at all.
+   *
+   * A row that has never been re-synced since the column shipped carries NULL and
+   * is therefore not a candidate — the rule acts on evidence it has actually read.
+   */
+  const hasSpb = `(nullif(btrim(coalesce(l.summary_spb, ''), ' -'), '') is not null)`;
+  /**
+   * ST-R22's cross-check, which the PRD proposed and nobody built. NULL-proofed
+   * both ways: an unknown `qty_order` cannot PROVE full shipment, so the coalesce
+   * resolves it to false and the line stays with a human. Failing closed here
+   * keeps a missing column from releasing stock.
+   */
+  const fullyShipped = `coalesce(coalesce(l.qty_delivered, 0) >= l.qty_order, false)`;
+  const autoclosedSpb = `(${spbEnabled} and ${hasSpb}${
+    spbRequireFull ? ` and ${fullyShipped}` : ""
+  })`;
+
+  /**
+   * The ONE auto-close predicate (§7.3's discipline applied to the machine rules
+   * as well as the liveness one). A line qualifies by EITHER rule, and there is
+   * no second mechanism anywhere: both rules enter the views through this
+   * expression, both are lifted by the same ST-R21 `reinstated` override, and
+   * both leave live and stale through the same `not (...)` arms, so §7.6's
+   * three-way partition is unchanged by adding a disjunct.
+   *
+   * NULL-proofed on purpose: `status_order` may be NULL, and `NULL = any(...)`
+   * is NULL, not false. An un-coalesced NULL here would propagate through the
+   * `not (...)` arm below and drop the line out of EVERY view — a silent
+   * inflation of ATP and a breach of §7.6. Each disjunct is therefore a
+   * two-valued boolean before the `or`, so the three sets stay a true partition.
+   *
+   * ST-R21 reversibility rides on the last clause: a machine decision must be
+   * undoable exactly like a human one, so a `reinstated` override lifts the
+   * auto-close — either rule's — and hands the line straight back to the liveness
+   * rule. One override, one undo, for both rules.
+   */
+  const autoclosed = `((${autoclosedAged}) or (${autoclosedSpb}))
+      and coalesce(o.state, '') <> 'reinstated'`;
+
+  /**
+   * WHICH rule closed it, carried on the row rather than reconstructed by a
+   * reader. Deterministic and stable when BOTH fire: the aged rule is named
+   * first, so a line that already qualified under AMENDMENT 20 keeps stating the
+   * same grounds after this rule ships. A row's audit narration must not change
+   * because an unrelated rule was added beside it.
+   */
+  const autocloseBasis = `case
+           when not (${autoclosed}) then null
+           when (${autoclosedAged}) then 'estimate_delivery'
+           else 'summary_spb'
+         end::text`;
+
+  // The ordering that keeps auto-close a zero-ATP operation. Below the liveness
+  // window it would start closing lines that are still LIVE, i.e. releasing
+  // reservations a customer is owed. Config can do it; config should not.
+  if (autocloseDays <= windowDays) {
+    console.warn(
+      `[migrateErpStock] STOCK_AUTOCLOSE_AFTER_DAYS (${autocloseDays}) is not above ` +
+        `STOCK_STALE_WINDOW_DAYS (${windowDays}). Auto-close is only ATP-neutral while it ` +
+        "is the slower of the two: at this setting it can close LIVE commitments and RAISE " +
+        "ATP, releasing stock that is already promised to a customer.",
+    );
+  }
+
+  // ST-R22 rule 2's equivalent alarm. There is no ordering to protect here —
+  // the SPB rule is ATP-moving BY DESIGN — so what must not happen silently is
+  // the cross-check being switched off, because that is the one setting under
+  // which the machine closes balances a customer is still owed.
+  if (cfg.autocloseOnSpb && !spbRequireFull) {
+    console.warn(
+      "[migrateErpStock] STOCK_AUTOCLOSE_SPB_REQUIRE_FULL is OFF. The SPB auto-close will now " +
+        "close PARTIALLY shipped lines: those carry a goods-out document AND a genuine " +
+        "remainder still owed, so closing them RELEASES stock a customer is waiting for. " +
+        "With it ON the rule only removes phantom balances against goods that have already " +
+        "left (PRD §5A: Live FG qty is gross). Check totals.autoclosed_spb_partial_held on " +
+        "/api/stock/summary for the population this setting hands to the machine.",
+    );
+  }
+
+  // ST-R17's ETA arm, named once so the `autoclose_reserving` column below can
+  // ask "was this line reserving when the machine closed it?" without re-spelling
+  // the liveness rule (§7.3). One spelling, two readers.
+  const liveEta =
+    `(l.estimate_delivery >= current_date - ${windowDays} or l.estimate_delivery is null)`;
+
+  // The shared FROM/JOIN spine. A line that is confirm-closed leaves all sets.
+  // `undated` (AMENDMENT 1) lets the PPIC queue separate two populations whose
+  // close consequences are opposite: closing a stale line moves ATP by zero,
+  // closing an undated one raises it by the whole balance (AMENDMENT 6).
+  // AMENDMENT 12 — `po_date` rides along on every commitment shape. An undated
+  // line has no ETA to age from, so the order date is the only way to show how
+  // old it is, on exactly the population that reserves stock. It lives on the
+  // header, so the views are the only place it can be picked up once.
+  const spine = (etaPredicate: string, autoclosePredicate: string) => `
+    select l.*, h.customer_name_text, h.sales_name_text, h.so_number, h.po_date,
+           (l.estimate_delivery is null) as undated,
+           (${autoclosed}) as autoclosed,
+           -- WHY this line qualified, carried on the row rather than inferred by
+           -- a reader: 'estimate_delivery' for the aged-DO rule, 'summary_spb'
+           -- for the goods-out rule. It is a column so that a reader never has
+           -- to re-derive which machine rule fired, and so a future rule cannot
+           -- leave the UI narrating the wrong one.
+           ${autocloseBasis} as autoclose_basis,
+           -- Was this line RESERVING at the moment the machine closed it? True
+           -- only on the auto-closed set, and only for a line the liveness rule
+           -- would otherwise have kept live — so Σ qty_balance over the rows with
+           -- this flag IS the ATP the rule released, measured rather than argued.
+           -- Structurally always false for the aged-DO rule (its threshold sits
+           -- above the liveness window), which is that rule's zero-delta claim
+           -- restated as data.
+           ((${autoclosed}) and ${liveEta}) as autoclose_reserving,
+           -- The SPB rule's two atoms, exposed so that /summary can count what the
+           -- REQUIRE_FULL cross-check is holding back without re-spelling the rule.
+           ${hasSpb} as has_spb,
+           (${fullyShipped}) as fully_shipped
+    from erp_so_line l
+    left join erp_so_header h on h.id = l.so_id
+    left join stock_commitment_overrides o on o.so_line_id = l.id
+    where l.approval = any (${approved})
+      and l.qty_balance > 0
+      and coalesce(l.status_order, '') <> all (${cancelled})
+      and ${etaPredicate}
+      and ${autoclosePredicate}
+      and coalesce(o.state, '') <> 'closed'
+  `;
+
+  // ST-R17: live => reserves stock. Stale => same line, ETA outside the window;
+  // excluded from ATP, surfaced in the review queue (ST-R18) instead.
+  //
+  // AMENDMENT 1 — the `is null` arm is load-bearing, not defensive. `NULL >= x`
+  // and `NULL < x` are both NULL, so without it an approved line with no ETA
+  // matches NEITHER view: it reserves nothing, appears in no queue, and inflates
+  // ATP by its whole balance. That is the silent-drop failure ST-R18 exists to
+  // prevent and a breach of invariant §7.6. An undated line is real demand that
+  // is merely unscheduled — an absent date is not evidence of abandonment the
+  // way a 2020 ETA is — so it reserves, and `undated` flags it for PPIC review.
+  //
+  // ST-R22 adds a THIRD set rather than a deletion. An auto-closed line leaves
+  // live and stale — it stops asking a human for a decision — but it must not
+  // vanish (§7.6), and a MACHINE decision deserves more visibility than a human
+  // one, not less: nobody typed it, so nobody remembers making it. Hence its own
+  // view, its own `/stale-commitments?segment=autoclosed`, and the same
+  // reinstate path a confirm-close has (ST-R21).
+  //
+  // The three predicates below still partition the universe: the ETA arms cover
+  // every line between them (`>=`, `<`, `is null`), and `autoclosed` then splits
+  // each arm in two with `not (…)` / `(…)`. The auto-closed view takes no ETA
+  // arm of its own precisely so it is the union of both — otherwise a config
+  // with a short threshold would leave a line in no set at all.
+  //
+  // TWO machine rules now feed that third set (aged DO, and the SPB rule), and
+  // they feed it through ONE predicate rather than two mechanisms. Nothing below
+  // changes when a rule is added: the views, the reinstate path, the segment and
+  // the partition all key off `autoclosed`, and only `autoclose_basis` says which
+  // rule spoke. A second `or` disjunct is the whole extension surface.
+  const views: ReadonlyArray<readonly [string, string]> = [
+    ["v_live_commitments", spine(liveEta, `not (${autoclosed})`)],
+    ["v_stale_commitments", spine(
+      `l.estimate_delivery < current_date - ${windowDays}`,
+      `not (${autoclosed})`,
+    )],
+    ["v_autoclosed_commitments", spine("true", `(${autoclosed})`)],
+  ];
+
+  return views;
+}
+
+
+/**
+ * Create-or-replace each view. Split out from the builder so a caller can apply
+ * an alternative rule set to a transaction (and roll it back) without duplicating
+ * the 42P16 handling below.
+ */
+export async function applyCommitmentViews(
+  db: Sql,
+  views: ReadonlyArray<readonly [string, string]>,
+): Promise<void> {
+  for (const [name, body] of views) {
+    try {
+      await db.unsafe(`create or replace view ${name} as ${body}`);
+    } catch (replaceErr) {
+      // ONLY 42P16 ("cannot change name/type/number of columns of a view") is
+      // contemplated here: the body selects l.*, so an added mirror column — or
+      // AMENDMENT 12's po_date — makes the replace fail. Views hold no data, so
+      // dropping and recreating is the right resolution for that one error.
+      //
+      // A bare catch was wrong, and dangerously so: a lock timeout or a
+      // permissions fault took the same branch, dropped a working view, and if
+      // the recreate then failed too the app booted with NO v_live_commitments
+      // while the log said the migration was fine — zero commitments, ATP equal
+      // to on-hand, the whole inventory promiseable. Anything that is not 42P16
+      // is re-thrown to the block's own handler, which logs it and leaves the
+      // existing view in place.
+      const code = (replaceErr as { code?: string } | null)?.code;
+      if (code !== "42P16") throw replaceErr;
+      console.warn(
+        `[migrateErpStock] ${name}: column list changed (42P16) — dropping and recreating the view`,
+      );
+      await db.unsafe(`drop view if exists ${name} cascade`);
+      await db.unsafe(`create view ${name} as ${body}`);
+    }
+  }
 }
 
 export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> {
@@ -352,6 +703,8 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
         approval          text,
         auto_approval     text,
         estimate_delivery date,
+        summary_spb       text,                      -- goods-out doc (ST-R22 rule 2)
+        summary_do        text,                      -- delivery-order doc; context only
         sn_fg             text,                      -- observed NULL in practice (ST-R5.1)
         sku_key           text not null,
         erp_updated_at    timestamptz,
@@ -362,6 +715,23 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
     await db`alter table erp_so_line add column if not exists brand_text text`;
     await db`alter table erp_so_line add column if not exists warna_text text`;
     await db`alter table erp_so_line add column if not exists th_panel   numeric`;
+    // ST-R22 rule 2 (2026-09-14). `summary_spb` is the goods-out document — the
+    // whole basis of the SPB auto-close — and `summary_do` rides along beside it
+    // as review-screen context so the pair needs one migration, not two.
+    //
+    // ADDITIVE AND NULLABLE ON PURPOSE: an existing mirror gets the columns here
+    // without a re-pull, and every row already mirrored carries NULL in them until
+    // it is next fetched. NULL is not an SPB, so the rule is a NO-OP over stale
+    // rows — it starts acting on a line only once that line has been re-synced.
+    // Nothing is auto-closed on the strength of a column we have not read yet.
+    await db`alter table erp_so_line add column if not exists summary_spb text`;
+    await db`alter table erp_so_line add column if not exists summary_do  text`;
+    // The SPB predicate scans this column on every view read; partial, because the
+    // qualifying rows are the minority and a NULL-heavy column indexes badly whole.
+    await db`
+      create index if not exists erp_so_line_spb_idx on erp_so_line (sku_key)
+      where summary_spb is not null
+    `;
     // `kode_barang` was v1's first key segment and does not exist upstream at
     // all. Dropping it is what stops a future query quietly joining on a column
     // that is NULL for every row. The commitment views select `l.*`, so they
@@ -519,164 +889,11 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
   }
 
   // ── The views — where the liveness rule lives, exactly once (§2.3, §7.3) ───
-  // Recreated on every boot because <window_days> and the cancelled set are
-  // config, not literals, and a view cannot read process env. Both values are
-  // validated above before they are spliced; nothing else in this file is.
+  // Recreated on every boot because <window_days> and the status sets are config,
+  // not literals, and a view cannot read process env. Every value is validated
+  // before it is spliced; nothing else in this file is spliced at all.
   try {
-    const windowDays = safeWindowDays(config.stock.staleWindowDays);
-    const cancelled = statusArraySql(safeCancelledStatuses(config.stock.cancelledStatuses));
-    // ST-R7b: the commitment gate is config, not a literal (OQ-1). Same validated
-    // whitelist path as the cancelled set — nothing unvalidated reaches SQL.
-    const approved = statusArraySql(safeApprovedStatuses(config.stock.approvedStatuses));
-    // ST-R22 auto-close, same validated whitelist path again (§2.3: this block is
-    // the ONLY place any config value is spliced into SQL in this repo).
-    const autocloseStatuses = statusArraySql(
-      safeAutocloseStatuses(config.stock.autocloseStatuses),
-    );
-    const autocloseDays = safeAutocloseAfterDays(config.stock.autocloseAfterDays);
-
-    /**
-     * ST-R22 — "delivered but never closed", spelled ONCE.
-     *
-     * A line whose `status_order` says a delivery order was issued, and whose
-     * DELIVERY DATE is more than `autocloseDays` old, is treated as fully
-     * delivered: the goods went out, the ERP just never zeroed `qty_balance`.
-     *
-     * THE AGE BASIS IS `estimate_delivery` AND NOTHING ELSE (product-owner
-     * ruling, 2026-09-11). An earlier draft aged an undated line off its header's
-     * `po_date`; that was withdrawn deliberately and must not be "restored".
-     * The difference is the entire risk profile of this feature:
-     *
-     *   - a DO line with an OLD ETA is already outside the 60-day liveness
-     *     window, so it is already excluded from `open_commitment`. Auto-closing
-     *     it moves ATP by exactly ZERO — it only stops demanding a human
-     *     decision. Pure queue hygiene.
-     *   - a DO line with NO ETA is LIVE and reserving right now (AMENDMENT 1).
-     *     Auto-closing it would have RAISED ATP by its whole balance — a machine
-     *     silently releasing stock that is already owed to a customer, which is
-     *     the exact over-promising failure this module exists to prevent.
-     *
-     * So an undated line has no age for this purpose and is never a candidate,
-     * at any `po_date`. It stays live, keeps reserving, and stays in the
-     * `undated` review segment as an audit item for PPIC to resolve with the
-     * order's owner — a human decision, which is where releasing stock belongs.
-     *
-     * NULL-proofed on purpose: `status_order` may be NULL, and `NULL = any(...)`
-     * is NULL, not false. An un-coalesced NULL here would propagate through the
-     * `not (...)` arm below and drop the line out of EVERY view — a silent
-     * inflation of ATP and a breach of §7.6. `coalesce(…, false)` makes the whole
-     * thing a two-valued boolean, so the three sets stay a true partition.
-     *
-     * ST-R21 reversibility rides on the last clause: a machine decision must be
-     * undoable exactly like a human one, so a `reinstated` override lifts the
-     * auto-close and hands the line straight back to the liveness rule.
-     */
-    const autoclosed = `coalesce(
-          coalesce(l.status_order, '') = any (${autocloseStatuses})
-          and l.estimate_delivery < current_date - ${autocloseDays}
-        , false)
-        and coalesce(o.state, '') <> 'reinstated'`;
-
-    // The ordering that keeps auto-close a zero-ATP operation. Below the liveness
-    // window it would start closing lines that are still LIVE, i.e. releasing
-    // reservations a customer is owed. Config can do it; config should not.
-    if (autocloseDays <= windowDays) {
-      console.warn(
-        `[migrateErpStock] STOCK_AUTOCLOSE_AFTER_DAYS (${autocloseDays}) is not above ` +
-          `STOCK_STALE_WINDOW_DAYS (${windowDays}). Auto-close is only ATP-neutral while it ` +
-          "is the slower of the two: at this setting it can close LIVE commitments and RAISE " +
-          "ATP, releasing stock that is already promised to a customer.",
-      );
-    }
-
-    // The shared FROM/JOIN spine. A line that is confirm-closed leaves all sets.
-    // `undated` (AMENDMENT 1) lets the PPIC queue separate two populations whose
-    // close consequences are opposite: closing a stale line moves ATP by zero,
-    // closing an undated one raises it by the whole balance (AMENDMENT 6).
-    // AMENDMENT 12 — `po_date` rides along on every commitment shape. An undated
-    // line has no ETA to age from, so the order date is the only way to show how
-    // old it is, on exactly the population that reserves stock. It lives on the
-    // header, so the views are the only place it can be picked up once.
-    const spine = (etaPredicate: string, autoclosePredicate: string) => `
-      select l.*, h.customer_name_text, h.sales_name_text, h.so_number, h.po_date,
-             (l.estimate_delivery is null) as undated,
-             (${autoclosed}) as autoclosed,
-             -- WHY this line qualified, carried on the row rather than inferred by
-             -- a reader: which date the age was measured from. Constant today
-             -- because the ruling admits exactly one basis; it is a column so that
-             -- a future basis change cannot leave the UI narrating the old one.
-             case when (${autoclosed}) then 'estimate_delivery'::text end as autoclose_basis
-      from erp_so_line l
-      left join erp_so_header h on h.id = l.so_id
-      left join stock_commitment_overrides o on o.so_line_id = l.id
-      where l.approval = any (${approved})
-        and l.qty_balance > 0
-        and coalesce(l.status_order, '') <> all (${cancelled})
-        and ${etaPredicate}
-        and ${autoclosePredicate}
-        and coalesce(o.state, '') <> 'closed'
-    `;
-
-    // ST-R17: live => reserves stock. Stale => same line, ETA outside the window;
-    // excluded from ATP, surfaced in the review queue (ST-R18) instead.
-    //
-    // AMENDMENT 1 — the `is null` arm is load-bearing, not defensive. `NULL >= x`
-    // and `NULL < x` are both NULL, so without it an approved line with no ETA
-    // matches NEITHER view: it reserves nothing, appears in no queue, and inflates
-    // ATP by its whole balance. That is the silent-drop failure ST-R18 exists to
-    // prevent and a breach of invariant §7.6. An undated line is real demand that
-    // is merely unscheduled — an absent date is not evidence of abandonment the
-    // way a 2020 ETA is — so it reserves, and `undated` flags it for PPIC review.
-    //
-    // ST-R22 adds a THIRD set rather than a deletion. An auto-closed line leaves
-    // live and stale — it stops asking a human for a decision — but it must not
-    // vanish (§7.6), and a MACHINE decision deserves more visibility than a human
-    // one, not less: nobody typed it, so nobody remembers making it. Hence its own
-    // view, its own `/stale-commitments?segment=autoclosed`, and the same
-    // reinstate path a confirm-close has (ST-R21).
-    //
-    // The three predicates below still partition the universe: the ETA arms cover
-    // every line between them (`>=`, `<`, `is null`), and `autoclosed` then splits
-    // each arm in two with `not (…)` / `(…)`. The auto-closed view takes no ETA
-    // arm of its own precisely so it is the union of both — otherwise a config
-    // with a short threshold would leave a line in no set at all.
-    const views: ReadonlyArray<readonly [string, string]> = [
-      ["v_live_commitments", spine(
-        `(l.estimate_delivery >= current_date - ${windowDays} or l.estimate_delivery is null)`,
-        `not (${autoclosed})`,
-      )],
-      ["v_stale_commitments", spine(
-        `l.estimate_delivery < current_date - ${windowDays}`,
-        `not (${autoclosed})`,
-      )],
-      ["v_autoclosed_commitments", spine("true", `(${autoclosed})`)],
-    ];
-
-    for (const [name, body] of views) {
-      try {
-        await db.unsafe(`create or replace view ${name} as ${body}`);
-      } catch (replaceErr) {
-        // ONLY 42P16 ("cannot change name/type/number of columns of a view") is
-        // contemplated here: the body selects l.*, so an added mirror column — or
-        // AMENDMENT 12's po_date — makes the replace fail. Views hold no data, so
-        // dropping and recreating is the right resolution for that one error.
-        //
-        // A bare catch was wrong, and dangerously so: a lock timeout or a
-        // permissions fault took the same branch, dropped a working view, and if
-        // the recreate then failed too the app booted with NO v_live_commitments
-        // while the log said the migration was fine — zero commitments, ATP equal
-        // to on-hand, the whole inventory promiseable. Anything that is not 42P16
-        // is re-thrown to the block's own handler, which logs it and leaves the
-        // existing view in place.
-        const code = (replaceErr as { code?: string } | null)?.code;
-        if (code !== "42P16") throw replaceErr;
-        console.warn(
-          `[migrateErpStock] ${name}: column list changed (42P16) — dropping and recreating the view`,
-        );
-        await db.unsafe(`drop view if exists ${name} cascade`);
-        await db.unsafe(`create view ${name} as ${body}`);
-      }
-    }
+    await applyCommitmentViews(db, buildCommitmentViewSql(commitmentRuleConfig()));
   } catch (viewsErr) {
     console.error("[migrateErpStock] commitment views step failed (non-fatal):", viewsErr);
   }

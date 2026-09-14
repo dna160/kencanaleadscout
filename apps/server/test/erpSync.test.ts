@@ -1443,6 +1443,56 @@ describe.skipIf(db === null)("syncWorker — against a real mirror schema", () =
       select id, estimate_delivery from erp_so_line where id = 'SOL-2004'
     `;
     expect(undated[0]?.estimate_delivery).toBeNull();
+
+    // ST-R22 rule 2: the goods-out document reaches the mirror. This is the whole
+    // path — adapter, upsert column list, table — and a column the worker writes
+    // that the table does not have is a 42703 on every demand page, i.e. zero
+    // commitments and an inventory that reads as fully promiseable (AMENDMENT 18).
+    const docs = await sql<{ id: string; summary_spb: string | null; summary_do: string | null }[]>`
+      select id, summary_spb, summary_do from erp_so_line
+       where id in ('SOL-2001', 'SOL-2004') order by id
+    `;
+    expect(docs).toEqual([
+      { id: "SOL-2001", summary_spb: "SPB/2026/09/0042", summary_do: "DO/2026/09/0042" },
+      // Mirrored verbatim; the view predicate is what rules a '-' out as absent.
+      { id: "SOL-2004", summary_spb: "-", summary_do: null },
+    ]);
+  });
+
+  it("an EXISTING mirror gains summary_spb / summary_do on migrate, with no re-pull", async () => {
+    // The deployment question, answered mechanically rather than promised. A
+    // mirror written before ST-R22 rule 2 shipped gets both columns added IN
+    // PLACE: the rows already there keep their data and carry NULL in the new
+    // columns until they are next fetched, so the rule is a no-op over them — it
+    // never closes a line on the strength of a column nobody has read yet. This
+    // schema is this suite's own, so the DDL below is safe to run for real.
+    await run(sql);
+    await sql`alter table erp_so_line drop column summary_spb cascade`;
+    await sql`alter table erp_so_line drop column summary_do  cascade`;
+
+    await migrateMod.runErpStockMigrations(sql);
+
+    const rows = await sql<{ id: string; summary_spb: string | null; qty_balance: string }[]>`
+      select id, summary_spb, qty_balance::text from erp_so_line where id = 'SOL-2001'
+    `;
+    expect(rows[0]).toEqual({ id: "SOL-2001", summary_spb: null, qty_balance: "319" });
+    // The views come back carrying the new columns: the cascade above drops them,
+    // and the same migration run rebuilds them at the end.
+    const viewCols = await sql<{ column_name: string }[]>`
+      select column_name from information_schema.columns
+       where table_schema = ${TEST_SCHEMA} and table_name = 'v_autoclosed_commitments'
+    `;
+    expect(viewCols.map((c) => c.column_name)).toEqual(
+      expect.arrayContaining(["summary_spb", "summary_do", "autoclose_reserving"]),
+    );
+
+    // …and an ordinary sync fills them — no cursor reset, no special path.
+    await resetCursors(sql);
+    await run(sql);
+    const refetched = await sql<{ summary_spb: string | null }[]>`
+      select summary_spb from erp_so_line where id = 'SOL-2001'
+    `;
+    expect(refetched[0]?.summary_spb).toBe("SPB/2026/09/0042");
   });
 
   it("IS IDEMPOTENT: three runs over the same window leave identical rows and identical ATP", async () => {
