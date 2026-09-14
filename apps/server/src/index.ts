@@ -47,7 +47,7 @@ import { stockRoutes } from "./routes/stock.js";
 import { stockAtpRoutes } from "./routes/stock-atp.js";
 import { runStockMigrations } from "./db/migrateStock.js";
 import { runErpStockMigrations } from "./db/migrateErpStock.js";
-import { startErpSync } from "./erp/syncWorker.js";
+import { startErpSync, stopErpSync } from "./erp/syncWorker.js";
 
 const PUBLIC_DIR = fileURLToPath(new URL("../public", import.meta.url));
 
@@ -191,9 +191,25 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // Railway replaces a container by sending SIGTERM and then killing it, so this
+  // is the ordinary end of every deploy — not an exceptional path.
+  let shuttingDown = false;
   const shutdown = async (signal: string) => {
+    // A second signal during the drain must not start a second teardown: that
+    // would race `stopErpSync()` against itself and could close the database out
+    // from under the release it is trying to perform.
+    if (shuttingDown) return;
+    shuttingDown = true;
     app.log.info({ signal }, "shutting down");
     await app.close();
+    // BEFORE closeDatabase(): handing the ERP run guard back is a write, so it
+    // needs the connection. Skipping it used to leave `erp_sync_state.running`
+    // set until the staleness rule expired it nine minutes later — nine minutes
+    // in which the replacement process declined every tick and /stock told the
+    // operator to confirm with PPIC about an ERP that was perfectly healthy.
+    // It never throws, and it releases only rows this process owns.
+    const erp = await stopErpSync();
+    app.log.info({ ...erp }, "erp sync stopped");
     await closeDatabase();
     process.exit(0);
   };

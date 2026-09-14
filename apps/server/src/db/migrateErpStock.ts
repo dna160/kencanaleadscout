@@ -961,6 +961,22 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
       )
     `;
     await db`alter table erp_sync_state add column if not exists last_error_kind text`;
+    // WHO holds the guard, and WHEN they last proved they were alive.
+    //
+    // `running` alone cannot distinguish "a sibling container is mid-run" from
+    // "the process that set this died in a deploy", so the worker had only one
+    // recovery: the activity rule (no last_ok_at/last_error_at for 3× the sync
+    // interval ⇒ abandoned), which costs nine minutes of skipped ticks after
+    // every container replacement. These two columns make the difference
+    // observable: `lock_owner` is a per-process token so a shutting-down process
+    // can release ITS OWN guard and nobody else's, and `lock_heartbeat_at` is
+    // refreshed on a short timer for as long as that process is alive, so a
+    // guard whose heartbeat has stopped is provably ownerless in ~1 minute
+    // rather than nine. Both nullable: a lock written by a build that predates
+    // them reads as "no heartbeat" and falls back to the activity rule, which
+    // is the safe direction. See erp/syncWorker.ts `acquireLock`.
+    await db`alter table erp_sync_state add column if not exists lock_owner text`;
+    await db`alter table erp_sync_state add column if not exists lock_heartbeat_at timestamptz`;
     for (const t of ["live_fg", "so_line", "so_header", "warna"]) {
       await db`
         insert into erp_sync_state (table_name) values (${t})

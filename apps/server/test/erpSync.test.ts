@@ -21,7 +21,7 @@
  * reachable the DB-backed block skips with a clear message and the pure tests —
  * envelope tolerance, adapters, redaction — still run.
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { MockAgent, getGlobalDispatcher, setGlobalDispatcher, type Dispatcher } from "undici";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -63,7 +63,7 @@ const {
   buildColumnDiagnostic,
   describeColumnDiagnostic,
 } = clientMod;
-const { runErpSyncOnce, recomputeSkuKeys } = workerMod;
+const { runErpSyncOnce, recomputeSkuKeys, stopErpSync, LOCK_OWNER } = workerMod;
 const { canonicalSkuKey } = skuMod;
 
 type SelarasTable = clientMod.SelarasTable;
@@ -1340,7 +1340,60 @@ async function atpSnapshot(sql: postgres.Sql<{}>): Promise<AtpRow[]> {
 async function resetCursors(sql: postgres.Sql<{}>): Promise<void> {
   await sql`
     update erp_sync_state
-       set cursor_value = null, last_error = null, last_error_at = null, running = false, rows_synced = 0
+       set cursor_value = null, last_error = null, last_error_at = null, running = false, rows_synced = 0,
+           lock_owner = null, lock_heartbeat_at = null
+  `;
+}
+
+/**
+ * A SECOND connection onto the same test schema — `connectTestDb()` cannot be
+ * reused here because it drops and recreates the schema. Two real connections
+ * are what make "two processes racing for one guard" a real race rather than two
+ * statements the driver quietly serialised down one socket.
+ */
+function extraConnection(): postgres.Sql<{}> {
+  return postgres(TEST_DB_URL, {
+    max: 1,
+    idle_timeout: 0,
+    connect_timeout: 5,
+    onnotice: () => {},
+    connection: { search_path: `${TEST_SCHEMA},public` },
+  });
+}
+
+/** The guard columns, which is what every shutdown/reclaim assertion below reads. */
+async function guardRows(sql: postgres.Sql<{}>) {
+  return sql<
+    { table_name: string; running: boolean; lock_owner: string | null; lock_heartbeat_at: Date | null }[]
+  >`
+    select table_name, running, lock_owner, lock_heartbeat_at from erp_sync_state order by table_name
+  `;
+}
+
+/**
+ * Put the guard into a state some OTHER process owns.
+ *
+ * `last_ok_at` is set fresh by default on purpose: it takes the 3×interval
+ * staleness backstop out of the picture, so any reclaim a test observes can only
+ * have come from the heartbeat rule, and any refusal can only have come from the
+ * heartbeat veto. Tests that want the backstop ask for it explicitly.
+ */
+async function holdGuardAs(
+  sql: postgres.Sql<{}>,
+  owner: string | null,
+  heartbeatAgo: string | null,
+  lastOkAgo = "0 seconds",
+): Promise<void> {
+  await sql`
+    update erp_sync_state
+       set running = true,
+           lock_owner = ${owner},
+           lock_heartbeat_at = case
+             when ${heartbeatAgo}::text is null then null
+             else now() - ${heartbeatAgo}::interval
+           end,
+           last_ok_at = now() - ${lastOkAgo}::interval,
+           last_error_at = null
   `;
 }
 
@@ -1970,6 +2023,166 @@ describe.skipIf(db === null)("syncWorker — against a real mirror schema", () =
     await sql`update erp_sync_state set running = false`;
   });
 
+  // ── Deploy safety: handing the guard back, and telling dead from alive ──────
+  //
+  // THE PRODUCTION BUG THESE EXIST FOR. A deploy replaced the container while a
+  // sync was mid-run. The old process exited holding `running = true`; the new
+  // one correctly declined every tick; and for the next nine minutes — until the
+  // 3×interval staleness backstop expired the lock — /stock told the operator to
+  // confirm with PPIC before promising stock, about an ERP that was perfectly
+  // healthy. Seven deploys a day made that an hour of false alarm.
+  //
+  // Everything below is about the SECOND question the guard now answers ("is the
+  // holder still there?"), and none of it is allowed to soften the first one
+  // ("can two syncs run at once?" — no).
+  describe("run guard — graceful release and ownership-aware reclaim", () => {
+    const DEAD_SIBLING = "another-container:dead";
+    const LIVE_SIBLING = "another-container:alive";
+
+    afterEach(async () => {
+      await sql`update erp_sync_state set running = false, lock_owner = null, lock_heartbeat_at = null`;
+    });
+
+    it("a graceful shutdown drains the in-flight run and leaves the guard free for the next process", async () => {
+      // The real sequence: SIGTERM arrives mid-run, index.ts calls stopErpSync()
+      // BEFORE closeDatabase(). The run gets to finish and release its own guard,
+      // which is exactly what tearing the connection down underneath it prevented.
+      let runFinished = false;
+      const inFlight = run(sql).then((r) => {
+        runFinished = true;
+        return r;
+      });
+      const stopped = await stopErpSync({ db: sql, log: silentLog, drainMs: 30_000 });
+
+      // It WAITED. Returning while the run was still pulling would mean the
+      // guard was handed back under a live run — the one thing it is for.
+      expect(runFinished).toBe(true);
+      expect((await inFlight).started).toBe(true);
+      expect(stopped.drained).toBe(true);
+      expect(stopped.skipped).toBeUndefined();
+
+      const guard = await guardRows(sql);
+      expect(guard.map((r) => r.running)).toEqual(guard.map(() => false));
+      expect(guard.map((r) => r.lock_owner)).toEqual(guard.map(() => null));
+
+      // The whole point: the NEXT process syncs on its first tick. No staleness
+      // window, no skipped ticks, no banner.
+      const next = await run(sql);
+      expect(next.started).toBe(true);
+    });
+
+    it("releases a guard this process still owns when nothing is in flight", async () => {
+      // The belt-and-braces half: a previous run's release failed on a DB blip,
+      // so the row still carries OUR token with no run behind it.
+      await holdGuardAs(sql, LOCK_OWNER, "0 seconds");
+
+      const stopped = await stopErpSync({ db: sql, log: silentLog });
+      expect(stopped.drained).toBe(true);
+      expect(stopped.released).toBe(SYNC_TABLE_COUNT);
+
+      const guard = await guardRows(sql);
+      expect(guard.every((r) => !r.running && r.lock_owner === null)).toBe(true);
+      expect((await run(sql)).started).toBe(true);
+    });
+
+    it("a shutdown with nothing in flight never touches a sibling's guard", async () => {
+      // The dangerous version of this fix would be `set running = false` with no
+      // owner qual: a container shutting down between ticks would then unlock the
+      // tables a LIVE sibling was mid-way through pulling.
+      await holdGuardAs(sql, LIVE_SIBLING, "0 seconds");
+
+      const stopped = await stopErpSync({ db: sql, log: silentLog });
+      expect(stopped.released).toBe(0);
+
+      const guard = await guardRows(sql);
+      expect(guard.every((r) => r.running && r.lock_owner === LIVE_SIBLING)).toBe(true);
+    });
+
+    it("never reclaims a guard whose owner is alive and heartbeating", async () => {
+      await holdGuardAs(sql, LIVE_SIBLING, "0 seconds");
+      const refused = await run(sql);
+      expect(refused.started).toBe(false);
+      expect(refused.skipped).toBe("locked");
+      expect(requestLog).toEqual([]); // it did not even reach for the ERP
+
+      const guard = await guardRows(sql);
+      expect(guard.every((r) => r.lock_owner === LIVE_SIBLING)).toBe(true);
+    });
+
+    it("a heartbeating owner is protected even when its WORK has gone quiet past the staleness window", async () => {
+      // A slow ERP, a long retry, a big transaction: alive, and committing
+      // nothing. Reading "no successful page for 3 intervals" as "dead" was the
+      // pre-existing false positive; the heartbeat is what tells them apart, and
+      // it vetoes the staleness rule rather than merely sitting beside it.
+      await holdGuardAs(sql, LIVE_SIBLING, "0 seconds", "1 hour");
+      const refused = await run(sql);
+      expect(refused.started).toBe(false);
+      expect(refused.skipped).toBe("locked");
+    });
+
+    it("reclaims a guard whose owner stopped heartbeating, without waiting out the 9-minute window", async () => {
+      // last_ok_at is FRESH, so the staleness backstop cannot be what grants
+      // this — the stopped heartbeat is the only rule that can.
+      await holdGuardAs(sql, DEAD_SIBLING, "90 seconds");
+      const reclaimed = await run(sql);
+      expect(reclaimed.started).toBe(true);
+
+      const guard = await guardRows(sql);
+      expect(guard.every((r) => r.lock_owner === null)).toBe(true); // ours, then released
+    });
+
+    it("still reclaims through the staleness BACKSTOP when a process died leaving no heartbeat at all", async () => {
+      // SIGKILL / OOM under a build that predates the owner token, or a row set
+      // by hand. No token, no heartbeat, and the backstop is all there is — which
+      // is precisely why it is not being removed.
+      await holdGuardAs(sql, null, null, "1 hour");
+      expect((await run(sql)).started).toBe(true);
+    });
+
+    it("does NOT reclaim a heartbeat-less guard until the staleness window has actually elapsed", async () => {
+      // The reclaim rule must not leak into the legacy case: a missing heartbeat
+      // is "never promised to heartbeat", not "dead".
+      await holdGuardAs(sql, null, null, "10 seconds");
+      const refused = await run(sql);
+      expect(refused.started).toBe(false);
+      expect(refused.skipped).toBe("locked");
+    });
+
+    it("two processes reclaiming the same abandoned guard at once produce exactly ONE winner", async () => {
+      // Two genuinely separate module instances (so two distinct owner tokens)
+      // on two genuinely separate connections (so the `for update` really has to
+      // serialise them), racing for one abandoned guard.
+      await holdGuardAs(sql, DEAD_SIBLING, "5 minutes");
+
+      vi.resetModules();
+      const procA = await import("../src/erp/syncWorker.js");
+      vi.resetModules();
+      const procB = await import("../src/erp/syncWorker.js");
+      expect(procA.LOCK_OWNER).not.toBe(procB.LOCK_OWNER);
+
+      const sqlA = extraConnection();
+      const sqlB = extraConnection();
+      try {
+        const opts = { pageSize: PAGE_SIZE, intervalMs: 60_000, log: silentLog };
+        const [a, b] = await Promise.all([
+          procA.runErpSyncOnce({ ...opts, db: sqlA }),
+          procB.runErpSyncOnce({ ...opts, db: sqlB }),
+        ]);
+
+        // Exactly one. Not "at least one", and emphatically not both: the loser
+        // blocked on `for update`, re-read a row whose heartbeat the winner had
+        // just stamped, and walked away.
+        expect([a.started, b.started].filter(Boolean)).toHaveLength(1);
+        const loser = a.started ? b : a;
+        expect(loser.skipped).toBe("locked");
+      } finally {
+        await sqlA.end();
+        await sqlB.end();
+        vi.resetModules();
+      }
+    });
+  });
+
   it("refuses ambiguous quantities rather than writing a 1000x-wrong one (A22)", async () => {
     await run(sql);
 
@@ -2442,6 +2655,36 @@ describe("startErpSync — disabled without an ERP or a database (§5)", () => {
       setInterval.mockRestore();
       warn.mockRestore();
       if (saved !== undefined) process.env["SELARAS_BASE_URL"] = saved;
+      vi.resetModules();
+    }
+  });
+
+  it("stopErpSync() is a harmless no-op when sync was never started, and is idempotent", async () => {
+    // index.ts calls this on EVERY shutdown, including on a deployment that has
+    // neither an ERP nor a database. It must clear nothing, write nothing, and
+    // above all not throw on the way out of a process that is already leaving.
+    vi.resetModules();
+    const savedErp = process.env["SELARAS_BASE_URL"];
+    const savedDb = process.env["DATABASE_URL"];
+    delete process.env["SELARAS_BASE_URL"];
+    delete process.env["DATABASE_URL"];
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const isolated = await import("../src/erp/syncWorker.js");
+      isolated.startErpSync(); // warns, starts nothing
+
+      const stopped = await isolated.stopErpSync();
+      expect(stopped.timersCleared).toBe(0);
+      expect(stopped.released).toBe(0);
+      expect(stopped.drained).toBe(true);
+      expect(stopped.skipped).toBe("no_database");
+
+      // Two SIGTERMs in a row, or a SIGINT after a SIGTERM, must be as quiet.
+      await expect(isolated.stopErpSync()).resolves.toMatchObject({ released: 0 });
+    } finally {
+      warn.mockRestore();
+      if (savedErp !== undefined) process.env["SELARAS_BASE_URL"] = savedErp;
+      if (savedDb !== undefined) process.env["DATABASE_URL"] = savedDb;
       vi.resetModules();
     }
   });
