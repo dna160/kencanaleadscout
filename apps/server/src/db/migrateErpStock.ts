@@ -245,6 +245,7 @@ export interface CommitmentRuleConfig {
   approvedStatuses: readonly string[];
   autocloseStatuses: readonly string[];
   autocloseAfterDays: number;
+  autocloseAgeAnyStatus: boolean;
   autocloseOnSpb: boolean;
   autocloseSpbRequireFull: boolean;
 }
@@ -259,6 +260,7 @@ export function commitmentRuleConfig(
     approvedStatuses: config.stock.approvedStatuses,
     autocloseStatuses: config.stock.autocloseStatuses,
     autocloseAfterDays: config.stock.autocloseAfterDays,
+    autocloseAgeAnyStatus: config.stock.autocloseAgeAnyStatus,
     autocloseOnSpb: config.stock.autocloseOnSpb,
     autocloseSpbRequireFull: config.stock.autocloseSpbRequireFull,
     ...over,
@@ -328,8 +330,45 @@ export function buildCommitmentViewSql(
    * undoable exactly like a human one, so a `reinstated` override lifts the
    * auto-close and hands the line straight back to the liveness rule.
    */
+  /**
+   * AMENDMENT 22 — the age arm's STATUS gate, and whether it exists at all.
+   *
+   * `STOCK_AUTOCLOSE_AGE_ANY_STATUS` ON (default): the age arm drops the status
+   * test entirely — a real `estimate_delivery` older than `autocloseDays` is
+   * sufficient on its own, whatever `status_order` says. The product owner's
+   * reason, and it is the right one: physical stock and spoken-for stock need a
+   * clear boundary, and a line whose delivery date passed five years ago is not
+   * spoken for by any reading, whatever status the ERP left on it. Five-year-old
+   * approved lines carrying some other status were sitting in the review queue
+   * forever, because the status gate meant the age rule never looked at them.
+   *
+   * OFF: exactly AMENDMENT 20's behaviour, the age arm gated on
+   * `STOCK_AUTOCLOSE_STATUSES`.
+   *
+   * THE WIDENING MOVES ATP BY EXACTLY ZERO, for AMENDMENT 20's own reason:
+   * `autocloseDays` (180) sits well above `windowDays` (60), so EVERY line the
+   * age arm can reach has already failed the liveness window and is already out
+   * of `open_commitment`. Widening which statuses it reaches cannot change that —
+   * it only reaches MORE already-excluded lines. That ordering is checked and
+   * warned about below, and it is the entire guarantee.
+   *
+   * WHAT IS EMPHATICALLY NOT WIDENED: the `estimate_delivery IS NULL` case.
+   * AMENDMENT 21 scoped AMENDMENT 20's "never auto-closed by age" to the AGE
+   * BASIS precisely because inferring from an ABSENT date is a guess, in the
+   * over-promising direction. Widening the STATUS does not license widening to
+   * undated lines: `NULL < current_date - N` is NULL, the outer `coalesce(…,
+   * false)` resolves it to false, and an undated line keeps reserving and stays
+   * in review at any status and any age. Only the SPB rule — documentary
+   * evidence, not an inference — closes an undated line.
+   *
+   * Cancelled and unapproved lines are filtered out by the spine's WHERE before
+   * any of this is evaluated, so widening the status set reaches none of them.
+   */
+  const agedStatusArm = cfg.autocloseAgeAnyStatus
+    ? "true"
+    : `coalesce(l.status_order, '') = any (${autocloseStatuses})`;
   const autoclosedAged = `coalesce(
-        coalesce(l.status_order, '') = any (${autocloseStatuses})
+        ${agedStatusArm}
         and l.estimate_delivery < current_date - ${autocloseDays}
       , false)`;
 

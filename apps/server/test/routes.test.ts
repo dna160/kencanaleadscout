@@ -88,6 +88,17 @@ const hasDb = Boolean(process.env.DATABASE_URL);
 
 /** ST-R22 knobs, read from config so no fixture restates a threshold as a literal. */
 const AUTOCLOSE_DAYS = config.stock.autocloseAfterDays;
+const WINDOW_DAYS = config.stock.staleWindowDays;
+/**
+ * A "stale" ETA age in days: OUTSIDE the liveness window, INSIDE the auto-close
+ * threshold — a line a HUMAN still owes a decision on.
+ *
+ * AMENDMENT 22 made this a narrow band. The age arm no longer asks about
+ * `status_order`, so the arbitrary 400- and 900-day ETAs these fixtures used to
+ * spell "stale" with now spell "auto-closed" — which is exactly the queue hygiene
+ * the amendment shipped for. A fixture that means "in the review queue" sits here.
+ */
+const STALE_ETA = Math.floor((WINDOW_DAYS + AUTOCLOSE_DAYS) / 2);
 const AUTOCLOSE_STATUS = config.stock.autocloseStatuses[0] ?? "DO";
 
 /** Everything this file writes is prefixed, so a leaked row is identifiable. */
@@ -381,7 +392,7 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
       await seedLines(tx, [
         { id: `${P}-bat-u1`, qty_balance: 40, eta: null, parts: A },
         { id: `${P}-bat-u2`, qty_balance: 60, eta: null, parts: A },
-        { id: `${P}-bat-s1`, qty_balance: 90, eta: 400, parts: B },
+        { id: `${P}-bat-s1`, qty_balance: 90, eta: STALE_ETA, parts: B },
       ]);
     }
 
@@ -401,7 +412,7 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
       // operator actually selected from.
       await inRollback(async (tx) => {
         await seedFg(tx, [{ sn_fg: `${P}-race-fg`, qty: 1000, parts: A }]);
-        await seedLines(tx, [{ id: `${P}-race-1`, qty_balance: 500, eta: 400, parts: A }]);
+        await seedLines(tx, [{ id: `${P}-race-1`, qty_balance: 500, eta: STALE_ETA, parts: A }]);
 
         // Step 1 — stale, so it is excluded from ATP and the queue offers it.
         expect(await atpOf(KA)).toBe(1000);
@@ -762,7 +773,7 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
         { sn_fg: `${P}-seg-fg-u`, qty: 100, parts: U },
       ]);
       await seedLines(tx, [
-        { id: `${P}-seg-stale`, qty_balance: 25, eta: 400, parts: S },
+        { id: `${P}-seg-stale`, qty_balance: 25, eta: STALE_ETA, parts: S },
         { id: `${P}-seg-undated`, qty_balance: 35, eta: null, parts: U },
         { id: `${P}-seg-live`, qty_balance: 15, eta: 5, parts: U },
       ]);
@@ -967,8 +978,12 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
       await inRollback(async (tx) => {
         await seedFg(tx, [{ sn_fg: `${P}-age-fg`, qty: 10, parts: parts("SEG-AGE") }]);
         await seedLines(tx, [
-          { id: `${P}-age-old`, qty_balance: 5, eta: 900, parts: parts("SEG-AGE") },
-          { id: `${P}-age-new`, qty_balance: 5, eta: 70, parts: parts("SEG-AGE") },
+          // AMENDMENT 22 — both ages sit inside the auto-close threshold on
+          // purpose. Past it the machine now closes the line whatever its status,
+          // so a 900-day fixture would no longer be in the stale queue at all and
+          // this regression would silently stop testing the `::int` cast.
+          { id: `${P}-age-old`, qty_balance: 5, eta: STALE_ETA + 40, parts: parts("SEG-AGE") },
+          { id: `${P}-age-new`, qty_balance: 5, eta: WINDOW_DAYS + 5, parts: parts("SEG-AGE") },
         ]);
         const loose = await GET<PagedResponse<CommitLine>>("/api/stock/stale-commitments?limit=500");
         expect(loose.body.items.filter((r) => r.so_line_id.startsWith(`${P}-age-`)).length).toBe(2);
@@ -989,12 +1004,14 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
       await inRollback(async (tx) => {
         await seedFg(tx, [{ sn_fg: `${P}-age-fg`, qty: 10, parts: parts("SEG-AGE") }]);
         await seedLines(tx, [
-          { id: `${P}-age-old`, qty_balance: 5, eta: 900, parts: parts("SEG-AGE") },
-          { id: `${P}-age-mid`, qty_balance: 5, eta: 100, parts: parts("SEG-AGE") },
+          { id: `${P}-age-old`, qty_balance: 5, eta: STALE_ETA + 40, parts: parts("SEG-AGE") },
+          { id: `${P}-age-mid`, qty_balance: 5, eta: WINDOW_DAYS + 5, parts: parts("SEG-AGE") },
         ]);
+        // The tier has to sit inside the auto-close threshold too (AMENDMENT 22):
+        // the stale queue can no longer contain a line older than it.
         const res = await app.inject({
           method: "GET",
-          url: "/api/stock/stale-commitments?min_age_days=365&limit=500",
+          url: `/api/stock/stale-commitments?min_age_days=${STALE_ETA + 20}&limit=500`,
         });
         expect(res.statusCode).toBe(200);
         const body = JSON.parse(res.payload) as PagedResponse<CommitLine>;
@@ -1124,6 +1141,106 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
         expect((await idsFor("/api/stock/stale-commitments?segment=stale&limit=500")).sort()).toEqual(
           [`${P}-r22-aged`, `${P}-r22-young`],
         );
+      });
+    });
+
+    it("AMENDMENT 22 — a five-year-old line leaves the queue whatever its status, and ATP does not move", async () => {
+      // What the product owner was actually looking at: approved lines, five years
+      // past their delivery date, carrying statuses the auto-close set never
+      // mentioned, sitting in the review queue forever. On the wire they are now
+      // in `autoclosed` and in no queue a human works — and the promiseable figure
+      // is the same number it was, because a line that old was never in the sum.
+      const W = parts("A22-WIDE");
+      const KW = canonicalSkuKey(W);
+      const FIVE_YEARS = 365 * 5;
+      const STATUSES = ["Open", "Waiting", "Proses Produksi", "Done", null];
+
+      await inRollback(async (tx) => {
+        await seedWarna(tx);
+        await seedFg(tx, [{ sn_fg: `${P}-a22-fg`, qty: 1000, parts: W }]);
+        await seedLines(tx, [
+          ...STATUSES.map((st, i) => ({
+            id: `${P}-a22-old-${i}`,
+            qty_balance: 20,
+            eta: FIVE_YEARS,
+            parts: W,
+            status_order: st,
+          })),
+          // Inside the threshold: still a human's decision, at any status.
+          { id: `${P}-a22-mid`, qty_balance: 20, eta: STALE_ETA, parts: W, status_order: "Waiting" },
+        ]);
+
+        // The describe's `idsFor` is scoped to the `-r22-` fixtures, so this block
+        // filters on its own prefix rather than widening a shared helper.
+        const ids = async (seg: string): Promise<string[]> => {
+          const { body } = await GET<PagedResponse<CommitLine>>(
+            `/api/stock/stale-commitments?segment=${seg}&limit=500`,
+          );
+          return (body.rows ?? body.items)
+            .map((r) => r.so_line_id)
+            .filter((id) => id.startsWith(`${P}-a22-`))
+            .sort();
+        };
+
+        // Every aged line, at every status, is in the machine's set…
+        expect(await ids("autoclosed")).toEqual(STATUSES.map((_, i) => `${P}-a22-old-${i}`).sort());
+        // …and the human queue holds only the one inside the threshold.
+        expect(await ids("stale")).toEqual([`${P}-a22-mid`]);
+        expect(await ids("all")).toEqual([`${P}-a22-mid`]);
+
+        // The promiseable figure never saw any of them: nothing was reserving, so
+        // nothing was released. 1,000 on hand, 1,000 available, both before and
+        // after the machine spoke.
+        const item = await summaryItem(KW);
+        expect(item!.committed).toBe(0);
+        expect(item!.atp).toBe(1000);
+        expect(item!.autoclosed_committed).toBe(100); // 5 × 20, review work removed
+        expect(item!.stale_committed).toBe(20);
+
+        // …and every one of them says the AGE was its grounds, not a document.
+        const { body } = await GET<PagedResponse<CommitLine>>(
+          "/api/stock/stale-commitments?segment=autoclosed&limit=500",
+        );
+        const rows = (body.rows ?? body.items).filter((r) => r.so_line_id.startsWith(`${P}-a22-old-`));
+        expect(rows.length).toBe(STATUSES.length);
+        for (const r of rows) {
+          expect(r.autoclose_basis, r.so_line_id).toBe("estimate_delivery");
+          expect(r.autoclose_reserving, r.so_line_id).toBe(false);
+          expect(r.undated, r.so_line_id).toBe(false);
+        }
+      });
+    });
+
+    it("the review queue can no longer hold a line past the auto-close threshold", async () => {
+      // A CONSEQUENCE the PPIC page inherits, and worth pinning because it is not
+      // obvious: with the age arm no longer asking about status, `segment=stale`
+      // is bounded above by STOCK_AUTOCLOSE_AFTER_DAYS. An age tier beyond it is
+      // structurally empty — not broken, but empty for a reason a reader should
+      // be able to find.
+      const W = parts("A22-TIER");
+      await inRollback(async (tx) => {
+        await seedWarna(tx);
+        await seedLines(tx, [
+          { id: `${P}-a22-t-old`, qty_balance: 5, eta: AUTOCLOSE_DAYS + 1, parts: W },
+          { id: `${P}-a22-t-in`, qty_balance: 5, eta: AUTOCLOSE_DAYS - 1, parts: W },
+        ]);
+        const tier = await GET<PagedResponse<CommitLine>>(
+          `/api/stock/stale-commitments?segment=stale&min_age_days=${AUTOCLOSE_DAYS}&limit=500`,
+        );
+        expect(tier.status).toBe(200);
+        expect(
+          (tier.body.rows ?? tier.body.items).filter((r) => r.so_line_id.startsWith(`${P}-a22-t-`)),
+        ).toEqual([]);
+
+        // The oldest thing a human is still asked about is one day short of it.
+        const all = await GET<PagedResponse<CommitLine>>(
+          "/api/stock/stale-commitments?segment=stale&limit=500",
+        );
+        expect(
+          (all.body.rows ?? all.body.items)
+            .filter((r) => r.so_line_id.startsWith(`${P}-a22-t-`))
+            .map((r) => r.so_line_id),
+        ).toEqual([`${P}-a22-t-in`]);
       });
     });
 
@@ -1261,7 +1378,7 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
         },
         // Already outside the sum: same rule, zero consequence.
         {
-          id: `${P}-spb-stale`, qty_balance: 70, eta: 400, parts: SS,
+          id: `${P}-spb-stale`, qty_balance: 70, eta: STALE_ETA, parts: SS,
           qty_order: 70, qty_delivered: 70, summary_spb: SPB,
         },
         // An SPB and a genuine remainder still owed — what REQUIRE_FULL holds back.
@@ -1512,7 +1629,7 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
         await seedFg(tx, [{ sn_fg: `${P}-lad-ladb`, qty: 100, parts: pa }]);
         await seedLines(tx, [
           { id: `${P}-ladb-live`, qty_balance: 10, eta: 5, parts: pa },
-          { id: `${P}-ladb-stale`, qty_balance: 5000, eta: 400, parts: pa },
+          { id: `${P}-ladb-stale`, qty_balance: 5000, eta: STALE_ETA, parts: pa },
         ]);
         const it = (await summaryItem(key))!;
         expect(it.committed).toBe(10);
@@ -1692,7 +1809,7 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
         { sn_fg: `${P}-d-fg-u`, qty: 200, parts: U },
       ]);
       await seedLines(tx, [
-        { id: `${P}-d-stale`, qty_balance: 75, eta: 400, parts: S },
+        { id: `${P}-d-stale`, qty_balance: 75, eta: STALE_ETA, parts: S },
         { id: `${P}-d-undated`, qty_balance: 120, eta: null, parts: U },
       ]);
     }
@@ -1922,9 +2039,9 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
         const pa = parts("PAGE");
         await seedFg(tx, [{ sn_fg: `${P}-pg-fg`, qty: 10, parts: pa }]);
         await seedLines(tx, [
-          { id: `${P}-pg-1`, qty_balance: 1, eta: 100, parts: pa },
-          { id: `${P}-pg-2`, qty_balance: 2, eta: 200, parts: pa },
-          { id: `${P}-pg-3`, qty_balance: 3, eta: 300, parts: pa },
+          { id: `${P}-pg-1`, qty_balance: 1, eta: STALE_ETA, parts: pa },
+          { id: `${P}-pg-2`, qty_balance: 2, eta: STALE_ETA + 10, parts: pa },
+          { id: `${P}-pg-3`, qty_balance: 3, eta: STALE_ETA + 20, parts: pa },
         ]);
         const q = `/api/stock/stale-commitments?sku_key=${encodeURIComponent(canonicalSkuKey(pa))}&sort=eta_asc`;
 
@@ -1953,9 +2070,9 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
         const pa = parts("TOT");
         await seedFg(tx, [{ sn_fg: `${P}-tot-fg`, qty: 10, parts: pa }]);
         await seedLines(tx, [
-          { id: `${P}-tot-1`, qty_balance: 1, eta: 100, parts: pa, customer: "PT Alpha QA" },
-          { id: `${P}-tot-2`, qty_balance: 1, eta: 200, parts: pa, customer: "PT Alpha QA", so_id: `${P}-so-a` },
-          { id: `${P}-tot-3`, qty_balance: 1, eta: 300, parts: pa, customer: "PT Beta QA", so_id: `${P}-so-b` },
+          { id: `${P}-tot-1`, qty_balance: 1, eta: STALE_ETA, parts: pa, customer: "PT Alpha QA" },
+          { id: `${P}-tot-2`, qty_balance: 1, eta: STALE_ETA + 10, parts: pa, customer: "PT Alpha QA", so_id: `${P}-so-a` },
+          { id: `${P}-tot-3`, qty_balance: 1, eta: STALE_ETA + 20, parts: pa, customer: "PT Beta QA", so_id: `${P}-so-b` },
         ]);
         const key = encodeURIComponent(canonicalSkuKey(pa));
         const unfiltered = await GET<PagedResponse<CommitLine>>(
@@ -2059,7 +2176,7 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
           { id: `${P}-sfok-live`, qty_balance: 10, eta: 5, parts: ok },
           // A stale line of 5,000 must NOT drag the SKU into the queue: it is
           // quarantined, not demand anyone is waiting on.
-          { id: `${P}-sfok-stale`, qty_balance: 5000, eta: 400, parts: ok },
+          { id: `${P}-sfok-stale`, qty_balance: 5000, eta: STALE_ETA, parts: ok },
         ]);
         const { body } = await GET<PagedResponse<SkuItem>>("/api/stock/shortfall?limit=500");
         expect(body.items.map((i) => i.sku_key)).not.toContain(canonicalSkuKey(ok));
@@ -2454,7 +2571,7 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
         await seedLines(tx, [
           { id: `${P}-det-live`, qty_balance: 30, eta: 5, parts: pa },
           { id: `${P}-det-undated`, qty_balance: 20, eta: null, parts: pa },
-          { id: `${P}-det-stale`, qty_balance: 70, eta: 400, parts: pa },
+          { id: `${P}-det-stale`, qty_balance: 70, eta: STALE_ETA, parts: pa },
         ]);
         await seedAdjustment(tx, key, -4);
 
@@ -2521,7 +2638,7 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
         const pa = parts("DETC");
         const key = canonicalSkuKey(pa);
         await seedFg(tx, [{ sn_fg: `${P}-detc-fg`, qty: 40, parts: pa }]);
-        await seedLines(tx, [{ id: `${P}-detc-stale`, qty_balance: 9, eta: 400, parts: pa }]);
+        await seedLines(tx, [{ id: `${P}-detc-stale`, qty_balance: 9, eta: STALE_ETA, parts: pa }]);
         await POST(`/api/stock/stale-commitments/${P}-detc-stale/close`, { actor: ACTOR, reason: "phantom lama" });
         const { body } = await GET<SkuDetailResponse>(`/api/stock/sku/${encodeURIComponent(key)}`);
         expect(body.live_commitments).toEqual([]);
@@ -2715,7 +2832,7 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
         await seedFg(tx, [{ sn_fg: `${P}-ro-fg`, qty: 42, parts: pa }]);
         await seedLines(tx, [
           { id: `${P}-ro-live`, qty_balance: 5, eta: 5, parts: pa },
-          { id: `${P}-ro-stale`, qty_balance: 5, eta: 400, parts: pa },
+          { id: `${P}-ro-stale`, qty_balance: 5, eta: STALE_ETA, parts: pa },
         ]);
         const before = await mirrorDigest(tx);
         for (const url of [

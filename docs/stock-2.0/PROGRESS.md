@@ -84,7 +84,15 @@ is due; the rows already carry `autoclose_basis`, `autoclose_reserving`,
 `summary_spb` and `summary_do` to render it.
 
 
-## Intermittent test — UNRESOLVED, recorded not dismissed · 2026-09-14
+## Intermittent test — RESOLVED 2026-09-14 (see CONTRACTS AMENDMENT 22)
+**Root cause was a deadlock, not fixture residue** — the hypothesis below was
+wrong. A test helper recreated the three SHARED commitment views mid-transaction,
+taking an ACCESS EXCLUSIVE lock on relations the concurrent route suite reads, in
+a different order. Fixed by moving the probes to session-temp views. Original
+write-up kept below, including its incorrect guess, because the guess is part of
+the record.
+
+### Original entry (hypothesis since disproved)
 Immediately after the SPB work landed, the suite failed **2 of the first 3 runs**
 with a single unnamed failure, then passed **10 consecutive runs**. The failing
 test could not be captured — by the time a capture harness was in place it had

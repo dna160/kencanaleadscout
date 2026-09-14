@@ -246,6 +246,32 @@ export const config = {
      */
     autocloseAfterDays: int("STOCK_AUTOCLOSE_AFTER_DAYS", 180),
     /**
+     * ST-R22 auto-close, AMENDMENT 22: does the AGE arm need a qualifying
+     * `status_order` at all?
+     *
+     * ON (the default): a real `estimate_delivery` older than
+     * `STOCK_AUTOCLOSE_AFTER_DAYS` is sufficient on its own, whatever the line's
+     * status says. OFF: today's AMENDMENT 20 behaviour — the age arm only looks
+     * at lines whose status is in `STOCK_AUTOCLOSE_STATUSES`.
+     *
+     * WHY THIS IS SAFE TO DEFAULT ON, and it is the same argument AMENDMENT 20
+     * made: this threshold sits ABOVE `staleWindowDays`, so every line the age arm
+     * can reach has ALREADY failed the liveness window and is ALREADY outside
+     * `open_commitment`. Widening which statuses it reaches only reaches MORE
+     * already-excluded lines. The ATP delta stays exactly zero — asserted, not
+     * argued, in atp.test.ts.
+     *
+     * WHAT IT DOES NOT WIDEN: `estimate_delivery IS NULL` is still never closed by
+     * age (AMENDMENT 21 scoped that "never" to the age basis precisely because
+     * inferring from an ABSENT date is a guess, in the over-promising direction).
+     * Widening the STATUS does not license widening to undated lines. An undated
+     * line keeps reserving and stays in review whatever its status is.
+     *
+     * Cancelled and unapproved lines never enter any set in the first place, so
+     * this reaches none of them.
+     */
+    autocloseAgeAnyStatus: bool("STOCK_AUTOCLOSE_AGE_ANY_STATUS", true),
+    /**
      * ST-R22, the SECOND auto-close rule: an SO line carrying an SPB (`summary_spb`,
      * *Surat Pengantar Barang* — the goods-out document) has already left the
      * warehouse, so its balance is closed (product-owner ruling, 2026-09-14).
