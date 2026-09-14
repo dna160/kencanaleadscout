@@ -141,6 +141,10 @@ const SPEC_COLUMNS: Record<string, readonly string[]> = {
     "qty_order",
     "qty_delivered",
     "qty_balance",
+    // Confirmed present in a real API response, 2026-09-14. `summary_spb` is the
+    // goods-out document ST-R22 rule 2 reads; `summary_do` rides beside it.
+    "summary_spb",
+    "summary_do",
     "sales_name",
     "sales_name_text",
     "created_at",
@@ -262,6 +266,11 @@ const SO_LINE_ROWS: readonly Record<string, unknown>[] = [
     qty_order: 120,
     qty_delivered: 20,
     qty_balance: 100,
+    // ST-R22 rule 2 — the goods-out document, confirmed present on a real
+    // response (2026-09-14). This line is only PARTIALLY shipped (20 of 120), so
+    // it is precisely the shape the REQUIRE_FULL cross-check holds back.
+    summary_spb: "SPB/2026/09/0042",
+    summary_do: "DO/2026/09/0042",
     sales_name: 3,
     sales_name_text: "Budi Santoso",
     created_at: "2026-09-01 08:00:00",
@@ -1034,6 +1043,29 @@ describe("primary key — rows are keyed by `{table}_id`", () => {
     expect(adaptLiveFgRow(LIVE_FG_ROWS[0])?.erp_row_id).toBe(extractRowKey("live_fg", LIVE_FG_ROWS[0]));
     // …and the serial is still mirrored, under its own name.
     expect(adaptLiveFgRow(LIVE_FG_ROWS[0])?.sn_fg).toBe("FG-AAA-0001");
+  });
+
+  it("mirrors summary_spb / summary_do off an SO line, blanks as absent", () => {
+    // ST-R22 rule 2 turns on the PRESENCE of `summary_spb`, so what the adapter
+    // does with an empty one decides whether a line is auto-closed. Blank must
+    // arrive as NULL; the ERP's `'-'` placeholder is passed through verbatim and
+    // ruled out by the view predicate, which is the single place that decides.
+    const row = adaptSoLineRow(SO_LINE_ROWS[0]);
+    expect(row?.summary_spb).toBe("SPB/2026/09/0042");
+    expect(row?.summary_do).toBe("DO/2026/09/0042");
+
+    const blank = adaptSoLineRow({ ...SO_LINE_ROWS[0], summary_spb: "  ", summary_do: "" });
+    expect(blank?.summary_spb).toBeNull();
+    expect(blank?.summary_do).toBeNull();
+
+    const placeholder = adaptSoLineRow({ ...SO_LINE_ROWS[0], summary_spb: "-" });
+    expect(placeholder?.summary_spb).toBe("-");
+
+    // A row that predates the column — every mirrored row, until it is re-synced.
+    const absent = { ...(SO_LINE_ROWS[0] as Record<string, unknown>) };
+    delete absent.summary_spb;
+    delete absent.summary_do;
+    expect(adaptSoLineRow(absent)?.summary_spb).toBeNull();
   });
 
   it("keys a row that carries ONLY the documented `{table}_id` (no legacy id)", () => {

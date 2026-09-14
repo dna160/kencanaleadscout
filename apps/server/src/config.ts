@@ -246,6 +246,43 @@ export const config = {
      */
     autocloseAfterDays: int("STOCK_AUTOCLOSE_AFTER_DAYS", 180),
     /**
+     * ST-R22, the SECOND auto-close rule: an SO line carrying an SPB (`summary_spb`,
+     * *Surat Pengantar Barang* — the goods-out document) has already left the
+     * warehouse, so its balance is closed (product-owner ruling, 2026-09-14).
+     *
+     * UNLIKE the aged-DO rule above, this one MOVES ATP, and upward. A line with a
+     * recent or absent ETA is live and reserving right now (AMENDMENT 1); closing
+     * it raises ATP by its whole balance. That is believed to be a CORRECTION
+     * rather than a release: PRD §5A establishes Live FG `qty` is gross and drops
+     * only when goods physically ship, so once an SPB exists the on-hand side has
+     * ALREADY fallen for those goods. A balance still standing against them
+     * subtracts the same unit a second time. See the rule's own comment in
+     * migrateErpStock.ts for the full reasoning — and for why that argument holds
+     * only for a fully-shipped line.
+     *
+     * Off (`false`) disables the rule entirely and nothing else changes: the aged-DO
+     * rule keeps working, and every SPB line stays wherever the liveness rule puts it.
+     */
+    autocloseOnSpb: bool("STOCK_AUTOCLOSE_ON_SPB", true),
+    /**
+     * ST-R22's cross-check, which the PRD proposed and nobody built: a line
+     * qualifies for the SPB rule only if it is FULLY shipped
+     * (`coalesce(qty_delivered,0) >= qty_order`).
+     *
+     * Default ON, and the default is the safety property. A PARTIALLY shipped line
+     * has an SPB *and* a genuine remainder still owed to a customer; auto-closing it
+     * releases stock somebody is actually waiting for — the exact over-promising
+     * failure this module exists to prevent. A fully shipped one has no such
+     * remainder, so its standing balance is a phantom double-count and removing it
+     * restores truth.
+     *
+     * Relaxing it to `false` is a deliberate, measured decision — take the
+     * `totals.autoclosed_spb_partial_held` count from `/summary` first, because that
+     * is exactly the population it would hand to the machine — and boot warns when
+     * it is off.
+     */
+    autocloseSpbRequireFull: bool("STOCK_AUTOCLOSE_SPB_REQUIRE_FULL", true),
+    /**
      * Full-key reconciliation cadence. An incremental `updated_at__gte` pull can
      * structurally never observe a DELETE (PRD §10), so a separate, slower sweep
      * compares the ERP's full key set against the mirror and purges what is gone.

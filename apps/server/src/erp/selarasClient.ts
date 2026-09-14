@@ -143,6 +143,15 @@ export interface SoLineRow extends MirrorRowBase {
   approval: string | null;
   auto_approval: string | null;
   estimate_delivery: string | null; // 'YYYY-MM-DD'; the column is `date`
+  /**
+   * ST-R22 rule 2 — the goods-out document (*Surat Pengantar Barang*). Its mere
+   * PRESENCE is the rule: an SO line carrying one has already left the warehouse.
+   * Blank and the ERP's `'-'` placeholder mean "no document", and the view's
+   * predicate treats them as absent — the adapter keeps whatever the ERP sent.
+   */
+  summary_spb: string | null;
+  /** The delivery-order document. Context on the review screens; no rule reads it. */
+  summary_do: string | null;
   sn_fg: string | null;
   sku_key: string;
   erp_updated_at: Date | null;
@@ -999,6 +1008,10 @@ export function adaptSoLineRow(raw: unknown): SoLineRow | null {
     approval: asText(pick(row, "approval", "approval_status", "approved")),
     auto_approval: asText(pick(row, "auto_approval", "autoApproval", "auto_approve")),
     estimate_delivery: asDateOnly(pick(row, "estimate_delivery", "estimateDelivery", "eta", "tgl_kirim", "estimasi_kirim")),
+    // ST-R22 rule 2. Mirrored as text, exactly as sent: the SPB rule's blank/`'-'`
+    // handling lives in the view predicate (one place), not in four adapters.
+    summary_spb: asText(pick(row, "summary_spb", "summarySpb", "spb", "no_spb", "nomor_spb")),
+    summary_do: asText(pick(row, "summary_do", "summaryDo", "do", "no_do", "nomor_do")),
     sn_fg: asText(pick(row, "sn_fg", "snFg", "serial")), // observed NULL in practice (ST-R5.1)
     sku_key: canonicalSkuKey(parts),
     erp_updated_at: pickUpdatedAt(row),

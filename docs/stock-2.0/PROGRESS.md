@@ -46,3 +46,61 @@ Existing stock module: `routes/stock.ts` 1,243 lines, `db/migrateStock.ts` 172,
 reworded). Assumptions A9–A15 logged in HANDOVER §7.
 **Next action:** WP-2 (ERP client + sync worker), WP-3/WP-4 (ATP engine + routes +
 retirement), WP-7 (tests + rollout) — all now unblocked.
+
+## WP-8 · back-end · 2026-09-14
+**Complete:** ST-R22 rule 2 — the SPB (goods-out) auto-close. `config.ts`
+(+`STOCK_AUTOCLOSE_ON_SPB`, `STOCK_AUTOCLOSE_SPB_REQUIRE_FULL`, both default
+true), `db/migrateErpStock.ts` (mirror columns `summary_spb`/`summary_do`, the
+rule, and the view builder extracted to `buildCommitmentViewSql()` /
+`applyCommitmentViews()` so the rules are testable at non-deployed settings),
+`erp/selarasClient.ts` + `erp/syncWorker.ts` (both columns mirrored end to end),
+`routes/stock-atp.ts` (four new `totals.*` counters, `summary_spb`/`summary_do`/
+`autoclose_reserving` on every commitment row), `.env.example`. 22 new tests
+(465 → 487 green).
+**In flight:** none.
+**Learned:**
+- The rule joins AMENDMENT 20's single `autoclosed` expression as a second
+  disjunct — one predicate, one reinstate path, one segment, §7.6 unchanged.
+  `autoclose_basis` is what distinguishes them, and the aged rule is named first
+  when both fire so an existing row's narration cannot change.
+- This rule MOVES ATP, unlike rule 1. The movement is measured, not argued:
+  `autoclose_reserving` on the view is true exactly for lines the liveness rule
+  would have kept live, and Σ their `qty_balance` IS the delta
+  (`totals.autoclosed_spb_atp_delta`).
+- `summary_spb` is NOT mirrored on existing rows until they are re-synced (the
+  column is new and nullable). NULL is not an SPB, so the rule is a strict no-op
+  over a mirror that has not been re-pulled — see the report's re-sync note.
+- Blank AND the ERP's `'-'` placeholder must both read as "no document"; the
+  predicate trims spaces and dashes, and a real hyphenated number survives.
+- **For the architect:** AMENDMENT 20 states that an undated line is "never"
+  auto-closed. That ruling was about the AGE BASIS (the withdrawn `po_date`
+  fallback). This rule reads a document rather than a date, so an undated line
+  with an SPB IS closed — deliberately, and it is part of the population that
+  moves ATP. CONTRACTS needs an amendment saying so; nothing in CONTRACTS.md was
+  edited here.
+**Next action:** front-end — the Tripwire in AMENDMENT 20 has now fired (a second
+machine-decided population exists), so `Keputusan Sistem` on the Sinkronisasi tab
+is due; the rows already carry `autoclose_basis`, `autoclose_reserving`,
+`summary_spb` and `summary_do` to render it.
+
+
+## Intermittent test — UNRESOLVED, recorded not dismissed · 2026-09-14
+Immediately after the SPB work landed, the suite failed **2 of the first 3 runs**
+with a single unnamed failure, then passed **10 consecutive runs**. The failing
+test could not be captured — by the time a capture harness was in place it had
+stopped reproducing.
+
+**Most likely cause:** fixture residue in the shared `leadscout` database from a
+concurrently-running agent, which later runs cleaned up. `routes.test.ts` and
+`atp.test.ts` isolate by transaction rollback plus an id prefix, but the shared
+database has already caused one silent corruption earlier in this project (a
+prior package's Black Galaxy fixtures polluted an aggregate assertion).
+
+**Why this is not dismissed as a flake:** "flake" is not a root cause. An
+intermittent failure on a suite that gates a deploy is a latent CI problem, and
+the standing rule in this project is that a failure is real until proven
+otherwise. It is recorded here rather than left to be rediscovered.
+
+**Next step when someone picks this up:** run the suite in a loop with
+`--reporter=verbose` capturing full output to a file until it reproduces, then
+fix the isolation rather than the assertion. Do not add a retry.
