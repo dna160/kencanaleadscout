@@ -1107,3 +1107,101 @@ everything it needs: `autoclose_basis`, `autoclose_reserving`, `summary_spb` and
 `summary_do`. Deferred deliberately until after the first full re-sync, so the
 operator gets their numbers before the furniture moves — but it is next, not
 someday.
+
+
+## AMENDMENT 22 — age alone closes a line, whatever its status says
+
+**Ruled after the owner reported five-year-old approved lines still sitting in
+the review queue.** AMENDMENT 20 gated the age arm on `status_order = 'DO'`,
+following the owner's original wording. A line five years past its delivery date
+carrying any *other* status was therefore never looked at, and would have stayed
+in review forever.
+
+**The rule:** with `STOCK_AUTOCLOSE_AGE_ANY_STATUS` (default **true**), a real
+`estimate_delivery` older than `STOCK_AUTOCLOSE_AFTER_DAYS` is sufficient on its
+own. Set it false to restore AMENDMENT 20's status gate exactly.
+
+**Zero ATP impact, proven not argued.** `AUTOCLOSE_AFTER_DAYS` (180) is well
+beyond `STALE_WINDOW_DAYS` (60), so everything the age arm can reach is *already*
+outside `open_commitment`. Widening which statuses it reaches only reaches more
+already-excluded lines. Asserted by building both view variants inside one
+transaction and diffing: across seven statuses at five years old — including one
+in no configured set and one NULL — the promiseable figure is **byte-identical**,
+`committed` is identical, and PRD §5A's Black Galaxy example still reads **3,849**
+with its 1,810 quarantine intact, merely split 1,107 human / 703 machine.
+
+### The boundary that is now load-bearing in three amendments
+
+**`estimate_delivery IS NULL` is never closed by age. This is a rule, not an
+implication, and it must survive the next widening.**
+
+AMENDMENT 20 established it, AMENDMENT 21 scoped it to the *age basis*, and this
+amendment widens the *status* while leaving it untouched. The reasoning has not
+changed and does not weaken: inferring *"no date, therefore old, therefore done"*
+is a **guess about a line we know nothing about**, and it fails in the
+over-promising direction — an undated line is live and reserving, so closing one
+releases its whole balance. Evidence closes a line (AMENDMENT 21's SPB); absence
+never does.
+
+Whoever next widens the status set is precisely the person most likely to reach
+for undated lines as well. **Do not.** They stay reserving and stay in review as
+the owner's audit control.
+
+### Two consequences, both accepted
+
+- **Basis narration flips on a doubly-qualifying line.** A row both past the
+  threshold *and* carrying an SPB now narrates `estimate_delivery` rather than
+  `summary_spb`, and leaves `totals.autoclosed_spb`. Correct rather than a bug —
+  the age statement is genuinely true of that row. The number that matters is
+  unharmed: `autoclosed_spb_atp_delta` sums balances where `autoclose_reserving`
+  is true, and every line the age arm can reach is outside the liveness window,
+  so each one that can flip already contributed zero. Asserted directly.
+- **`segment=stale` is now bounded above by `AUTOCLOSE_AFTER_DAYS`.** An age tier
+  beyond 180 days is structurally empty. Not broken, but operators will notice.
+
+### The change must state its own size
+
+**Raised by the implementing package and upheld.** This moves no stock, but it is
+**not** a no-op: it silently reclassifies the review queue on deploy, into the one
+tab the Tripwire already flags as holding two incompatible kinds of thing.
+AMENDMENT 20 shipped with a screen; AMENDMENT 21 shipped with four counters
+precisely so its consequence was data rather than inference. This one ships with
+`totals.autoclosed_aged_widened` and a boot log line naming the flag, so the size
+of the move is readable before and after rather than discovered by an operator
+opening a shorter queue with no explanation.
+
+**The counter is deliberately independent of the flag**, which makes it a preview
+as well as a measurement. It counts rows past the threshold that the status gate
+would *not* match — so with the flag ON those rows sit in
+`v_autoclosed_commitments` and the number is what the widening **closed**, and
+with it OFF the identical rows sit in `v_stale_commitments` and the same number is
+what it **would** close. Deploy with the flag off, read the figure, turn it on
+against it. It can never land on `v_live_commitments` in either setting, because
+past the threshold implies past the liveness window.
+
+### Resolved: the intermittent test failure
+
+The flake recorded in `PROGRESS.md` on 2026-09-14 is **root-caused and fixed**,
+and it was not fixture residue. The test helper ran `create or replace view` on
+the three **shared** commitment views mid-transaction, taking an ACCESS EXCLUSIVE
+lock on relations the concurrently-running route suite reads — and the two sides
+reached those relations in different orders. A textbook deadlock. The probes now
+build **session-temp** views instead, touching nothing shared. The isolation was
+fixed, not the assertion, which is what the write-up asked for.
+
+
+### The widening, quantified on real fixtures
+
+Against PRD §5A's Black Galaxy population — 76 approved lines, 8 live (319
+sheets), 68 phantoms (1,810), **none carrying `DO`**:
+
+```
+autoclosed_lines: 27    widened_auto: 27      totals.autoclosed_aged_widened = 27
+stale_lines:      41    widened_stale: 0      ATP unchanged at 3,849
+```
+
+27 phantoms — 703 sheets — leave the review queue and the promiseable figure does
+not move. That `autoclosed_lines` and `widened_auto` are **both 27** is the whole
+point: on this population *every* auto-close is one AMENDMENT 20's status gate
+would have missed, because nothing here is `DO`. That is the owner's complaint,
+measured.

@@ -21,11 +21,10 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { canonicalSkuKey, type SkuParts } from "../src/erp/sku.js";
 import { closeDatabase, getSql } from "../src/db/client.js";
 import {
-  applyCommitmentViews,
   buildCommitmentViewSql,
   commitmentRuleConfig,
   type CommitmentRuleConfig,
@@ -40,6 +39,19 @@ const CANCELLED = config.stock.cancelledStatuses;
 const AUTOCLOSE_DAYS = config.stock.autocloseAfterDays;
 const AUTOCLOSE_STATUSES = config.stock.autocloseStatuses;
 const AUTOCLOSE_STATUS = AUTOCLOSE_STATUSES[0] ?? "DO";
+/** AMENDMENT 22 — does the AGE arm need a qualifying `status_order` at all? */
+const AGE_ANY_STATUS = config.stock.autocloseAgeAnyStatus;
+/**
+ * A "stale" ETA age in days: OUTSIDE the liveness window, INSIDE the auto-close
+ * threshold — i.e. a line a HUMAN still owes a decision on.
+ *
+ * AMENDMENT 22 turned this into a narrow band. The age arm now reaches ANY
+ * status, so the arbitrary 400- and 900-day ETAs that used to spell "stale" in
+ * these fixtures now spell "auto-closed" — which is the whole point of the
+ * amendment, and the reason the review queue was full of five-year-old lines.
+ * A fixture that means "in the review queue" must sit inside this band.
+ */
+const STALE_ETA = Math.floor((WINDOW_DAYS + AUTOCLOSE_DAYS) / 2);
 
 /** Everything this file writes is prefixed, so a leaked row is identifiable. */
 const P = "wp7atp";
@@ -73,6 +85,31 @@ async function inRollback<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
   return out;
 }
 
+/**
+ * The three commitment views, built by the REAL builder at settings other than
+ * the deployed ones, as SESSION-TEMPORARY relations named `<view>_probe`.
+ *
+ * NEVER a hand-written predicate (§7.3): this is `buildCommitmentViewSql`, the
+ * same function the server boots from, character for character.
+ *
+ * Why TEMP views rather than `create or replace` over the shipped ones:
+ * replacing a view takes an ACCESS EXCLUSIVE lock on a relation the other suites
+ * are reading concurrently out of this shared database, and the two sides reach
+ * the three views in different orders — a textbook deadlock, and an
+ * intermittently red suite that has nothing to do with the rule under test. A
+ * temp view lives in this session's own `pg_temp` schema, contends with nobody,
+ * and disappears when the wrapping transaction rolls back.
+ */
+async function probeRules(tx: Tx, over: Partial<CommitmentRuleConfig>): Promise<Probe> {
+  for (const [name, body] of buildCommitmentViewSql(commitmentRuleConfig(over))) {
+    await tx.unsafe(`create or replace temp view ${name}_probe as ${body}`);
+  }
+  return "_probe";
+}
+
+/** `""` = the deployed views; `"_probe"` = the alternative ones just built. */
+type Probe = "" | "_probe";
+
 // ── Fixture builders ─────────────────────────────────────────────────────────
 
 // The 2026-09-11 composition: brand|warna|th|th_panel|p|l, where `th` is the
@@ -97,7 +134,13 @@ type LineRow = {
   /** `null` ⇒ undated (AMENDMENT 1). `number` ⇒ days before today. `string` ⇒ literal date. */
   eta: number | string | null;
   approval?: string;
-  status_order?: string;
+  /**
+   * `null` is a real fixture value, not "unset": `status_order` IS nullable in the
+   * mirror, and AMENDMENT 22 has to prove a NULL-status line is handled as a
+   * two-valued boolean rather than dropped out of every set (§7.6). `undefined`
+   * still means "don't care" and gets the historic `'Open'`.
+   */
+  status_order?: string | null;
   parts?: SkuParts;
   so_id?: string;
   /**
@@ -170,7 +213,7 @@ async function seedLines(tx: Tx, rows: readonly LineRow[]): Promise<void> {
         ${Number(parts.th ?? 0)}, ${Number(parts.th_panel ?? 0)},
         ${Number(parts.p ?? 0)}, ${Number(parts.l ?? 0)},
         ${r.qty_order ?? r.qty_balance}, ${r.qty_delivered ?? 0}, ${r.qty_balance},
-        ${r.status_order ?? "Open"}, ${r.approval ?? "Approved"}, ${eta},
+        ${r.status_order === undefined ? "Open" : r.status_order}, ${r.approval ?? "Approved"}, ${eta},
         ${r.summary_spb ?? null}, ${r.summary_do ?? null},
         ${null}, ${canonicalSkuKey(parts)}
       )
@@ -182,6 +225,13 @@ type Atp = {
   on_hand: number;
   committed: number;
   stale_committed: number;
+  /**
+   * ST-R22 · AMENDMENT 22. Σ balances the MACHINE closed. It is not part of the
+   * ATP formula and never has been — it is here so a test can state the whole
+   * quarantine (stale + auto-closed) and prove the widening only ever moves a
+   * balance BETWEEN those two, never into or out of `committed`.
+   */
+  autoclosed_committed: number;
   adjustment: number;
   atp: number;
 };
@@ -191,31 +241,35 @@ type Atp = {
  * `v_live_commitments` — the test never re-states the liveness predicate, so a
  * change to the rule changes this number and the assertions catch it.
  */
-async function atpFor(tx: Tx, skuKey: string): Promise<Atp> {
+async function atpFor(tx: Tx, skuKey: string, v: Probe = ""): Promise<Atp> {
   // Scoped to this suite's own prefix. The database is shared with the other work
   // packages' fixtures, which sit on the same Black Galaxy key; without the scope
   // these assertions would measure somebody else's rows.
+  //
+  // `v` is a closed two-value type, so the only thing spliced into the relation
+  // names is one of two literals this file wrote — the same discipline the view
+  // builder applies to config.
   const like = `${P}%`;
-  const [row] = await tx`
-    select
-      coalesce((select sum(qty)         from erp_live_fg         t where t.sku_key = ${skuKey} and t.erp_row_id like ${like}), 0)::float8 as on_hand,
-      coalesce((select sum(qty_balance) from v_live_commitments  t where t.sku_key = ${skuKey} and t.id    like ${like}), 0)::float8 as committed,
-      coalesce((select sum(qty_balance) from v_stale_commitments t where t.sku_key = ${skuKey} and t.id    like ${like}), 0)::float8 as stale_committed,
-      coalesce((select sum(qty_delta)   from stock_adjustments   t where t.sku_key = ${skuKey} and t.actor like ${like}), 0)::float8 as adjustment
-  `;
+  const [row] = await tx.unsafe(
+    `select
+      coalesce((select sum(qty)         from erp_live_fg                t where t.sku_key = $1 and t.erp_row_id like $2), 0)::float8 as on_hand,
+      coalesce((select sum(qty_balance) from v_live_commitments${v}       t where t.sku_key = $1 and t.id        like $2), 0)::float8 as committed,
+      coalesce((select sum(qty_balance) from v_stale_commitments${v}      t where t.sku_key = $1 and t.id        like $2), 0)::float8 as stale_committed,
+      coalesce((select sum(qty_balance) from v_autoclosed_commitments${v} t where t.sku_key = $1 and t.id        like $2), 0)::float8 as autoclosed_committed,
+      coalesce((select sum(qty_delta)   from stock_adjustments          t where t.sku_key = $1 and t.actor     like $2), 0)::float8 as adjustment`,
+    [skuKey, like],
+  );
   const r = row as Omit<Atp, "atp">;
   return { ...r, atp: r.on_hand - r.committed + r.adjustment };
 }
 
 type CommitmentView = "v_live_commitments" | "v_stale_commitments" | "v_autoclosed_commitments";
 
-async function idsIn(tx: Tx, relation: CommitmentView): Promise<string[]> {
-  const rows =
-    relation === "v_live_commitments"
-      ? await tx`select id from v_live_commitments where id like ${`${P}%`} order by id`
-      : relation === "v_stale_commitments"
-        ? await tx`select id from v_stale_commitments where id like ${`${P}%`} order by id`
-        : await tx`select id from v_autoclosed_commitments where id like ${`${P}%`} order by id`;
+async function idsIn(tx: Tx, relation: CommitmentView, v: Probe = ""): Promise<string[]> {
+  const rows = await tx.unsafe(
+    `select id from ${relation}${v} where id like $1 order by id`,
+    [`${P}%`],
+  );
   return (rows as { id: string }[]).map((r) => r.id);
 }
 
@@ -345,8 +399,14 @@ describe.skipIf(!hasDb)("ATP over the real schema", () => {
         expect(LIVE.length + STALE.length).toBe(76);
         expect(a.on_hand).toBe(4168);
         expect(a.committed).toBe(319);
-        expect(a.stale_committed).toBe(1810);
-        expect(a.committed + a.stale_committed).toBe(2129); // the naive "open" figure
+        // AMENDMENT 22 — the QUARANTINE is still 1,810 to the unit; it is now split
+        // between the two ways a line can be out of the sum. 27 of these phantoms
+        // (the 2020 one and the 26 at 200+ days) are past the auto-close threshold
+        // and, since the age arm no longer asks about status, the machine now closes
+        // them instead of queueing them for a human. NOTHING crossed into or out of
+        // `committed`, which is why the ATP line below is unchanged.
+        expect(a.stale_committed + a.autoclosed_committed).toBe(1810);
+        expect(a.committed + a.stale_committed + a.autoclosed_committed).toBe(2129); // the naive "open" figure
         expect(a.atp).toBe(3849);
 
         // The point of the entire rebuild: the naive readings are wrong.
@@ -355,12 +415,43 @@ describe.skipIf(!hasDb)("ATP over the real schema", () => {
       });
     });
 
+    it("AMENDMENT 22 moves 27 phantoms out of the queue and ATP by exactly zero", async () => {
+      // The property, on the module's canonical example: build the SAME fixtures
+      // under both settings of the flag and compare the promiseable figure. The
+      // review queue shrinks by 703 units of work; ATP does not move by one sheet.
+      await inRollback(async (tx) => {
+        await seedFg(tx, FG);
+        await seedLines(tx, [...LIVE, ...STALE]);
+
+        const off = await probeRules(tx, { autocloseAgeAnyStatus: false });
+        const widened = await atpFor(tx, BG_KEY);
+        const gated = await atpFor(tx, BG_KEY, off);
+
+        // BYTE-IDENTICAL promiseable figure across the widening.
+        expect(widened.atp).toBe(gated.atp);
+        expect(widened.atp - gated.atp).toBe(0);
+        expect(widened.committed).toBe(gated.committed);
+        expect(widened.on_hand).toBe(gated.on_hand);
+
+        // …and the quarantine total is identical too. Only its SPLIT moved.
+        expect(widened.stale_committed + widened.autoclosed_committed)
+          .toBe(gated.stale_committed + gated.autoclosed_committed);
+        expect(gated.autoclosed_committed).toBe(0);     // status-gated: no DO lines here
+        expect(widened.autoclosed_committed).toBe(703); // 27 + 26 × 26
+        expect(widened.stale_committed).toBe(1107);
+      });
+    });
+
     it("the oldest phantom (ETA 2020-08-27) is quarantined, not summed", async () => {
       await inRollback(async (tx) => {
         await seedFg(tx, FG);
         await seedLines(tx, [...LIVE, ...STALE]);
+        // Still never live, still never summed. AMENDMENT 22 changed WHICH
+        // quarantine holds it — six years past its delivery date is not a line a
+        // human owes a decision on — and changed nothing about ATP.
         expect(await idsIn(tx, "v_live_commitments")).not.toContain(`${P}-stale-oldest`);
-        expect(await idsIn(tx, "v_stale_commitments")).toContain(`${P}-stale-oldest`);
+        expect(await idsIn(tx, "v_autoclosed_commitments")).toContain(`${P}-stale-oldest`);
+        expect(await idsIn(tx, "v_stale_commitments")).not.toContain(`${P}-stale-oldest`);
       });
     });
 
@@ -368,8 +459,12 @@ describe.skipIf(!hasDb)("ATP over the real schema", () => {
       await inRollback(async (tx) => {
         await seedFg(tx, FG);
         await seedLines(tx, [...LIVE, ...STALE]);
+        // §7.6 over the three sets: every phantom is in the human queue or the
+        // machine's, and none is in both or neither.
         const stale = await idsIn(tx, "v_stale_commitments");
-        expect(stale.sort()).toEqual(STALE.map((l) => l.id).sort());
+        const auto = await idsIn(tx, "v_autoclosed_commitments");
+        expect([...stale, ...auto].sort()).toEqual(STALE.map((l) => l.id).sort());
+        expect(stale.filter((id) => auto.includes(id))).toEqual([]);
       });
     });
   });
@@ -640,7 +735,7 @@ describe.skipIf(!hasDb)("ATP over the real schema", () => {
     it("closing a stale line removes it from the review queue without touching ATP", async () => {
       await inRollback(async (tx) => {
         await seedFg(tx, [{ sn_fg: `${P}-fg-s`, qty: 100 }]);
-        await seedLines(tx, [{ id: `${P}-stale`, qty_balance: 30, eta: 400 }]);
+        await seedLines(tx, [{ id: `${P}-stale`, qty_balance: 30, eta: STALE_ETA }]);
         const before = await atpFor(tx, BG_KEY);
         expect(before.atp).toBe(100);
         expect(before.stale_committed).toBe(30);
@@ -674,7 +769,7 @@ describe.skipIf(!hasDb)("ATP over the real schema", () => {
     it("closing a STALE line moves ATP by exactly zero", async () => {
       await inRollback(async (tx) => {
         await seedFg(tx, [{ sn_fg: `${P}-fg-6a`, qty: 1000 }]);
-        await seedLines(tx, [{ id: `${P}-6a-stale`, qty_balance: 1200, eta: 900 }]);
+        await seedLines(tx, [{ id: `${P}-6a-stale`, qty_balance: 1200, eta: STALE_ETA }]);
         expect(await closeAndMeasure(tx, `${P}-6a-stale`)).toBe(0);
       });
     });
@@ -703,7 +798,7 @@ describe.skipIf(!hasDb)("ATP over the real schema", () => {
       // unrecoverable from the UI after a reload, because the row is in neither
       // view. Assert the premise; the route-level filter is WP-3's to test.
       await inRollback(async (tx) => {
-        await seedLines(tx, [{ id: `${P}-6c`, qty_balance: 50, eta: 900 }]);
+        await seedLines(tx, [{ id: `${P}-6c`, qty_balance: 50, eta: STALE_ETA }]);
         await tx`
           insert into stock_commitment_overrides (so_line_id, state, reason, actor)
           values (${`${P}-6c`}, 'closed', 'triage', ${ACTOR})
@@ -853,19 +948,24 @@ describe.skipIf(!hasDb)("ATP over the real schema", () => {
       });
     });
 
-    it("a non-DO line is untouched at any age, including 2020", async () => {
+    it("with the status gate ON, a non-DO line is untouched at any age, including 2020", async () => {
+      // AMENDMENT 20's original behaviour, now reachable only with
+      // STOCK_AUTOCLOSE_AGE_ANY_STATUS off (AMENDMENT 22). Kept verbatim as the
+      // OFF contract, so both settings of the flag are pinned rather than one of
+      // them assumed.
       await inRollback(async (tx) => {
+        const off = await probeRules(tx, { autocloseAgeAnyStatus: false });
         await seedLines(tx, [
           { id: `${P}-r22-open-2020`, qty_balance: 9, eta: "2020-08-27" },
           { id: `${P}-r22-waiting-900`, qty_balance: 9, eta: 900, status_order: "Waiting" },
           { id: `${P}-r22-open-live`, qty_balance: 9, eta: 5 },
         ]);
-        expect(await idsIn(tx, "v_autoclosed_commitments")).toEqual([]);
-        expect(await idsIn(tx, "v_stale_commitments")).toEqual([
+        expect(await idsIn(tx, "v_autoclosed_commitments", off)).toEqual([]);
+        expect(await idsIn(tx, "v_stale_commitments", off)).toEqual([
           `${P}-r22-open-2020`,
           `${P}-r22-waiting-900`,
         ]);
-        expect(await idsIn(tx, "v_live_commitments")).toEqual([`${P}-r22-open-live`]);
+        expect(await idsIn(tx, "v_live_commitments", off)).toEqual([`${P}-r22-open-live`]);
       });
     });
 
@@ -929,18 +1029,403 @@ describe.skipIf(!hasDb)("ATP over the real schema", () => {
     });
   });
 
+  // ── AMENDMENT 22 — the age arm stops asking about status ──────────────────
+
+  describe("AMENDMENT 22 — a five-year-old delivery date closes a line whatever its status", () => {
+    /** Five years, the age the product owner was actually looking at. */
+    const FIVE_YEARS = 365 * 5;
+    /**
+     * Several `status_order` values, deliberately including ones that are in NO
+     * configured set — not auto-close, not cancelled — plus a NULL. NULL is the
+     * one that matters structurally: `NULL = any(...)` is NULL, so a careless
+     * predicate drops the row out of EVERY view and silently inflates ATP.
+     */
+    const STATUSES: Array<string | null> = [
+      AUTOCLOSE_STATUS, // in the configured set — unchanged by this amendment
+      "Open",
+      "Waiting",
+      "Proses Produksi",
+      "Done",
+      "", // the empty string, which `coalesce(status_order, '')` also produces
+      null,
+    ];
+
+    const aged = (i: number): string => `${P}-a22-aged-${i}`;
+
+    it("the flag is config, defaults ON, and the ordering that makes it safe still holds", () => {
+      expect(AGE_ANY_STATUS).toBe(true);
+      // The ENTIRE zero-delta guarantee: the age arm can only ever reach lines
+      // that already failed the liveness window. Widening WHICH statuses it
+      // reaches cannot change that, but inverting THIS would.
+      expect(AUTOCLOSE_DAYS).toBeGreaterThan(WINDOW_DAYS);
+      expect(STALE_ETA).toBeGreaterThan(WINDOW_DAYS);
+      expect(STALE_ETA).toBeLessThan(AUTOCLOSE_DAYS);
+    });
+
+    it("boot still warns when the auto-close threshold is at or below the stale window", () => {
+      // The warning is the only thing standing between a config typo and a machine
+      // releasing live reservations, so assert it fires — at the boundary (equal,
+      // which is NOT above) and below it — and stays silent at the shipped values.
+      // Asserted against the real builder; a test must never re-spell the rule.
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        warn.mockClear();
+        buildCommitmentViewSql(commitmentRuleConfig({ autocloseAfterDays: WINDOW_DAYS }));
+        expect(warn.mock.calls.flat().join(" ")).toContain("STOCK_AUTOCLOSE_AFTER_DAYS");
+
+        warn.mockClear();
+        buildCommitmentViewSql(commitmentRuleConfig({ autocloseAfterDays: WINDOW_DAYS - 1 }));
+        expect(warn.mock.calls.flat().join(" ")).toContain("STOCK_STALE_WINDOW_DAYS");
+
+        // …and the widening itself does not make it fire. It is the ORDERING that
+        // is warned about, not which statuses the age arm reaches.
+        warn.mockClear();
+        buildCommitmentViewSql(commitmentRuleConfig({ autocloseAgeAnyStatus: true }));
+        expect(warn.mock.calls.flat().join(" ")).not.toContain("STOCK_AUTOCLOSE_AFTER_DAYS");
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it("five-year-old lines are auto-closed at EVERY status, including a NULL one", async () => {
+      await inRollback(async (tx) => {
+        await seedLines(
+          tx,
+          STATUSES.map((st, i) => ({
+            id: aged(i),
+            qty_balance: 10,
+            eta: FIVE_YEARS,
+            status_order: st,
+          })),
+        );
+        // All of them, not merely "most of them": a NULL or empty status must not
+        // leak a NULL through the predicate and drop the row out of every set.
+        expect(await idsIn(tx, "v_autoclosed_commitments")).toEqual(STATUSES.map((_, i) => aged(i)));
+        expect(await idsIn(tx, "v_stale_commitments")).toEqual([]);
+        expect(await idsIn(tx, "v_live_commitments")).toEqual([]);
+
+        // Every one of them states the AGE as its grounds — not the document rule.
+        const rows = await tx`
+          select distinct autoclose_basis, autoclose_reserving
+          from v_autoclosed_commitments where id like ${`${P}-a22-%`}
+        `;
+        expect(rows).toEqual([{ autoclose_basis: "estimate_delivery", autoclose_reserving: false }]);
+      });
+    });
+
+    it("THE PROPERTY: the promiseable figure is byte-identical across the widening", async () => {
+      // Not argued — measured, over the whole widened population, by building the
+      // real views both ways inside one transaction. Anything but 0 means the
+      // machine released stock somebody is owed.
+      await inRollback(async (tx) => {
+        await seedFg(tx, [{ sn_fg: `${P}-a22-fg`, qty: 1000 }]);
+        await seedLines(tx, [
+          // The widened population: aged out, at statuses the old rule never looked at.
+          ...STATUSES.map((st, i) => ({
+            id: aged(i),
+            qty_balance: 10,
+            eta: FIVE_YEARS,
+            status_order: st,
+          })),
+          // …alongside every population the rule must NOT touch, so the comparison
+          // is over a realistic mirror rather than the widened rows alone.
+          { id: `${P}-a22-live`, qty_balance: 40, eta: 5 },
+          { id: `${P}-a22-undated`, qty_balance: 25, eta: null, status_order: "Waiting" },
+          { id: `${P}-a22-stale`, qty_balance: 15, eta: STALE_ETA, status_order: "Proses Produksi" },
+        ]);
+
+        const off = await probeRules(tx, { autocloseAgeAnyStatus: false });
+        const widened = await atpFor(tx, BG_KEY);
+        const gated = await atpFor(tx, BG_KEY, off);
+
+        expect(widened.atp).toBe(gated.atp);
+        expect(widened.atp - gated.atp).toBe(0);
+        expect(widened.committed).toBe(gated.committed);
+        expect(widened.committed).toBe(65); // the live 40 + the undated 25, both ways
+
+        // What DID move: review work, and only review work. Seven aged lines at 10
+        // each leave the human queue for the machine's, and the quarantine total
+        // is unchanged to the unit.
+        expect(gated.autoclosed_committed).toBe(10);      // only the DO line, under the gate
+        expect(widened.autoclosed_committed).toBe(70);    // all seven statuses
+        expect(widened.stale_committed + widened.autoclosed_committed)
+          .toBe(gated.stale_committed + gated.autoclosed_committed);
+      });
+    });
+
+    it("a five-year-old UNDATED line is STILL not closed — AMENDMENT 21's boundary", async () => {
+      // The boundary that must not move with the status. AMENDMENT 21 scoped
+      // AMENDMENT 20's "never" to the AGE BASIS precisely because inferring from an
+      // ABSENT date is a guess, in the over-promising direction. Widening the
+      // STATUS does not license widening to undated lines: closing one RAISES ATP
+      // by its whole balance.
+      await inRollback(async (tx) => {
+        await seedFg(tx, [{ sn_fg: `${P}-a22-fg-u`, qty: 100 }]);
+        await seedLines(
+          tx,
+          STATUSES.map((st, i) => ({
+            id: `${P}-a22-undated-${i}`,
+            qty_balance: 10,
+            eta: null,
+            status_order: st,
+            so_id: `${P}-a22-so-oldpo`,
+            po_date_days_ago: FIVE_YEARS, // and an ancient order date does not help
+          })),
+        );
+        expect(await idsIn(tx, "v_autoclosed_commitments")).toEqual([]);
+        expect(await idsIn(tx, "v_live_commitments"))
+          .toEqual(STATUSES.map((_, i) => `${P}-a22-undated-${i}`));
+
+        // Still reserving — all seven of them — and still visibly over-committed.
+        const a = await atpFor(tx, BG_KEY);
+        expect(a.committed).toBe(70);
+        expect(a.atp).toBe(30);
+        expect(a.autoclosed_committed).toBe(0);
+      });
+    });
+
+    it("a 100-day-old line is still a human's decision, at every status", async () => {
+      // Inside the threshold, so the age arm does not reach it however wide its
+      // status net is. This is the line the owner still has to look at.
+      await inRollback(async (tx) => {
+        await seedLines(
+          tx,
+          STATUSES.map((st, i) => ({
+            id: `${P}-a22-mid-${i}`,
+            qty_balance: 10,
+            eta: 100,
+            status_order: st,
+          })),
+        );
+        expect(100).toBeGreaterThan(WINDOW_DAYS);
+        expect(100).toBeLessThan(AUTOCLOSE_DAYS);
+        expect(await idsIn(tx, "v_autoclosed_commitments")).toEqual([]);
+        expect(await idsIn(tx, "v_stale_commitments"))
+          .toEqual(STATUSES.map((_, i) => `${P}-a22-mid-${i}`));
+      });
+    });
+
+    it("the flag OFF restores AMENDMENT 20 exactly — only the configured statuses age out", async () => {
+      await inRollback(async (tx) => {
+        const off = await probeRules(tx, { autocloseAgeAnyStatus: false });
+        await seedLines(
+          tx,
+          STATUSES.map((st, i) => ({
+            id: aged(i),
+            qty_balance: 10,
+            eta: FIVE_YEARS,
+            status_order: st,
+          })),
+        );
+        // Index 0 is the configured auto-close status; every other status is back
+        // in the human queue, which is where AMENDMENT 20 left it.
+        expect(await idsIn(tx, "v_autoclosed_commitments", off)).toEqual([aged(0)]);
+        expect(await idsIn(tx, "v_stale_commitments", off))
+          .toEqual(STATUSES.slice(1).map((_, i) => aged(i + 1)));
+        expect(await idsIn(tx, "v_live_commitments", off)).toEqual([]);
+      });
+    });
+
+    it("reinstate is unchanged — ST-R21 lifts a widened close exactly like any other", async () => {
+      await inRollback(async (tx) => {
+        await seedFg(tx, [{ sn_fg: `${P}-a22-fg-r`, qty: 500 }]);
+        // A status the auto-close set has never contained, so this row is closed
+        // ONLY because of AMENDMENT 22.
+        await seedLines(tx, [
+          { id: `${P}-a22-reinstate`, qty_balance: 60, eta: FIVE_YEARS, status_order: "Proses Produksi" },
+        ]);
+        expect(await idsIn(tx, "v_autoclosed_commitments")).toEqual([`${P}-a22-reinstate`]);
+        const closed = await atpFor(tx, BG_KEY);
+
+        await tx`
+          insert into stock_commitment_overrides (so_line_id, state, reason, actor)
+          values (${`${P}-a22-reinstate`}, 'reinstated', 'PPIC: belum dikirim', ${ACTOR})
+        `;
+        const reinstated = await atpFor(tx, BG_KEY);
+
+        // Back to the liveness rule, which puts it in the stale queue — and the
+        // round trip across the rule's boundary moves ATP by zero in BOTH directions.
+        expect(await idsIn(tx, "v_autoclosed_commitments")).toEqual([]);
+        expect(await idsIn(tx, "v_stale_commitments")).toEqual([`${P}-a22-reinstate`]);
+        expect(reinstated.atp).toBe(closed.atp);
+        expect(reinstated.atp - closed.atp).toBe(0);
+        expect(reinstated.stale_committed).toBe(60);
+        expect(closed.stale_committed).toBe(0);
+      });
+    });
+
+    it("cancelled and unapproved lines still enter no set, at five years and any status", async () => {
+      // The widening must not become a back door: these are filtered out by the
+      // spine's WHERE before the auto-close predicate is ever evaluated.
+      await inRollback(async (tx) => {
+        await seedLines(tx, [
+          { id: `${P}-a22-dead-1`, qty_balance: 5, eta: FIVE_YEARS, status_order: CANCELLED[0] ?? "Cancelled" },
+          { id: `${P}-a22-dead-2`, qty_balance: 5, eta: FIVE_YEARS, status_order: "Waiting", approval: "Waiting" },
+          { id: `${P}-a22-dead-3`, qty_balance: 0, eta: FIVE_YEARS, status_order: null },
+        ]);
+        expect(await idsIn(tx, "v_autoclosed_commitments")).toEqual([]);
+        expect(await idsIn(tx, "v_stale_commitments")).toEqual([]);
+        expect(await idsIn(tx, "v_live_commitments")).toEqual([]);
+      });
+    });
+
+    it("the boot log announces the widening when it is on, and says nothing when it is off", async () => {
+      // The change is ATP-neutral but it is NOT invisible: it moves lines out of
+      // the queue a human works. An operator must never learn that by noticing
+      // their queue got shorter overnight, so boot says it and names the counter.
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        warn.mockClear();
+        buildCommitmentViewSql(commitmentRuleConfig({ autocloseAgeAnyStatus: true }));
+        const on = warn.mock.calls.flat().join(" ");
+        expect(on).toContain("STOCK_AUTOCLOSE_AGE_ANY_STATUS");
+        expect(on).toContain("totals.autoclosed_aged_widened"); // where to read the size
+        expect(on).toContain("RELEASES NO STOCK");              // and what it does not do
+
+        warn.mockClear();
+        buildCommitmentViewSql(commitmentRuleConfig({ autocloseAgeAnyStatus: false }));
+        expect(warn.mock.calls.flat().join(" ")).not.toContain("STOCK_AUTOCLOSE_AGE_ANY_STATUS");
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it("the counter sizes the widening in BOTH settings — the same rows, wherever they sit", async () => {
+      // `totals.autoclosed_aged_widened` is what lets the owner turn this on
+      // against a figure instead of a hope, so the property that matters is that
+      // it counts the SAME population with the flag off as with it on. Off, those
+      // rows are in the stale queue; on, they are in the machine's set. Asserted
+      // over both, from the views' own flag — never a re-spelled rule.
+      const C = `${P}-a22-c`;
+      await inRollback(async (tx) => {
+        await seedLines(tx, [
+          // Seven five-year-old lines. Index 0 is the CONFIGURED auto-close status,
+          // so it is not part of the widening; the other six are exactly the
+          // population AMENDMENT 22 added.
+          ...STATUSES.map((st, i) => ({
+            id: `${C}-old-${i}`,
+            qty_balance: 10,
+            eta: FIVE_YEARS,
+            status_order: st,
+          })),
+          // Everything the counter must NOT pick up.
+          { id: `${C}-mid`, qty_balance: 10, eta: STALE_ETA, status_order: "Waiting" },
+          { id: `${C}-live`, qty_balance: 10, eta: 5, status_order: "Waiting" },
+          { id: `${C}-undated`, qty_balance: 10, eta: null, status_order: "Waiting" },
+        ]);
+        const off = await probeRules(tx, { autocloseAgeAnyStatus: false });
+
+        const widenedIn = async (relation: CommitmentView, v: Probe): Promise<number> => {
+          const rows = await tx.unsafe(
+            `select count(*)::text as n from ${relation}${v}
+              where id like $1 and autoclose_aged_widened`,
+            [`${C}%`],
+          );
+          return Number((rows as { n: string }[])[0]!.n);
+        };
+
+        // ON: the widened rows are in the machine's set, and nowhere else.
+        expect(await widenedIn("v_autoclosed_commitments", "")).toBe(6);
+        expect(await widenedIn("v_stale_commitments", "")).toBe(0);
+
+        // OFF: the identical six rows, still in the queue a human works.
+        expect(await widenedIn("v_stale_commitments", off)).toBe(6);
+        expect(await widenedIn("v_autoclosed_commitments", off)).toBe(0);
+
+        // So the figure /summary adds up is the same either way — which is what
+        // makes it a preview as well as a measurement.
+        const total = async (v: Probe): Promise<number> =>
+          (await widenedIn("v_autoclosed_commitments", v)) + (await widenedIn("v_stale_commitments", v));
+        expect(await total("")).toBe(await total(off));
+        expect(await total("")).toBe(6);
+
+        // It can never land on the live view, in either setting: past the
+        // auto-close threshold implies past the liveness window.
+        expect(await widenedIn("v_live_commitments", "")).toBe(0);
+        expect(await widenedIn("v_live_commitments", off)).toBe(0);
+      });
+    });
+
+    it("a line that is BOTH aged and SPB now states the age — and the SPB ATP counter is untouched", async () => {
+      // A CONSEQUENCE the /summary counters inherit, pinned so it is deliberate
+      // rather than discovered. `autoclose_basis` names the aged rule first, and
+      // AMENDMENT 22 widened which lines that rule reaches — so a line carrying an
+      // SPB *and* an ETA past the threshold now narrates 'estimate_delivery' where
+      // it used to narrate 'summary_spb', and `totals.autoclosed_spb` counts it no
+      // longer.
+      //
+      // WHAT THIS CANNOT DISTURB, and it is the number that matters:
+      // `autoclosed_spb_atp_delta` sums balances where `autoclose_reserving` is
+      // true, and a line the age arm can reach is by construction outside the
+      // liveness window — so every line that can flip has `autoclose_reserving =
+      // false` and contributed zero to that delta before and after. The SPB rule's
+      // measured ATP effect is exactly as correct as it was.
+      await inRollback(async (tx) => {
+        await seedLines(tx, [
+          // Both rules fire. Aged wins the narration; it was never reserving.
+          {
+            id: `${P}-a22-both`, qty_balance: 9, eta: FIVE_YEARS, status_order: "Waiting",
+            qty_order: 9, qty_delivered: 9, summary_spb: "SPB/A22/1",
+          },
+          // SPB only — inside the window, live and reserving. Untouched by the
+          // widening, and still the row the SPB delta is measured from.
+          {
+            id: `${P}-a22-spb-live`, qty_balance: 9, eta: 5, status_order: "Waiting",
+            qty_order: 9, qty_delivered: 9, summary_spb: "SPB/A22/2",
+          },
+        ]);
+        const rows = await tx`
+          select id, autoclose_basis, autoclose_reserving, has_spb
+          from v_autoclosed_commitments where id like ${`${P}-a22-%`} order by id
+        `;
+        expect(rows).toEqual([
+          // Still closed, still carrying its document — only the grounds changed.
+          { id: `${P}-a22-both`, autoclose_basis: "estimate_delivery", autoclose_reserving: false, has_spb: true },
+          { id: `${P}-a22-spb-live`, autoclose_basis: "summary_spb", autoclose_reserving: true, has_spb: true },
+        ]);
+      });
+    });
+
+    it("the three-way partition still holds over the widened population", async () => {
+      await inRollback(async (tx) => {
+        await seedLines(tx, [
+          ...STATUSES.map((st, i) => ({
+            id: aged(i),
+            qty_balance: 10,
+            eta: FIVE_YEARS,
+            status_order: st,
+          })),
+          { id: `${P}-a22-p-live`, qty_balance: 1, eta: 5, status_order: "Waiting" },
+          { id: `${P}-a22-p-undated`, qty_balance: 1, eta: null, status_order: null },
+          { id: `${P}-a22-p-stale`, qty_balance: 1, eta: STALE_ETA, status_order: "Done" },
+        ]);
+        const [live, stale, auto] = [
+          await idsIn(tx, "v_live_commitments"),
+          await idsIn(tx, "v_stale_commitments"),
+          await idsIn(tx, "v_autoclosed_commitments"),
+        ];
+        const universe = (
+          await tx`
+            select id from erp_so_line
+            where id like ${`${P}-a22-%`} and qty_balance > 0
+              and approval = any (${config.stock.approvedStatuses as string[]})
+              and coalesce(status_order, '') <> all (${CANCELLED as string[]})
+            order by id
+          `
+        ).map((r: { id: string }) => r.id);
+
+        const classified = [...live, ...stale, ...auto].sort();
+        expect(classified).toEqual([...universe].sort());          // covering
+        expect(new Set(classified).size).toBe(classified.length);  // and disjoint
+      });
+    });
+  });
+
   // ── ST-R22 rule 2 — the SPB (goods-out) auto-close ───────────────────────
 
   describe("ST-R22 rule 2 — a line carrying an SPB has already left the warehouse", () => {
     /** A realistic goods-out document number. Its PRESENCE is the whole rule. */
     const SPB = "SPB/2026/09/0042";
-
-    /** Views built from the real builder at knobs other than the deployed ones. */
-    async function withRules(tx: Tx, over: Partial<CommitmentRuleConfig>): Promise<void> {
-      // NEVER a hand-written predicate: this is the shipped builder, so a test at
-      // REQUIRE_FULL=false is still testing the rule the server would run (§7.3).
-      await applyCommitmentViews(tx, buildCommitmentViewSql(commitmentRuleConfig(over)));
-    }
 
     it("the knobs are config, and both default to the SAFE reading", () => {
       expect(config.stock.autocloseOnSpb).toBe(true);
@@ -1139,10 +1624,10 @@ describe.skipIf(!hasDb)("ATP over the real schema", () => {
           },
         ]);
         const held = await atpFor(tx, BG_KEY);
-        await withRules(tx, { autocloseSpbRequireFull: false });
-        const released = await atpFor(tx, BG_KEY);
+        const relaxed = await probeRules(tx, { autocloseSpbRequireFull: false });
+        const released = await atpFor(tx, BG_KEY, relaxed);
 
-        expect(await idsIn(tx, "v_autoclosed_commitments")).toEqual([`${P}-spb-partial`]);
+        expect(await idsIn(tx, "v_autoclosed_commitments", relaxed)).toEqual([`${P}-spb-partial`]);
         // The relaxation's price, stated as a number: 150 lembar of stock that is
         // still owed to somebody becomes promiseable again.
         expect(released.atp - held.atp).toBe(150);
@@ -1161,9 +1646,9 @@ describe.skipIf(!hasDb)("ATP over the real schema", () => {
             summary_spb: SPB,
           },
         ]);
-        await withRules(tx, { autocloseOnSpb: false });
-        expect(await idsIn(tx, "v_autoclosed_commitments")).toEqual([]);
-        expect(await idsIn(tx, "v_live_commitments")).toEqual([`${P}-spb-off`]);
+        const noSpb = await probeRules(tx, { autocloseOnSpb: false });
+        expect(await idsIn(tx, "v_autoclosed_commitments", noSpb)).toEqual([]);
+        expect(await idsIn(tx, "v_live_commitments", noSpb)).toEqual([`${P}-spb-off`]);
       });
     });
 
@@ -1347,7 +1832,12 @@ describe.skipIf(!hasDb)("ATP over the real schema", () => {
       { id: `${P}-p-undated-2`, qty_balance: 4, eta: null, parts: { ...BLACK_GALAXY, p: 3660 } },
       // stale
       { id: `${P}-p-stale-edge`, qty_balance: 3, eta: WINDOW_DAYS + 1 },
+      // AMENDMENT 22 — a non-DO line six years past its delivery date. It used to
+      // sit in the human queue forever; the age arm no longer asks about status,
+      // so the machine closes it. Kept here precisely so the partition covers it.
       { id: `${P}-p-stale-2020`, qty_balance: 3, eta: "2020-08-27" },
+      // …and a non-DO line INSIDE the threshold, which is still a human's call.
+      { id: `${P}-p-stale-mid`, qty_balance: 3, eta: STALE_ETA, status_order: "Proses Produksi" },
       // A DO line INSIDE the auto-close threshold: still a human's decision.
       { id: `${P}-p-stale-do`, qty_balance: 3, eta: AUTOCLOSE_DAYS - 1, status_order: "DO" },
       // autoclosed (ST-R22) — DO, and past the threshold
@@ -1539,7 +2029,7 @@ describe.skipIf(!hasDb)("ATP over the real schema", () => {
         await seedLines(tx, [
           { id: `${P}-i-live`, qty_balance: 15, eta: 5 },
           { id: `${P}-i-live2`, qty_balance: 5, eta: 50 },
-          { id: `${P}-i-stale`, qty_balance: 99, eta: 400 },
+          { id: `${P}-i-stale`, qty_balance: 99, eta: STALE_ETA },
         ]);
         await tx`
           insert into stock_adjustments (sku_key, qty_delta, reason, actor)
