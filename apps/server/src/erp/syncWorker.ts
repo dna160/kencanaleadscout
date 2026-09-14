@@ -23,13 +23,21 @@
  * `selarasClient.fetchPage()` resolves rather than rejects, so an ERP outage
  * costs a log line and a stale banner, not the process.
  *
- * CRASH SAFETY: the `running` flag is the overlap guard, and a `running` row
- * whose last activity is older than 3× the sync interval is treated as abandoned
- * and reclaimed. Without that, one SIGKILL mid-run would disable sync forever.
+ * CRASH SAFETY: the `running` flag is the overlap guard, and it is given back
+ * three ways, fastest first. (1) `stopErpSync()` releases it on SIGTERM — the
+ * ordinary deploy, and the only one of the three that costs nothing. (2) A guard
+ * held by a DIFFERENT owner token whose heartbeat stopped ~1 min ago is
+ * reclaimed — SIGKILL, OOM, a hard crash. (3) A `running` row whose last
+ * activity is older than 3× the sync interval is treated as abandoned — the
+ * backstop, and the only rule that reaches a guard carrying no heartbeat at all.
+ * None of the three can hand two processes the same tables: they decide only
+ * WHETHER a row is claimable, and the claim itself is still one atomic
+ * `for update` statement over all four rows (see `acquireLock`).
  *
  * SECRETS: every string this file emits goes through `redactSecrets()` (invariant
  * §7.9). The ERP token is never read here at all — it lives in the client.
  */
+import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { config, hasDatabase, hasErp } from "../config.js";
 import { getSql, type Sql } from "../db/client.js";
@@ -60,8 +68,83 @@ type AnySql = Sql | postgres.TransactionSql<{}>;
  */
 const MAX_PAGES_PER_TABLE = 1_000;
 
-/** A `running` row idle for this many intervals is a crashed run, not a live one. */
+/**
+ * A `running` row idle for this many intervals is a crashed run, not a live one.
+ *
+ * THE BACKSTOP, and it stays. It is the only rule that can recover a guard left
+ * by a process that wrote no owner token at all — a build from before the token
+ * existed, or a row hand-set in psql — and it is what the heartbeat rule below
+ * degrades to when `lock_heartbeat_at` is null. It is slow (9 min at the default
+ * 180s interval) because it infers liveness from work, and work can legitimately
+ * go quiet; the heartbeat below is the fast path precisely because it does not.
+ */
 const STALE_LOCK_INTERVALS = 3;
+
+/**
+ * THE LOCK OWNER TOKEN — one per process, minted at import.
+ *
+ * The guard's job is "never two syncs at once". Everything below exists so that
+ * a SECOND question can also be answered — "is the holder still there?" — which
+ * `running = true` on its own cannot answer, and which is the entire reason a
+ * deploy used to cost nine minutes of skipped ticks.
+ *
+ * Two properties matter and both are load-bearing:
+ *
+ *   UNIQUE PER PROCESS START. `pid` alone is not enough: containers are replaced
+ *   and pids repeat, and a new process inheriting the pid of the one it replaced
+ *   would read the dead process's guard as its own and "release" it while a
+ *   third party was legitimately holding it. The uuid removes that entirely.
+ *
+ *   COMPARED, NEVER PARSED. Nothing reads the pid back out of it. It is an
+ *   opaque equality token, so it can never become a source of authority — the
+ *   only questions asked of it are "is this row mine?" and "is this row NOT
+ *   mine?". It carries no secret and is safe in a log line.
+ */
+export const LOCK_OWNER = `${process.pid}:${randomUUID()}`;
+
+/**
+ * How often the holder re-stamps `lock_heartbeat_at` while it holds the guard.
+ *
+ * Deliberately independent of how the sync itself is going. `last_ok_at` only
+ * moves when a page COMMITS, so it says "the ERP is answering", not "the process
+ * is alive" — a run stuck on one slow page is alive and silent, which is exactly
+ * the case the 3×interval window had to be wide enough to tolerate. A timer has
+ * no such coupling: it keeps ticking through a slow ERP, a retry, a long
+ * transaction. That decoupling is what buys the short reclaim window below.
+ */
+const LOCK_HEARTBEAT_MS = 15_000;
+
+/**
+ * A guard held by a DIFFERENT owner whose heartbeat stopped this long ago is
+ * reclaimable. Four missed beats: generous enough that an event loop briefly
+ * busy, or one slow UPDATE, cannot make a live holder look dead, short enough
+ * that a SIGKILLed container costs a minute instead of nine.
+ *
+ * A missing heartbeat is NOT treated as a dead one — see `acquireLock`.
+ */
+const LOCK_RECLAIM_MS = LOCK_HEARTBEAT_MS * 4;
+
+/**
+ * How long `stopErpSync()` waits for a run started by THIS process to finish
+ * before giving up on releasing the guard cleanly. An ordinary incremental pass
+ * is seconds; this is sized to cover that and still leave room inside the
+ * signal-to-SIGKILL grace period Railway allows.
+ */
+const SHUTDOWN_DRAIN_MS = 5_000;
+
+/**
+ * Boot fast-path. A rolling deploy overlaps the two containers, so the new
+ * process's very first tick can land while the outgoing one is still mid-run and
+ * legitimately holding the guard. Without this the next attempt is a full
+ * interval away (180s) even though the guard is usually free within seconds of
+ * SIGTERM. Retries are capped and only ever happen at boot.
+ *
+ * The total retry window is sized to just outrun `LOCK_RECLAIM_MS` — 90s covers
+ * the worst case where the predecessor was SIGKILLed one heartbeat before dying,
+ * so its guard does not become reclaimable until ~60s after boot.
+ */
+const BOOT_RETRY_MS = 10_000;
+const BOOT_RETRY_ATTEMPTS = 9;
 
 /**
  * HEARTBEAT CADENCE for a full re-pull, in pages.
@@ -433,16 +516,47 @@ async function readCursor(db: Sql, table: SelarasTable): Promise<Date | null> {
 }
 
 /**
- * Acquire the run guard over all three rows atomically, or acquire nothing.
+ * Acquire the run guard over all four rows atomically, or acquire nothing.
  *
- * A row counts as available when it is not running, OR when it is running but
- * has recorded no activity (`last_ok_at` / `last_error_at`) for 3× the interval —
- * a crashed run. Every committed page stamps `last_ok_at` and every failure
- * stamps `last_error_at`, so a genuinely live run always refreshes one of them
- * well inside the window; only an abandoned lock goes quiet.
+ * A row is available when it is FREE (`running = false`) — the ordinary case —
+ * or when its holder is, by one of two independent readings, not there any more.
+ * Those two readings sit UNDER a single veto, and the shape matters:
  *
- * The schema (WP-1, frozen) has no `running_since` column, hence the activity
- * timestamps standing in for one — see the report's challenge note.
+ *   THE VETO — a fresh heartbeat means hands off, full stop. Nothing below is
+ *   even consulted unless `lock_heartbeat_at` is null or older than
+ *   `LOCK_RECLAIM_MS`. This is the one place the guard got STRICTER: previously a
+ *   holder that was alive but had recorded no successful page for 3× the interval
+ *   (a slow ERP, a long retry, a big transaction) could be reclaimed out from
+ *   under itself, because "has done no work lately" was being read as "is dead".
+ *   A heartbeat separates those two, so now it says what it means.
+ *
+ *   READING 1 — ACTIVITY-STALE. No `last_ok_at` / `last_error_at` for 3× the
+ *   interval. The original crash-safety rule, and still the ONLY rule that can
+ *   reach a guard carrying no heartbeat at all: a pre-owner-token build, or a row
+ *   set by hand in psql. Nine minutes at the default interval.
+ *
+ *   READING 2 — THE HEARTBEAT STOPPED. The row is held by a token that is NOT
+ *   ours and it DID carry a heartbeat, which has now gone quiet past the window.
+ *   A live holder re-stamps every 15s on a timer that does not depend on the ERP
+ *   answering, so four consecutive misses means the process that set it is gone.
+ *   One minute instead of nine, and this is the rule a deploy actually lands on.
+ *
+ * Reading 2 requires `lock_heartbeat_at is not null` on purpose: a MISSING
+ * heartbeat is "this holder never promised to heartbeat", not "this holder is
+ * dead". Reclaiming on absence would make every legacy lock, and every row in the
+ * instant between acquiring and the first beat, a free-for-all — precisely the
+ * failure this guard exists to prevent.
+ *
+ * `lock_owner is distinct from` (not `<>`) because null-vs-token must compare as
+ * "different", which `<>` would answer NULL for, and NULL is not true.
+ *
+ * WHY A RECLAIM CANNOT DOUBLE-GRANT. The readings above only decide CANDIDACY;
+ * the mutual exclusion is still the `for update` + re-tested UPDATE quals below,
+ * exactly as before. Two processes booting together both read the same abandoned
+ * row as a candidate; the second blocks on `for update` until the first commits,
+ * then re-reads a row whose heartbeat is `now()` and whose owner is the winner —
+ * so the veto fires and it claims nothing. The window is closed by the row lock,
+ * not by the freshness of the read.
  */
 async function acquireLock(db: Sql, intervalMs: number): Promise<boolean> {
   const staleMs = Math.max(1, Math.floor(intervalMs * STALE_LOCK_INTERVALS));
@@ -453,8 +567,15 @@ async function acquireLock(db: Sql, intervalMs: number): Promise<boolean> {
        where table_name = any(${[...SYNC_TABLES]})
          and (
            running = false
-           or coalesce(greatest(last_ok_at, last_error_at), to_timestamp(0))
-              < now() - (${staleMs}::bigint * interval '1 millisecond')
+           or (
+             (lock_heartbeat_at is null
+              or lock_heartbeat_at < now() - (${LOCK_RECLAIM_MS}::bigint * interval '1 millisecond'))
+             and (
+               coalesce(greatest(last_ok_at, last_error_at), to_timestamp(0))
+                 < now() - (${staleMs}::bigint * interval '1 millisecond')
+               or (lock_owner is distinct from ${LOCK_OWNER}::text and lock_heartbeat_at is not null)
+             )
+           )
          )
          -- FOR UPDATE serialises two concurrent claimants on these three rows:
          -- the second blocks here until the first commits, and then re-reads.
@@ -470,25 +591,87 @@ async function acquireLock(db: Sql, intervalMs: number): Promise<boolean> {
          for update
     )
     update erp_sync_state s
-       set running = true
+       set running = true,
+           lock_owner = ${LOCK_OWNER},
+           lock_heartbeat_at = now()
       from candidate c
      where s.table_name = c.table_name
        and (select count(*) from candidate) = ${SYNC_TABLES.length}
        and (
          s.running = false
-         or coalesce(greatest(s.last_ok_at, s.last_error_at), to_timestamp(0))
-            < now() - (${staleMs}::bigint * interval '1 millisecond')
+         or (
+           (s.lock_heartbeat_at is null
+            or s.lock_heartbeat_at < now() - (${LOCK_RECLAIM_MS}::bigint * interval '1 millisecond'))
+           and (
+             coalesce(greatest(s.last_ok_at, s.last_error_at), to_timestamp(0))
+               < now() - (${staleMs}::bigint * interval '1 millisecond')
+             or (s.lock_owner is distinct from ${LOCK_OWNER}::text and s.lock_heartbeat_at is not null)
+           )
+         )
        )
     returning s.table_name
   `;
-  return claimed.length === SYNC_TABLES.length;
+  const acquired = claimed.length === SYNC_TABLES.length;
+  if (acquired) startLockHeartbeat(db);
+  return acquired;
 }
 
-async function releaseLock(db: Sql): Promise<void> {
-  await db`
-    update erp_sync_state set running = false
+/**
+ * Release ONLY the rows this process actually owns.
+ *
+ * The unqualified `set running = false` this replaces was correct while the only
+ * caller was the tail of a run that had just acquired the lock. It stops being
+ * correct the moment shutdown can call it: a process that acquired nothing would
+ * clear a SIBLING's guard on its way out and hand two containers the same tables.
+ * The `lock_owner` qual makes that impossible to express.
+ *
+ * It also covers the rarer case where we were reclaimed mid-run: the row no
+ * longer carries our token, so we do not clobber whoever now holds it — we leave
+ * quietly, and the count we return says how many rows were actually ours.
+ */
+async function releaseLock(db: Sql): Promise<number> {
+  stopLockHeartbeat();
+  const released = await db<{ table_name: string }[]>`
+    update erp_sync_state
+       set running = false, lock_owner = null, lock_heartbeat_at = null
      where table_name = any(${[...SYNC_TABLES]})
+       and lock_owner = ${LOCK_OWNER}
+    returning table_name
   `;
+  return released.length;
+}
+
+// ── Lock heartbeat ───────────────────────────────────────────────────────────
+//
+// The liveness signal `running` never had. It runs for exactly as long as this
+// process holds the guard, and it is `unref`'d so it can never be the reason a
+// process stays up — a heartbeat that keeps a dying container alive would be a
+// worse bug than the one it fixes.
+
+let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+
+function startLockHeartbeat(db: Sql): void {
+  stopLockHeartbeat();
+  heartbeatTimer = setInterval(() => {
+    void db`
+      update erp_sync_state
+         set lock_heartbeat_at = now()
+       where table_name = any(${[...SYNC_TABLES]})
+         and lock_owner = ${LOCK_OWNER}
+    `.catch(() => {
+      // A missed beat is not an error worth logging every 15s: either the DB is
+      // briefly unhappy and the next beat lands, or it is properly down and the
+      // run itself is about to say so far more usefully. Missing four in a row
+      // makes our guard reclaimable, which is the correct outcome for a process
+      // that can no longer reach the database it is holding a lock in.
+    });
+  }, LOCK_HEARTBEAT_MS);
+  heartbeatTimer.unref?.();
+}
+
+function stopLockHeartbeat(): void {
+  if (heartbeatTimer) clearInterval(heartbeatTimer);
+  heartbeatTimer = null;
 }
 
 /**
@@ -1780,6 +1963,18 @@ async function executeRun(deps: ErpSyncDeps): Promise<SyncRunResult> {
   return { started: true, full, cursorsCleared, recompute, tables, durationMs };
 }
 
+// ── Boot hook and graceful shutdown ──────────────────────────────────────────
+//
+// The timers live at module scope so `stopErpSync()` can clear them: an interval
+// that keeps firing after shutdown has begun would re-acquire the guard we are
+// trying to hand back, which is the bug in reverse.
+
+let syncTimer: ReturnType<typeof setInterval> | null = null;
+let reconcileTimer: ReturnType<typeof setInterval> | null = null;
+let bootRetryTimer: ReturnType<typeof setTimeout> | null = null;
+/** Set by `stopErpSync()` so a boot retry already in the air does not re-arm. */
+let stopping = false;
+
 /**
  * Boot hook. Mirrors `startCadenceEngine()` in `routes/accounts.ts`: run once
  * now, then on an interval, and never let a tick throw.
@@ -1797,20 +1992,45 @@ export function startErpSync(): void {
     return;
   }
 
+  stopping = false;
   const intervalMs = config.stock.syncIntervalMs;
 
   // `void` + the internal try/catch: runErpSyncOnce() already resolves rather
   // than rejecting, but a tick must be incapable of producing an unhandled
   // rejection even if that ever changes (§5: an ERP outage must not kill us).
-  const tick = (): void => {
-    void runErpSyncOnce().catch((err) => {
-      console.error(`[erp-sync] tick error: ${redactSecrets(err)}`);
-    });
+  //
+  // `retriesLeft` is the BOOT fast-path and nothing else — the interval passes 0.
+  // A rolling deploy overlaps containers, so the first tick of a new process can
+  // legitimately find the guard held by the outgoing one for a few seconds. Left
+  // alone that costs a whole interval of staleness for a lock that frees almost
+  // immediately, so the first tick (and only the first) comes back quickly. It
+  // asks the same question in the same way: no guard semantics change here, this
+  // is purely how OFTEN the question is asked.
+  const tick = (retriesLeft = 0): void => {
+    void runErpSyncOnce()
+      .then((result) => {
+        if (stopping || retriesLeft <= 0) return;
+        if (result.started || result.skipped !== "locked") return;
+        bootRetryTimer = setTimeout(() => {
+          bootRetryTimer = null;
+          tick(retriesLeft - 1);
+        }, BOOT_RETRY_MS);
+        bootRetryTimer.unref?.();
+      })
+      .catch((err) => {
+        console.error(`[erp-sync] tick error: ${redactSecrets(err)}`);
+      });
   };
 
-  tick();
-  setInterval(tick, intervalMs);
+  tick(BOOT_RETRY_ATTEMPTS);
+  syncTimer = setInterval(() => tick(), intervalMs);
   console.info(`[erp-sync] started — every ${Math.round(intervalMs / 1000)}s, page size ${config.stock.syncPageSize}`);
+  console.info(
+    `[erp-sync] run guard owner ${LOCK_OWNER} — heartbeat every ${Math.round(LOCK_HEARTBEAT_MS / 1000)}s; a ` +
+      `guard held by another owner whose heartbeat stopped ${Math.round(LOCK_RECLAIM_MS / 1000)}s ago is ` +
+      `reclaimed. If one is held at boot this process retries every ${Math.round(BOOT_RETRY_MS / 1000)}s for ` +
+      `up to ${Math.round((BOOT_RETRY_MS * BOOT_RETRY_ATTEMPTS) / 1000)}s before falling back to the normal cadence.`,
+  );
 
   // The reconciliation sweep rides the same boot hook so `index.ts` stays a
   // one-line registration. Its own, much slower cadence — it pulls a FULL key
@@ -1823,10 +2043,137 @@ export function startErpSync(): void {
       console.error(`[erp-sync] reconcile tick error: ${redactSecrets(err)}`);
     });
   };
-  setInterval(reconcileTick, reconcileMs);
+  reconcileTimer = setInterval(reconcileTick, reconcileMs);
   console.info(
     `[erp-sync] mirror reconciliation started — every ${Math.round(reconcileMs / 60_000)} min, ` +
       `abort floor ${config.stock.reconcileMinRatio} of mirrored rows (STOCK_RECONCILE_MIN_RATIO). ` +
       "An incremental updated_at cursor cannot observe a DELETE; this sweep is how one is noticed.",
   );
+}
+
+export interface StopErpSyncResult {
+  /** Timers cleared. 0 when sync was never started (no ERP / no database). */
+  timersCleared: number;
+  /** True when nothing was in flight here, or what was in flight finished in time. */
+  drained: boolean;
+  /** Milliseconds spent waiting for an in-flight run. */
+  waitedMs: number;
+  /** `erp_sync_state` rows whose guard THIS process held and has now released. */
+  released: number;
+  /** Why the guard was left alone, when it was. */
+  skipped?: "still_running" | "no_database" | "release_failed";
+}
+
+/** Resolve true if `p` settles within `ms`, false if the deadline wins. */
+async function settleWithin(p: Promise<unknown>, ms: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<boolean>((resolve) => {
+    timer = setTimeout(() => resolve(false), ms);
+    timer.unref?.();
+  });
+  try {
+    // The `then(ok, ok)` matters: a rejection here means the run ended, which is
+    // exactly what we are waiting for. Nothing in this file rejects today, and
+    // this stays true if something ever does.
+    return await Promise.race([p.then(() => true, () => true), deadline]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
+ * Stop the worker and hand the run guard back — the SIGTERM half of the fix.
+ *
+ * WHY THIS EXISTS. Railway replaces a container by sending SIGTERM and then
+ * killing it. Before this, the outgoing process simply vanished holding
+ * `running = true`, and the incoming one — correctly — declined every tick until
+ * the activity rule declared the lock abandoned nine minutes later. Nine minutes
+ * of "skipping this tick", a stale mirror, and a stock page telling an operator
+ * to ring PPIC about an ERP that was never unwell. SIGTERM is the ordinary path,
+ * so releasing here removes the ordinary case completely; the heartbeat reclaim
+ * and the activity rule remain for SIGKILL, OOM and hard crashes.
+ *
+ * MUST BE CALLED BEFORE `closeDatabase()`. Releasing the guard is a write.
+ *
+ * WHAT IT WILL NOT DO:
+ *
+ *   It will not release a guard this process does not own. `releaseLock()` is
+ *   qualified by `lock_owner`, so a process that acquired nothing (the common
+ *   case — most shutdowns land between ticks) writes nothing at all, and a
+ *   sibling mid-run keeps its lock.
+ *
+ *   It will not release a guard while OUR OWN run is still using it. If a run is
+ *   in flight we wait for it; if it has not finished by the deadline we leave the
+ *   lock exactly where it is and say so. Releasing under a live run would be the
+ *   one thing this guard exists to prevent, and the cost of not releasing is
+ *   bounded and small: the heartbeat stops when the process does, so the next
+ *   process reclaims in ~1 minute instead of ~9.
+ *
+ * NEVER REJECTS, and is safe to call when sync was never started, when there is
+ * no database, and twice.
+ */
+export async function stopErpSync(
+  overrides: { db?: Sql; log?: SyncLogger; drainMs?: number } = {},
+): Promise<StopErpSyncResult> {
+  stopping = true;
+  const log = overrides.log ?? defaultSyncLogger;
+  const drainMs = overrides.drainMs ?? SHUTDOWN_DRAIN_MS;
+
+  let timersCleared = 0;
+  if (syncTimer) {
+    clearInterval(syncTimer);
+    syncTimer = null;
+    timersCleared++;
+  }
+  if (reconcileTimer) {
+    clearInterval(reconcileTimer);
+    reconcileTimer = null;
+    timersCleared++;
+  }
+  if (bootRetryTimer) {
+    clearTimeout(bootRetryTimer);
+    bootRetryTimer = null;
+    timersCleared++;
+  }
+
+  const startedAt = Date.now();
+  let drained = true;
+  const pending = inFlight;
+  if (pending) {
+    log.info(`shutdown: a run started by this process is in flight — waiting up to ${drainMs}ms for it to finish`);
+    drained = await settleWithin(pending, drainMs);
+  }
+  const waitedMs = Date.now() - startedAt;
+
+  const db = overrides.db ?? getSql();
+  if (!db) {
+    stopLockHeartbeat();
+    return { timersCleared, drained, waitedMs, released: 0, skipped: "no_database" };
+  }
+
+  if (!drained) {
+    log.warn(
+      `shutdown: the in-flight sync run did not finish within ${drainMs}ms — the run guard is being LEFT IN ` +
+        `PLACE rather than released under a live run. This process's heartbeat stops when it exits, so the ` +
+        `next process reclaims the guard about ${Math.round(LOCK_RECLAIM_MS / 1000)}s from now.`,
+    );
+    return { timersCleared, drained, waitedMs, released: 0, skipped: "still_running" };
+  }
+
+  try {
+    const released = await releaseLock(db);
+    if (released > 0) {
+      log.info(
+        `shutdown: released the ERP run guard on ${released} table row(s) — the next process can sync on its ` +
+          `first tick instead of waiting out the staleness window.`,
+      );
+    }
+    return { timersCleared, drained, waitedMs, released };
+  } catch (err) {
+    log.error(
+      `shutdown: could not release the ERP run guard — ${redactSecrets(err)}. It will be reclaimed by the ` +
+        `heartbeat rule (~${Math.round(LOCK_RECLAIM_MS / 1000)}s) or, failing that, by the staleness rule.`,
+    );
+    return { timersCleared, drained, waitedMs, released: 0, skipped: "release_failed" };
+  }
 }
