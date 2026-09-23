@@ -36,6 +36,19 @@ function int(name: string, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
+/**
+ * Like `int()`, but ZERO is a legitimate value rather than a miss.
+ *
+ * `int()` folds 0 into the fallback, which is right for an interval or a page
+ * size (0 is meaningless) and wrong for a delay or a cap, where 0 is how you say
+ * "off". Without this, `STOCK_SYNC_PAGE_DELAY_MS=0` silently paces at 250ms.
+ */
+function intOrZero(name: string, fallback: number): number {
+  const v = process.env[name];
+  const n = v ? Number.parseInt(v, 10) : NaN;
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
 /** Trimmed string env var; blank/absent => fallback (usually ""). */
 function str(name: string, fallback = ""): string {
   const v = process.env[name];
@@ -183,6 +196,57 @@ export const config = {
     syncIntervalMs: int("STOCK_SYNC_INTERVAL_MS", 180_000),
     /** `limit` query param per page of the mirror pull. */
     syncPageSize: int("STOCK_SYNC_PAGE_SIZE", 1_000),
+    /**
+     * PACING (FIX R2). A deliberate pause between two page requests of a run.
+     *
+     * Nothing used to space our requests at all, so a full re-pull went out at
+     * roughly ten pages every five seconds and tripped the ERP's rate limiter on
+     * page 60 — after which every tick re-ran the same wall of requests. 250ms
+     * is ~4 requests/second at worst, ~14k rows/second at the default page size,
+     * which finishes a 138-page table in under a minute and is a load a shared
+     * production ERP can absorb. Set to 0 to disable pacing entirely (tests do).
+     */
+    /**
+     * Pace between page requests. 500ms (~0.95 req/s) rather than 250, because
+     * the ERP's own limiter tripped at ~1.9 req/s sustained over ~60 requests:
+     * 250ms lands in the same order of magnitude and would likely trip it again
+     * on a cold full re-pull, leaving the adaptive slowdown to rescue every one
+     * — a backstop, not a plan. The errors are asymmetric: too slow costs a
+     * slower re-pull, too fast costs an incident on someone else's production
+     * ERP. Replace this with their documented limit when we have it.
+     */
+    syncPageDelayMs: intOrZero("STOCK_SYNC_PAGE_DELAY_MS", 500),
+    /**
+     * After a 429, the pace for the REST OF THE RUN is multiplied by this and
+     * never returns to full speed. A limit we just hit is a limit we will hit
+     * again, and resuming full speed the moment the backoff expires is how a
+     * rate-limited run turns into a rate-limited loop.
+     */
+    syncRateLimitSlowdown: int("STOCK_SYNC_RATE_LIMIT_SLOWDOWN", 4),
+    /** Ceiling on the adaptive pace, so repeated 429s cannot stall a run forever. */
+    syncMaxPageDelayMs: int("STOCK_SYNC_MAX_PAGE_DELAY_MS", 5_000),
+    /**
+     * Attempts for ONE page against a 429 — the first try plus the retries.
+     * Bounded on purpose: a rate limit that outlasts four attempts is an
+     * incident, and the right answer is to leave the page for the next tick
+     * (the cursor and the resume page say exactly where to carry on from).
+     */
+    syncRateLimitAttempts: int("STOCK_SYNC_RATE_LIMIT_ATTEMPTS", 4),
+    /** Base of the exponential backoff used when a 429 carries no `Retry-After`. */
+    syncRateLimitBaseMs: int("STOCK_SYNC_RATE_LIMIT_BASE_MS", 1_000),
+    /** Cap on a single backoff wait, `Retry-After` included — an hour-long header does not block a run. */
+    syncRateLimitMaxDelayMs: int("STOCK_SYNC_RATE_LIMIT_MAX_DELAY_MS", 30_000),
+    /**
+     * FAIR SHARE (FIX R4). The most pages ONE table may pull in ONE run.
+     *
+     * `so_line` is 138k rows — 138 pages — and it used to spend the whole of
+     * every run, and the whole of the rate-limit budget, before `live_fg` (two
+     * pages of physical stock) was asked for at all. A table that reaches this
+     * cap stops cleanly, records the page it stopped on, and resumes there on
+     * the next tick, so the cap costs freshness on the big table and never
+     * costs progress. 0 disables it.
+     */
+    syncMaxPagesPerRun: intOrZero("STOCK_SYNC_MAX_PAGES_PER_RUN", 120),
     /**
      * Safety lookback subtracted from the stored cursor on every incremental
      * request. 12 hours by default, and the size is the point: it must

@@ -977,6 +977,21 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
     // is the safe direction. See erp/syncWorker.ts `acquireLock`.
     await db`alter table erp_sync_state add column if not exists lock_owner text`;
     await db`alter table erp_sync_state add column if not exists lock_heartbeat_at timestamptz`;
+    // WHERE AN INTERRUPTED PULL GOT TO (FIX R3).
+    //
+    // `cursor_value` is a high-water mark over the rows' own `updated_at`, and
+    // that is all it can be: a page whose rows carry no readable timestamp has
+    // nothing to advance it to, so `greatest(cursor_value, null)` leaves it
+    // exactly where it was even though the page COMMITTED. A table like that
+    // (so_line in production) re-pulled from page 1 on every tick, forever —
+    // the loop that hammered the ERP. These two columns record the page a
+    // committed pull stopped on and the cursor it was pulling under, so the
+    // next run resumes at page N+1 instead of page 1. `resume_cursor` is the
+    // safety catch: the resume page is only honoured while the window is the
+    // SAME one it was counted in — once the cursor moves, page numbers mean
+    // something else and the pull starts over from page 1 of the new window.
+    await db`alter table erp_sync_state add column if not exists resume_page integer not null default 0`;
+    await db`alter table erp_sync_state add column if not exists resume_cursor timestamptz`;
     for (const t of ["live_fg", "so_line", "so_header", "warna"]) {
       await db`
         insert into erp_sync_state (table_name) values (${t})

@@ -230,7 +230,15 @@ can audit it in one place.
 | A15 | Approved lines with `estimate_delivery IS NULL` are **live** and reserve stock, flagged `undated` | Architect ruling, AMENDMENT 1 | low — one view clause |
 | A16–A21 | ERP wire format: endpoint paths, inclusive `__gte` cursor, UTC timestamps, `YYYY-MM-DD` dates | WP-2 | low — one map / one helper |
 | A22 | Ambiguous numeric strings are **refused, never guessed**. The repo carries positive evidence this company's data is id-locale (`num()` in `routes/stock.ts`, PRD §8.4, bug fc4ab5a) — but id is not safe as a default either: `"0.350"` is a real 0.35 thickness the id rule turns into 350. `SELARAS_NUMBER_FORMAT` defaults to `auto`, which refuses the 50/50 shapes, counts them, and logs examples. A refused quantity reserves nothing; a guessed one over-promises by 1000× silently. **A real response body decides the final default.** | WP-2 + Architect | low — one config value, no code change |
-| A23–A28 | Unparseable → null (0 for `not null`), no 429 retry, non-JSON 2xx is a shape fault, `synced_at` excluded from idempotency, `running` staleness via `greatest(last_ok_at,last_error_at)`, 1000-page cap | WP-2 | low |
+| A23–A28 | Unparseable → null (0 for `not null`), ~~no 429 retry~~ **429 IS retried** (see below), non-JSON 2xx is a shape fault, `synced_at` excluded from idempotency, `running` staleness via `greatest(last_ok_at,last_error_at)`, 1000-page cap | WP-2 | low |
+
+**A24 was wrong and is retired (2026-09-23).** It read §5's "no retry on 4xx"
+literally and gave 429 no retry, which is the opposite of what a rate limit
+means: 429 is the one 4xx that is a statement about our TIMING, not about our
+request. In production it turned one rate-limited full re-pull into a loop that
+hammered the ERP every three minutes. A 429 now honours `Retry-After` (seconds
+or HTTP-date), otherwise backs off exponentially with jitter, and gives up after
+`STOCK_SYNC_RATE_LIMIT_ATTEMPTS` attempts. 400/401/403/404 stay terminal.
 | A29 | No non-finite numeric ever reaches the mirror. `'NaN'::numeric` is legal in Postgres and the schema permits it in `th`/`p`/`l`; one stored there desynchronises the TS and SQL key functions for that SKU alone, and the parity test cannot catch it because the divergence is created at write time. Rejected at the adapter boundary, counted and logged separately from A22 — the two need different fixes. | WP-7 found, WP-2 fixed | low — one guard |
 | A30 | Under a **declared** `id`/`en` mode the reading is literal — no heuristic. `num()`'s "single comma grouping 3 digits ⇒ thousands" rule is deliberately not carried over: re-introducing a guess inside a mode whose whole purpose is "the operator told us the emitter" defeats the mode, and `auto` already refuses that exact string. | WP-2, upheld by Architect | low — one line |
 

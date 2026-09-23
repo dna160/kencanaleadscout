@@ -42,6 +42,20 @@ process.env["SELARAS_TOKEN"] = TOKEN;
 process.env["SELARAS_TIMEOUT_MS"] = "3000";
 process.env["STOCK_SYNC_PAGE_SIZE"] = String(PAGE_SIZE);
 process.env["STOCK_SYNC_INTERVAL_MS"] = "60000";
+// Pacing off (FIX R2). The worker deliberately spaces real page requests by
+// STOCK_SYNC_PAGE_DELAY_MS; against a MockAgent there is nothing to be kind to,
+// and 250ms per page would add minutes to this suite. The pacing itself is
+// proven by the tests that pass `pageDelayMs` explicitly.
+process.env["STOCK_SYNC_PAGE_DELAY_MS"] = "0";
+// The rate-limit budget, shrunk so a deliberately 429'd table costs milliseconds
+// rather than the production 1s/2s/4s backoff. The POLICY (Retry-After, the
+// exponential shape, the bound) is proven by the client tests below, which pass
+// their own explicit budget; these two only keep the worker tests quick.
+process.env["STOCK_SYNC_RATE_LIMIT_ATTEMPTS"] = "2";
+process.env["STOCK_SYNC_RATE_LIMIT_BASE_MS"] = "10";
+process.env["STOCK_SYNC_RATE_LIMIT_MAX_DELAY_MS"] = "20";
+// The adaptive pace after a 429, capped low for the same reason.
+process.env["STOCK_SYNC_MAX_PAGE_DELAY_MS"] = "30";
 process.env["STOCK_STALE_WINDOW_DAYS"] = "60";
 
 const clientMod = await import("../src/erp/selarasClient.js");
@@ -62,6 +76,8 @@ const {
   resetShapeNotices,
   buildColumnDiagnostic,
   describeColumnDiagnostic,
+  parseRetryAfterMs,
+  rateLimitBackoffMs,
 } = clientMod;
 const { runErpSyncOnce, recomputeSkuKeys, stopErpSync, LOCK_OWNER } = workerMod;
 const { canonicalSkuKey } = skuMod;
@@ -230,6 +246,12 @@ interface ErpFault {
   garbage?: Record<string, string>;
   /** `${table}:${page}` → answer 200 with `success: false` (FIX 5). */
   unsuccessful?: Record<string, true>;
+  /**
+   * `${table}:${page}` → answer 429 the first `times` times it is asked, then
+   * serve the page normally. `retryAfter`, when given, is sent as the header
+   * verbatim — seconds or an HTTP-date, exactly as a real limiter would.
+   */
+  rateLimit?: Record<string, { times: number; retryAfter?: string }>;
   /** `${table}:${page}` → answer with an envelope the verified API never sends. */
   shape?: Record<string, "bare_array">;
   /**
@@ -241,6 +263,8 @@ interface ErpFault {
 }
 
 let faults: ErpFault = {};
+/** How many 429s each `${table}:${page}` has already been served this test. */
+let rateLimitServed: Record<string, number> = {};
 let requestLog: string[] = [];
 /** Headers of the most recent request, lower-cased — the auth tests read these. */
 let lastRequestHeaders: Record<string, string> = {};
@@ -258,6 +282,18 @@ function erpRespond(path: string): { statusCode: number; data: unknown; headers:
 
   const status = faults.status?.[key];
   if (status !== undefined) return { statusCode: status, data: `upstream said ${status}`, headers: {} };
+  const limit429 = faults.rateLimit?.[key];
+  if (limit429 !== undefined) {
+    const served = rateLimitServed[key] ?? 0;
+    if (served < limit429.times) {
+      rateLimitServed[key] = served + 1;
+      return {
+        statusCode: 429,
+        data: "too many requests",
+        headers: limit429.retryAfter === undefined ? {} : { "retry-after": limit429.retryAfter },
+      };
+    }
+  }
   if (faults.unsuccessful?.[key]) {
     return {
       statusCode: 200,
@@ -333,6 +369,7 @@ afterAll(async () => {
 
 beforeEach(() => {
   faults = {};
+  rateLimitServed = {};
   requestLog = [];
   lastRequestHeaders = {};
 });
@@ -1263,6 +1300,187 @@ describe("redactSecrets — the token never survives a round trip to a log", () 
   });
 });
 
+
+// ── 2b. Rate limiting: the one 4xx that means "try again later" (FIX R1) ─────
+//
+// A24 read §5's "no retry on 4xx" literally and gave 429 no retry at all. That
+// is what turned one rate-limited full re-pull into a loop: the page failed
+// permanently, the cursor never moved, and the next tick re-ran the same wall of
+// requests. A 429 is not a statement about our REQUEST, it is a statement about
+// our TIMING — the only 4xx that is.
+
+describe("parseRetryAfterMs — both documented forms, and nothing else", () => {
+  it("reads delta-seconds", () => {
+    expect(parseRetryAfterMs("2")).toBe(2000);
+    expect(parseRetryAfterMs("0")).toBe(0);
+    expect(parseRetryAfterMs(" 30 ")).toBe(30_000);
+  });
+
+  it("reads an HTTP-date, relative to now", () => {
+    const now = Date.parse("2026-09-23T10:00:00Z");
+    expect(parseRetryAfterMs("Wed, 23 Sep 2026 10:00:05 GMT", now)).toBe(5000);
+  });
+
+  it("reads a date already in the past as 'retry now', never as a negative wait", () => {
+    const now = Date.parse("2026-09-23T10:00:00Z");
+    expect(parseRetryAfterMs("Wed, 23 Sep 2026 09:59:00 GMT", now)).toBe(0);
+  });
+
+  it("refuses anything else rather than guessing — the caller then uses its own backoff", () => {
+    expect(parseRetryAfterMs(undefined)).toBeNull();
+    expect(parseRetryAfterMs("")).toBeNull();
+    expect(parseRetryAfterMs("soon")).toBeNull();
+    // `Date.parse` would read these as years and answer with a wait in the past.
+    expect(parseRetryAfterMs("-5")).toBeNull();
+    expect(parseRetryAfterMs("3.5")).toBeNull();
+    expect(parseRetryAfterMs(null)).toBeNull();
+  });
+});
+
+describe("rateLimitBackoffMs — exponential, jittered, capped", () => {
+  const policy = { attempts: 5, baseDelayMs: 100, maxDelayMs: 4000 };
+
+  it("doubles each retry, within the jitter band [half, full]", () => {
+    for (const [retry, step] of [
+      [1, 100],
+      [2, 200],
+      [3, 400],
+      [4, 800],
+    ] as const) {
+      for (const r of [0, 0.5, 0.999]) {
+        const ms = rateLimitBackoffMs(retry, policy, () => r);
+        expect(ms, `retry ${retry} @ jitter ${r}`).toBeGreaterThanOrEqual(step / 2);
+        expect(ms, `retry ${retry} @ jitter ${r}`).toBeLessThanOrEqual(step);
+      }
+    }
+  });
+
+  it("jitters — two backoffs for the same retry are not required to be equal", () => {
+    // The point of jitter: four tables backing off on the same clock must not
+    // all come back in the same millisecond at a server that just said it is
+    // overloaded.
+    expect(rateLimitBackoffMs(3, policy, () => 0)).toBe(200);
+    expect(rateLimitBackoffMs(3, policy, () => 0.999)).toBeGreaterThan(200);
+  });
+
+  it("never exceeds the ceiling, however many retries have gone by", () => {
+    expect(rateLimitBackoffMs(20, policy, () => 0.999)).toBeLessThanOrEqual(policy.maxDelayMs);
+  });
+});
+
+describe("fetchPage — 429 is retried, every other 4xx is not", () => {
+  const fast = { attempts: 4, baseDelayMs: 40, maxDelayMs: 5_000 };
+
+  it("honours Retry-After and succeeds on the retry", async () => {
+    faults = { rateLimit: { "so_line:1": { times: 1, retryAfter: "2" } } };
+    const started = Date.now();
+    const res = await fetchPage("so_line", { since: null, page: 1, limit: 2, rateLimit: fast });
+    const elapsed = Date.now() - started;
+
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.page.rows.length).toBe(2);
+      // The page is good and the PACE is not — the worker reads this and slows
+      // the rest of the run down.
+      expect(res.page.rateLimited).toBe(true);
+    }
+    // ~2s, from the header: not the 40ms this policy's own backoff would have used.
+    expect(elapsed).toBeGreaterThanOrEqual(1_900);
+    expect(elapsed).toBeLessThan(6_000);
+    expect(pathsFor("so_line").length).toBe(2);
+  }, 20_000);
+
+  it("honours an HTTP-date Retry-After as well as delta-seconds", async () => {
+    // `toUTCString()` truncates to whole seconds, so the real wait is somewhere
+    // in (2s, 3s]; the assertion is sized to that, not to the nominal 3s.
+    const when = new Date(Date.now() + 3_000).toUTCString();
+    faults = { rateLimit: { "so_line:1": { times: 1, retryAfter: when } } };
+    const started = Date.now();
+    const res = await fetchPage("so_line", { since: null, page: 1, limit: 2, rateLimit: fast });
+    expect(res.ok).toBe(true);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(1_800);
+  }, 20_000);
+
+  it("backs off exponentially when no Retry-After is sent, and still lands the page", async () => {
+    faults = { rateLimit: { "live_fg:1": { times: 2 } } };
+    const started = Date.now();
+    const res = await fetchPage("live_fg", { since: null, page: 1, limit: 2, rateLimit: fast });
+    const elapsed = Date.now() - started;
+
+    expect(res.ok).toBe(true);
+    expect(pathsFor("live_fg").length).toBe(3); // two refusals, then the page
+    // Retry 1 waits [20,40], retry 2 waits [40,80]: at least 60ms in total, and
+    // nowhere near a fixed delay repeated twice.
+    expect(elapsed).toBeGreaterThanOrEqual(55);
+  }, 20_000);
+
+  it("gives up after a BOUNDED number of attempts rather than knocking forever", async () => {
+    faults = { rateLimit: { "so_header:1": { times: Number.POSITIVE_INFINITY } } };
+    const res = await fetchPage("so_header", { since: null, page: 1, limit: 2, rateLimit: fast });
+
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.status).toBe(429);
+      expect(res.kind).toBe("rate_limit");
+      expect(res.retryable).toBe(true); // "come back later", not "you are misconfigured"
+      expect(res.error).toContain("429");
+    }
+    expect(pathsFor("so_header").length).toBe(fast.attempts);
+  }, 20_000);
+
+  it("caps a Retry-After it cannot afford to honour — an hour-long header does not freeze a run", async () => {
+    faults = { rateLimit: { "warna:1": { times: 1, retryAfter: "3600" } } };
+    const started = Date.now();
+    const res = await fetchPage("warna", {
+      since: null,
+      page: 1,
+      limit: 2,
+      rateLimit: { attempts: 3, baseDelayMs: 40, maxDelayMs: 120 },
+    });
+    expect(res.ok).toBe(true);
+    // Honoured up to the ceiling and no further: an hour of "please wait" would
+    // hold the run guard for an hour.
+    expect(Date.now() - started).toBeLessThan(2_000);
+  }, 20_000);
+
+  it("does NOT retry a 400 — a configuration fault retried is noise and load", async () => {
+    faults = { status: { "so_line:1": 400 } };
+    const res = await fetchPage("so_line", { since: null, page: 1, limit: 2, rateLimit: fast });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.status).toBe(400);
+      expect(res.kind).toBe("erp_error");
+      expect(res.retryable).toBe(false);
+    }
+    expect(pathsFor("so_line").length).toBe(1);
+  });
+
+  it("does NOT retry a 401 or a 403 — the fix is an admin action, not another request", async () => {
+    for (const [table, status] of [
+      ["so_line", 401],
+      ["live_fg", 403],
+    ] as const) {
+      requestLog = [];
+      faults = { status: { [`${table}:1`]: status } };
+      const res = await fetchPage(table, { since: null, page: 1, limit: 2, rateLimit: fast });
+      expect(res.ok).toBe(false);
+      if (!res.ok) {
+        expect(res.kind).toBe("auth");
+        expect(res.retryable).toBe(false);
+      }
+      expect(pathsFor(table).length, `${status} must be asked exactly once`).toBe(1);
+    }
+  });
+
+  it("does NOT retry a 404", async () => {
+    faults = { status: { "warna:1": 404 } };
+    const res = await fetchPage("warna", { since: null, page: 1, limit: 2, rateLimit: fast });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.retryable).toBe(false);
+    expect(pathsFor("warna").length).toBe(1);
+  });
+});
+
 // ── 3. The worker, against a real Postgres ───────────────────────────────────
 
 const TEST_DB_URL = process.env["TEST_DATABASE_URL"] ?? "postgres://kencana:kencana@localhost:5432/leadscout";
@@ -1341,7 +1559,11 @@ async function resetCursors(sql: postgres.Sql<{}>): Promise<void> {
   await sql`
     update erp_sync_state
        set cursor_value = null, last_error = null, last_error_at = null, running = false, rows_synced = 0,
-           lock_owner = null, lock_heartbeat_at = null
+           lock_owner = null, lock_heartbeat_at = null,
+           -- The resume point is part of "where the pull is up to", so a rewind
+           -- clears it too: otherwise a rewound cursor plus a stale resume page
+           -- would skip the first N pages of a window nothing has read yet.
+           resume_page = 0, resume_cursor = null
   `;
 }
 
@@ -1405,9 +1627,11 @@ async function syncStateRows(sql: postgres.Sql<{}>) {
       last_error: string | null;
       last_error_kind: string | null;
       running: boolean;
+      resume_page: number;
+      resume_cursor: Date | null;
     }[]
   >`
-    select table_name, cursor_value, last_error, last_error_kind, running
+    select table_name, cursor_value, last_error, last_error_kind, running, resume_page, resume_cursor
     from erp_sync_state order by table_name
   `;
 }
@@ -1463,10 +1687,15 @@ describe.skipIf(db === null)("syncWorker — against a real mirror schema", () =
   it("mirrors the fixture window, paging through every table in order", async () => {
     const result = await run(sql);
     expect(result.started).toBe(true);
-    // The colour master first (small, and everything displays through it), then
-    // headers before lines because lines reference them, and live_fg LAST so
-    // on-hand is the freshest half of the ATP subtraction.
-    expect(result.tables.map((t) => t.table)).toEqual(["warna", "so_header", "so_line", "live_fg"]);
+    // FIX R4 — the order is smallest-and-most-critical first. The colour master
+    // (273 rows) and live_fg (1,464 rows / 2 pages, and the on-hand half of every
+    // ATP figure) are done before anything expensive starts, so a long or
+    // rate-limited so_line pass cannot starve them; headers still precede the
+    // lines that reference them. live_fg used to run LAST, behind 138 pages of
+    // so_line, and in production it failed on page 1 every single time.
+    expect(result.tables.map((t) => t.table)).toEqual(["warna", "live_fg", "so_header", "so_line"]);
+    expect(workerMod.SYNC_PULL_ORDER.indexOf("live_fg")).toBeLessThan(workerMod.SYNC_PULL_ORDER.indexOf("so_line"));
+    expect(workerMod.SYNC_PULL_ORDER.indexOf("so_header")).toBeLessThan(workerMod.SYNC_PULL_ORDER.indexOf("so_line"));
     expect(result.tables.every((t) => t.ok)).toBe(true);
 
     const counts = await sql<{ h: number; l: number; f: number }[]>`
@@ -1631,6 +1860,272 @@ describe.skipIf(db === null)("syncWorker — against a real mirror schema", () =
     expect(recovery.tables.find((t) => t.table === "so_line")?.ok).toBe(true);
     const after = await sql<{ n: number }[]>`select count(*)::int as n from erp_so_line`;
     expect(after[0]?.n).toBe(7);
+  });
+
+
+  // ── The 2026-09-23 incident: a rate-limited re-sync that looped ────────────
+  //
+  // An operator pressed the full re-sync. It went out at ~10 pages every 5
+  // seconds, the ERP started refusing at page 60, and from then on EVERY tick
+  // re-pulled so_line from page 1 and live_fg never got past page 1 at all —
+  // so on-hand stock, the other half of every ATP figure, simply froze.
+  //
+  // Four defects, four blocks of tests.
+
+  describe("FIX R3 — an interrupted pull resumes; it never restarts from page 1", () => {
+    it("records the last COMMITTED page for EVERY table, not just the ones with timestamps", async () => {
+      // The production tell: so_header resumed from 2025-10-24 and so_line did
+      // not, and the difference was never in the worker — it is that the cursor
+      // is a high-water mark over the ROWS' updated_at, so a table whose rows
+      // do not carry one advances nothing. The resume page does not depend on
+      // the rows at all, which is the point.
+      for (const table of clientMod.SYNC_TABLES) {
+        await resetCursors(sql);
+        requestLog = [];
+        faults = { status: { [`${table}:2`]: 500 } };
+
+        const result = await run(sql);
+        const t = result.tables.find((x) => x.table === table);
+        expect(t?.ok, table).toBe(false);
+        expect(t?.pages, table).toBe(1); // page 1 committed, page 2 blew up
+
+        const state = (await syncStateRows(sql)).find((r) => r.table_name === table);
+        // THE INVARIANT: a committed page leaves a resume point.
+        expect(state?.resume_page, table).toBe(1);
+        // …and it is stamped with the window it was counted in, so it can never
+        // be applied to a different one.
+        expect(state?.resume_cursor, table).toBeNull(); // this pull ran with no cursor
+      }
+    }, 60_000);
+
+    it("THE LOOP: a table whose rows carry NO updated_at resumes at page N instead of re-pulling from 1", async () => {
+      // so_line in production: 44 pages committed, stored cursor still null,
+      // next tick back to page 1 — forever, at ~1000 rows a page. Here the same
+      // shape: eight rows, none with a usable `updated_at`, four pages, and a
+      // failure on page 3.
+      await resetCursors(sql);
+      const rows = Array.from({ length: 8 }, (_, i) => ({
+        tbl_1203_SOSalesOrderDetailNID_id: `SOL-NOTS-${String(i + 1).padStart(2, "0")}`,
+        tbl_1202_SOSalesOrderNID_id: "SOH-1001",
+        brand: "ACP",
+        brand_text: "ACP Kencana",
+        warna: 4,
+        warna_text: "BLACK GALAXY",
+        th_alu_skin: 0.3,
+        total_thickness_acp: 4,
+        p: 4880,
+        l: 1220,
+        qty_order: 10,
+        qty_delivered: 0,
+        qty_balance: 10,
+        status_order: "Open",
+        approval: "Approved",
+        estimate_delivery: "2099-09-20",
+        deleted_at: null,
+        // NO updated_at, under any spelling. This is the whole bug.
+      }));
+
+      faults = { rows: { so_line: rows }, status: { "so_line:3": 500 } };
+      requestLog = [];
+      const first = await run(sql);
+      expect(first.tables.find((t) => t.table === "so_line")?.ok).toBe(false);
+      expect(first.tables.find((t) => t.table === "so_line")?.pages).toBe(2);
+
+      const afterFirst = (await syncStateRows(sql)).find((r) => r.table_name === "so_line");
+      // The cursor CANNOT move — there is no timestamp to move it to, and
+      // inventing one would silently skip every row behind it.
+      expect(afterFirst?.cursor_value).toBeNull();
+      // …so the resume page is the only thing that can carry the promise, and it does.
+      expect(afterFirst?.resume_page).toBe(2);
+
+      // The next tick. Before the fix this asked for page 1 again, and again,
+      // and again, at every interval, forever.
+      faults = { rows: { so_line: rows } };
+      requestLog = [];
+      const second = await run(sql);
+      expect(second.tables.find((t) => t.table === "so_line")?.ok).toBe(true);
+
+      const asked = pathsFor("so_line").map((p) => new URL(p, BASE_URL).searchParams.get("page"));
+      expect(asked[0], "the re-pull must RESUME, not restart").toBe("3");
+      expect(asked).not.toContain("1");
+
+      // All eight rows are mirrored — resuming skipped nothing — and the resume
+      // point is cleared now the window is exhausted, so the next ordinary tick
+      // starts cleanly at page 1 rather than off the end of the table.
+      const mirrored = await sql<{ n: number }[]>`
+        select count(*)::int as n from erp_so_line where id like 'SOL-NOTS-%'
+      `;
+      expect(mirrored[0]?.n).toBe(8);
+      const afterSecond = (await syncStateRows(sql)).find((r) => r.table_name === "so_line");
+      expect(afterSecond?.resume_page).toBe(0);
+    }, 30_000);
+
+    it("finishes an interrupted pull in the window it STARTED in, never in a newer one", async () => {
+      // A page number only means something inside one ordering: page 2 of
+      // `updated_at >= X` and page 2 of `updated_at >= Y` are different rows. So
+      // the resumed pull carries on under the cursor it began with, even though
+      // its own committed pages have since advanced the stored cursor past it.
+      await resetCursors(sql);
+      faults = { status: { "so_line:2": 500 } };
+      await run(sql);
+      const stuck = (await syncStateRows(sql)).find((r) => r.table_name === "so_line");
+      expect(stuck?.resume_page).toBe(1);
+      expect(stuck?.resume_cursor).toBeNull(); // it began as a full pull…
+      expect(stuck?.cursor_value).not.toBeNull(); // …and page 1 still advanced the cursor
+
+      faults = {};
+      requestLog = [];
+      await run(sql);
+      const asked = pathsFor("so_line").map((p) => new URL(p, BASE_URL));
+      expect(asked[0]?.searchParams.get("page")).toBe("2");
+      // Same window: the resumed pull does NOT pick up the advanced cursor, or
+      // page 2 would mean rows page 2 never referred to.
+      expect(asked[0]?.searchParams.get("updated_at__gte")).toBeNull();
+
+      const rows = await sql<{ n: number }[]>`select count(*)::int as n from erp_so_line`;
+      expect(rows[0]?.n).toBe(7); // the whole fixture window, nothing skipped
+      const after = (await syncStateRows(sql)).find((r) => r.table_name === "so_line");
+      expect(after?.resume_page).toBe(0); // cleared, so the next tick is ordinary
+    }, 30_000);
+  });
+
+  describe("FIX R2 — the run paces itself, and slows down further once refused", () => {
+    it("inserts the configured delay between page requests", async () => {
+      await resetCursors(sql);
+      const DELAY = 40;
+      requestLog = [];
+      const started = Date.now();
+      const result = await runErpSyncOnce({
+        db: sql,
+        pageSize: PAGE_SIZE,
+        intervalMs: 60_000,
+        log: silentLog,
+        pageDelayMs: DELAY,
+      });
+      const elapsed = Date.now() - started;
+      expect(result.tables.every((t) => t.ok)).toBe(true);
+
+      // One pause between two requests OF THE SAME TABLE: the first page of each
+      // table is never delayed, so a healthy run pays (requests - tables) pauses.
+      const pauses = requestLog.length - clientMod.SYNC_TABLES.length;
+      expect(pauses).toBeGreaterThan(3); // the fixtures really are multi-page
+      expect(elapsed).toBeGreaterThanOrEqual(pauses * DELAY);
+    }, 30_000);
+
+    it("runs at full speed when pacing is switched off — the delay is the only difference", async () => {
+      await resetCursors(sql);
+      const started = Date.now();
+      await runErpSyncOnce({ db: sql, pageSize: PAGE_SIZE, intervalMs: 60_000, log: silentLog, pageDelayMs: 0 });
+      expect(Date.now() - started).toBeLessThan(3_000);
+    }, 30_000);
+
+    it("slows the REST of the run down after a 429, and says so in the log", async () => {
+      await resetCursors(sql);
+      const lines: string[] = [];
+      const log = { info: () => {}, warn: (m: string) => lines.push(m), error: (m: string) => lines.push(m) };
+      // live_fg is pulled second; one refusal, recovered on the retry.
+      faults = { rateLimit: { "live_fg:1": { times: 1 } } };
+
+      const result = await runErpSyncOnce({
+        db: sql,
+        pageSize: PAGE_SIZE,
+        intervalMs: 60_000,
+        log,
+        pageDelayMs: 5,
+      });
+
+      // The page itself recovered: a 429 costs a pause, not a table.
+      expect(result.tables.every((t) => t.ok)).toBe(true);
+      const paced = lines.find((l) => l.startsWith("pacing:"));
+      expect(paced, lines.join(" | ")).toBeTruthy();
+      expect(paced).toContain("429");
+      expect(paced).toContain("REST of this run");
+      // 5ms → 20ms (×4, capped at STOCK_SYNC_MAX_PAGE_DELAY_MS=30 for this suite).
+      expect(paced).toContain("5ms → 20ms");
+    }, 30_000);
+  });
+
+  describe("FIX R4 — the small, critical table is never starved", () => {
+    it("syncs live_fg in full even while so_line is large and rate-limited", async () => {
+      await resetCursors(sql);
+      // so_line: forty pages' worth of demand, and the ERP refusing all of it.
+      const many = Array.from({ length: 80 }, (_, i) => ({
+        tbl_1203_SOSalesOrderDetailNID_id: `SOL-BIG-${String(i + 1).padStart(3, "0")}`,
+        tbl_1202_SOSalesOrderNID_id: "SOH-1001",
+        brand: "ACP",
+        warna: 4,
+        th_alu_skin: 0.3,
+        total_thickness_acp: 4,
+        p: 4880,
+        l: 1220,
+        qty_balance: 1,
+        status_order: "Open",
+        approval: "Approved",
+        deleted_at: null,
+        updated_at: `2026-09-0${(i % 9) + 1}T01:00:00Z`,
+      }));
+      faults = {
+        rows: { so_line: many },
+        rateLimit: Object.fromEntries(
+          Array.from({ length: 50 }, (_, i) => [`so_line:${i + 1}`, { times: Number.POSITIVE_INFINITY }]),
+        ),
+      };
+
+      const result = await run(sql);
+      const fg = result.tables.find((t) => t.table === "live_fg");
+      const line = result.tables.find((t) => t.table === "so_line");
+
+      // The starved table. 1,464 rows in production, two pages, and the on-hand
+      // half of every ATP figure — it used to fail on page 1 of every single run.
+      expect(fg?.ok).toBe(true);
+      expect(fg?.rows).toBeGreaterThan(0);
+      const onHand = await sql<{ n: number }[]>`select count(*)::int as n from erp_live_fg`;
+      expect(onHand[0]?.n).toBe(6);
+
+      // so_line is the one that suffers, which is the correct trade: it is the
+      // table that cannot fit, and it resumes on the next tick.
+      expect(line?.ok).toBe(false);
+      const state = (await syncStateRows(sql)).find((r) => r.table_name === "so_line");
+      expect(state?.last_error_kind).toBe("rate_limit");
+      expect(state?.last_error).toContain("429");
+    }, 60_000);
+
+    it("caps one table's share of a run and resumes it on the next tick", async () => {
+      await resetCursors(sql);
+      const result = await runErpSyncOnce({
+        db: sql,
+        pageSize: PAGE_SIZE,
+        intervalMs: 60_000,
+        log: silentLog,
+        pageDelayMs: 0,
+        maxPagesPerRun: 1,
+      });
+      // Every table gets exactly its one page: nobody is skipped, nobody hogs.
+      for (const t of result.tables) {
+        expect(t.pages, t.table).toBe(1);
+        expect(t.ok, t.table).toBe(true);
+      }
+      const state = await syncStateRows(sql);
+      for (const r of state) expect(r.resume_page, r.table_name).toBe(1);
+
+      // And the rest arrives over the following ticks rather than being lost.
+      for (let i = 0; i < 6; i += 1) {
+        await runErpSyncOnce({
+          db: sql,
+          pageSize: PAGE_SIZE,
+          intervalMs: 60_000,
+          log: silentLog,
+          pageDelayMs: 0,
+          maxPagesPerRun: 1,
+        });
+      }
+      const counts = await sql<{ h: number; l: number; f: number }[]>`
+        select (select count(*)::int from erp_so_header) as h,
+               (select count(*)::int from erp_so_line)   as l,
+               (select count(*)::int from erp_live_fg)   as f
+      `;
+      expect(counts[0]).toEqual({ h: 3, l: 7, f: 6 });
+    }, 60_000);
   });
 
   it("survives malformed rows: they are dropped and counted, the run still succeeds", async () => {

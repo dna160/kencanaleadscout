@@ -87,6 +87,11 @@ process.env["SELARAS_TIMEOUT_MS"] = "3000";
 process.env["SELARAS_NUMBER_FORMAT"] = "en";
 process.env["STOCK_SYNC_PAGE_SIZE"] = String(PAGE_SIZE);
 process.env["STOCK_SYNC_INTERVAL_MS"] = "60000";
+// Pacing off (FIX R2). The worker deliberately spaces real page requests by
+// STOCK_SYNC_PAGE_DELAY_MS; against a MockAgent there is nothing to be kind to,
+// and 250ms per page would add minutes to this suite. The pacing itself is
+// proven by the tests that pass `pageDelayMs` explicitly.
+process.env["STOCK_SYNC_PAGE_DELAY_MS"] = "0";
 process.env["STOCK_APPROVED_STATUSES"] = "Approved";
 process.env["STOCK_STALE_WINDOW_DAYS"] = "60";
 

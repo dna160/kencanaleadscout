@@ -176,7 +176,12 @@ create table if not exists erp_sync_state (
   last_error    text,
   last_error_at timestamptz,
   rows_synced   bigint not null default 0,
-  running       boolean not null default false
+  running       boolean not null default false,
+  -- Where an interrupted pull got to, and the window it was pulling under.
+  -- `cursor_value` cannot carry this on its own: it is a high-water mark over
+  -- the ROWS' updated_at, so a page whose rows carry none advances nothing.
+  resume_page   integer not null default 0,
+  resume_cursor timestamptz
 );
 ```
 
