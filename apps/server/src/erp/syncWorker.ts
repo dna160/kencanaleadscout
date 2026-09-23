@@ -1,9 +1,11 @@
 /**
  * Stock 2.0 — Selaras → LeadScout mirror sync worker (CONTRACTS §5, ST-R6/R7).
  *
- * WHAT THIS IS: a periodic, **idempotent** copier. It pages the three ERP tables
- * in the order `so_header` → `so_line` → `live_fg` (lines reference headers) and
- * upserts every row by its ERP primary key. That is the whole design.
+ * WHAT THIS IS: a periodic, **idempotent** copier. It pages the four ERP tables
+ * in the order `warna` → `live_fg` → `so_header` → `so_line` (smallest and most
+ * critical first; headers before the lines that reference them — see
+ * SYNC_PULL_ORDER) and upserts every row by its ERP primary key. That is the
+ * whole design.
  *
  * WHAT THIS IS NOT, and must never become: a delta applier. There is no
  * `qty = qty - n` anywhere in this file and there never will be. Running one
@@ -18,6 +20,16 @@
  * `last_error` / `last_error_at`, leaves the cursor exactly where it was, and
  * leaves the previously mirrored rows readable — a broken ERP degrades freshness,
  * never correctness.
+ *
+ * RESUME (FIX R3): that same transaction also records the PAGE NUMBER it
+ * committed, in `resume_page`/`resume_cursor`. The cursor alone could not carry
+ * this promise — it is a high-water mark over the rows' `updated_at`, so a page
+ * whose rows carry no readable timestamp advances nothing and the next run
+ * started over from page 1. An interrupted pull now resumes at the page after
+ * its last committed one, for every table, timestamps or no.
+ *
+ * PACING (FIX R2): requests are spaced (`STOCK_SYNC_PAGE_DELAY_MS`) and the run
+ * slows further, permanently for that run, the first time the ERP answers 429.
  *
  * SURVIVABILITY: the interval callback cannot throw. Every path is wrapped, and
  * `selarasClient.fetchPage()` resolves rather than rejects, so an ERP outage
@@ -67,6 +79,99 @@ type AnySql = Sql | postgres.TransactionSql<{}>;
  * contract (A2) is wrong — which the log says out loud.
  */
 const MAX_PAGES_PER_TABLE = 1_000;
+
+/**
+ * THE ORDER THE TABLES ARE PULLED IN (FIX R4) — deliberately NOT the order they
+ * are declared in, and deliberately not the old `so_header → so_line → live_fg`.
+ *
+ * WHAT WENT WRONG. `so_line` is 138k rows / ~138 pages; `live_fg` is 1,464 rows
+ * / 2 pages. With `so_line` ahead of it, every run spent its whole rate-limit
+ * budget on demand data and `live_fg` failed on page 1 EVERY TIME — so on-hand
+ * stock, the other half of every ATP figure, simply stopped updating while the
+ * logs showed three tables out of four syncing.
+ *
+ * SMALLEST AND MOST CRITICAL FIRST. `warna` (273 rows) and `live_fg` (1,464)
+ * together are three pages; they are done before anything expensive begins, so
+ * no amount of trouble further down can starve them. `so_header` still precedes
+ * `so_line` because lines reference headers. Freshness of the on-hand side is
+ * marginally reduced (it is read a few seconds earlier in the run than it used
+ * to be) — against which: it is currently not read at all.
+ *
+ * The COMPANION rule is the per-table page budget (`syncMaxPagesPerRun`): order
+ * alone protects the tables that come first, and the budget is what stops one
+ * table monopolising a run in any order.
+ */
+export const SYNC_PULL_ORDER: readonly SelarasTable[] = ["warna", "live_fg", "so_header", "so_line"];
+
+/** Non-blocking pause. `unref` so a pending pace can never hold a process up. */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    if (ms <= 0) resolve();
+    else setTimeout(resolve, ms).unref?.();
+  });
+}
+
+/**
+ * THE PACER (FIX R2) — one per run, shared by every table in it.
+ *
+ * Two jobs. The first is a deliberate delay between page requests, because
+ * nothing used to space them at all: a full re-pull went out at ~10 pages every
+ * 5 seconds and the ERP started refusing at page 60.
+ *
+ * The second is the adaptive half, and it is the one that matters. After a 429
+ * the pace slows for the REST OF THE RUN and never returns to full speed —
+ * including for the tables that have not been reached yet. Resuming full speed
+ * the moment a backoff expires is how a rate-limited run becomes a rate-limited
+ * loop: the limit we just hit is a limit we are about to hit again.
+ */
+class RunPacer {
+  private delayMs: number;
+  private slowdowns = 0;
+
+  constructor(
+    private readonly baseMs: number,
+    private readonly factor: number,
+    private readonly maxMs: number,
+    private readonly log: SyncLogger | null = null,
+  ) {
+    this.delayMs = baseMs > 0 ? baseMs : 0;
+  }
+
+  /** The delay currently inserted between two page requests. */
+  get currentMs(): number {
+    return this.delayMs;
+  }
+
+  /** True once this run has been rate-limited at least once. */
+  get throttled(): boolean {
+    return this.slowdowns > 0;
+  }
+
+  /**
+   * Called on every 429 the run sees — whether the page recovered on retry or
+   * failed outright. Monotonic: the pace only ever gets slower within a run.
+   */
+  slowDown(): void {
+    this.slowdowns += 1;
+    // A base of 0 (pacing disabled) must still produce a real delay once the ERP
+    // has said no, otherwise "no pacing configured" means "no adaptation either".
+    const from = this.delayMs > 0 ? this.delayMs : Math.max(1, this.baseMs || 250);
+    const was = this.delayMs;
+    this.delayMs = Math.min(this.maxMs, Math.round(from * Math.max(1, this.factor)));
+    // One line per slowdown, and it names the new pace: an operator reading the
+    // log after a rate-limited run can see exactly how hard we backed off, and
+    // the ERP's owners can be told what load to expect from us.
+    this.log?.warn(
+      `pacing: HTTP 429 seen (${this.slowdowns}× this run) — page delay ${was}ms → ${this.delayMs}ms for the ` +
+        `REST of this run, every remaining table included. It does not go back up until the next run.`,
+    );
+  }
+
+  /** Wait the current pace. Awaited BETWEEN page requests, never before the first. */
+  async pace(): Promise<void> {
+    if (this.delayMs > 0) await sleep(this.delayMs);
+  }
+}
 
 /**
  * A `running` row idle for this many intervals is a crashed run, not a live one.
@@ -506,13 +611,51 @@ interface SyncStateRow {
   table_name: string;
   cursor_value: Date | null;
   running: boolean;
+  resume_page: number | null;
+  resume_cursor: Date | null;
 }
 
-async function readCursor(db: Sql, table: SelarasTable): Promise<Date | null> {
+/**
+ * Where this table's next pull starts, and under which window.
+ *
+ * `cursor` is the ST-R7 high-water mark. `resumePage`/`resumeCursor` are FIX R3:
+ * the last page an interrupted pull COMMITTED, and the cursor it was pulling
+ * under when it counted that page.
+ */
+interface TableState {
+  cursor: Date | null;
+  resumePage: number;
+  resumeCursor: Date | null;
+}
+
+async function readTableState(db: Sql, table: SelarasTable): Promise<TableState> {
   const rows = await db<SyncStateRow[]>`
-    select table_name, cursor_value, running from erp_sync_state where table_name = ${table}
+    select table_name, cursor_value, running, resume_page, resume_cursor
+      from erp_sync_state where table_name = ${table}
   `;
-  return rows[0]?.cursor_value ?? null;
+  const row = rows[0];
+  const resumePage = row?.resume_page ?? 0;
+  return {
+    cursor: row?.cursor_value ?? null,
+    resumePage: resumePage > 0 ? resumePage : 0,
+    resumeCursor: row?.resume_cursor ?? null,
+  };
+}
+
+/**
+ * Forget the resume point: this table's pull reached the end of its window, so
+ * the next run starts at page 1 of whatever the cursor now selects.
+ *
+ * Not doing this would be the worse bug of the two: a stale resume page would
+ * make the next run skip the first N pages of a window it has never read.
+ */
+async function clearResume(db: Sql, table: SelarasTable): Promise<void> {
+  await db`
+    update erp_sync_state
+       set resume_page = 0, resume_cursor = null
+     where table_name = ${table}
+       and (resume_page <> 0 or resume_cursor is not null)
+  `;
 }
 
 /**
@@ -707,6 +850,15 @@ async function clearCursors(db: Sql): Promise<number> {
        and cursor_value is not null
     returning table_name
   `;
+  // A full re-sync means page 1 of every table, so the resume point goes with
+  // the cursor. Leaving it would make a "re-pull everything" run skip exactly
+  // the pages an earlier interrupted pull had already read — the opposite of
+  // what was asked for, and silent.
+  await db`
+    update erp_sync_state
+       set resume_page = 0, resume_cursor = null
+     where table_name = any(${[...SYNC_TABLES]})
+  `;
   return cleared.length;
 }
 
@@ -841,12 +993,22 @@ async function recomputeSkuKeyStep(db: Sql, log: SyncLogger): Promise<SkuKeyReco
 }
 
 /**
- * Commit one page: the upserts AND the cursor advance, in one transaction. This
- * pairing is the whole of ST-R7 — if the transaction rolls back, neither the
- * rows nor the cursor moved, and the next run replays exactly this page.
+ * Commit one page: the upserts, the cursor advance AND the resume point, in one
+ * transaction. This pairing is the whole of ST-R7 — if the transaction rolls
+ * back, nothing moved and the next run replays exactly this page.
  *
  * `greatest(cursor_value, ...)` keeps the cursor monotonic: Postgres' greatest()
  * ignores NULLs, so a first-ever page and an out-of-order page both behave.
+ *
+ * FIX R3 — WHY THE RESUME POINT HAD TO JOIN IT. `greatest()` ignoring NULLs is
+ * also the hole: `maxUpdatedAt()` returns null for a page whose rows carry no
+ * readable `updated_at`, and `greatest(cursor_value, null)` is then a no-op, so
+ * the page COMMITTED and the stored cursor did not move. That is the entire
+ * so_line loop — 44 pages committed, cursor still null, next tick back to page
+ * 1 — and it is why so_header (whose rows do carry timestamps, so every page
+ * advanced it) looked fine beside it. The page number is written here, in the
+ * same transaction, precisely because it does NOT depend on the rows' contents:
+ * a committed page now always leaves a resume point, timestamps or no.
  */
 async function commitPage(
   db: Sql,
@@ -854,19 +1016,25 @@ async function commitPage(
   rows: readonly AnyMirrorRow[],
   deletedIds: readonly string[],
   pageMaxUpdatedAt: Date | null,
+  page: number,
+  pullCursor: Date | null,
 ): Promise<{ written: number; removed: number }> {
   // Belt and braces over `maxUpdatedAt()`: nothing but a real instant is ever
   // interpolated into the cursor update, because an Invalid Date here throws
   // during Bind and rolls back rows that were otherwise perfectly good.
   const nextCursor = isUsableInstant(pageMaxUpdatedAt) ? pageMaxUpdatedAt : null;
+  const resumeCursor = isUsableInstant(pullCursor) ? pullCursor : null;
   return db.begin(async (tx) => {
     const written = await upsertPage(tx, table, rows);
-    // Same transaction as the upserts and the cursor advance: a page either
-    // lands whole — additions, deletions and cursor — or not at all (ST-R7).
+    // Same transaction as the upserts, the cursor advance and the resume point:
+    // a page either lands whole — additions, deletions, cursor, resume point —
+    // or not at all (ST-R7).
     const removed = await deleteRows(tx, table, deletedIds);
     await tx`
       update erp_sync_state
          set cursor_value  = greatest(cursor_value, ${nextCursor}::timestamptz),
+             resume_page     = ${page},
+             resume_cursor   = ${resumeCursor}::timestamptz,
              rows_synced     = rows_synced + ${written},
              last_ok_at      = now(),
              last_error      = null,
@@ -948,9 +1116,12 @@ async function syncTable(
   pageSize: number,
   log: SyncLogger,
   full = false,
+  pacer: RunPacer = new RunPacer(0, 1, 0),
+  maxPagesPerRun = 0,
 ): Promise<SyncTableResult> {
   const startedAt = Date.now();
-  const cursorBefore = await readCursor(db, table);
+  const state = await readTableState(db, table);
+  const cursorBefore = state.cursor;
   const result: SyncTableResult = {
     table,
     ok: true,
@@ -971,15 +1142,42 @@ async function syncTable(
   const nonFiniteSamples: string[] = [];
   const badDateSamples: string[] = [];
 
+  // FIX R3 — RESUME: finish the pull that was interrupted, in the window it
+  // started in.
+  //
+  // A page number only means something inside ONE ordering: page 7 of
+  // `updated_at >= X` and page 7 of `updated_at >= Y` are different rows. So an
+  // interrupted pull carries on under the cursor it BEGAN with (`resumeCursor`,
+  // written beside the page in the same transaction), not under the cursor its
+  // committed pages have since advanced to. Re-pulling under an older `since`
+  // can only ever see MORE rows, never fewer, and every write is an idempotent
+  // upsert — so the direction of that error is free.
+  //
+  // `cursorBefore` still governs everything else: it is what the table reverts
+  // to the moment the pull completes and the resume point is cleared.
+  const resumable = state.resumePage > 0;
+  const pullCursor = resumable ? state.resumeCursor : cursorBefore;
+  const startPage = resumable ? state.resumePage + 1 : 1;
+  // FIX R4 — the fair share. One table cannot spend the whole run (and the whole
+  // of the ERP's rate budget) before the next one is asked for anything.
+  const budget = maxPagesPerRun > 0 ? maxPagesPerRun : MAX_PAGES_PER_TABLE;
+  const lastPage = Math.min(MAX_PAGES_PER_TABLE, startPage + budget - 1);
+
   // FIX A — the exact `updated_at__gte` the first page carries, logged verbatim.
   // The documented grammar is `YYYY-MM-DD HH:mm:ss` in WIB and the client sends
   // exactly that, minus STOCK_SYNC_LOOKBACK_MINUTES. Whether the ERP reads it the
   // way we mean is the one thing only real traffic can answer, and this line is
   // what makes it answerable from the logs instead of by inference.
   log.info(
-    `${table}: pulling with updated_at__gte=${cursorParam(cursorBefore) ?? "(none — full pull)"}` +
+    `${table}: pulling with updated_at__gte=${cursorParam(pullCursor) ?? "(none — full pull)"}` +
       ` (stored cursor ${cursorBefore?.toISOString() ?? "null"}, lookback ` +
-      `${config.stock.syncLookbackMinutes} min)`,
+      `${config.stock.syncLookbackMinutes} min` +
+      `${
+        resumable
+          ? `, RESUMING an interrupted pull at page ${startPage} — page ${state.resumePage} was the last ` +
+            `one committed, under updated_at__gte=${cursorParam(pullCursor) ?? "(none)"}`
+          : ""
+      })`,
   );
 
   // ST-R5.3 — the column diagnostic is latched for the whole table pass, the
@@ -990,17 +1188,34 @@ async function syncTable(
   let diagnosed = false;
 
   let previousSignature = "";
-  for (let page = 1; page <= MAX_PAGES_PER_TABLE; page += 1) {
-    const res = await client.fetchPage(table, { since: cursorBefore, page, limit: pageSize });
+  /** True once the table's window is known to be exhausted — see `clearResume`. */
+  let reachedEnd = false;
+  for (let page = startPage; page <= lastPage; page += 1) {
+    // FIX R2 — the pace, between requests and never before the first one of a
+    // table. It is awaited HERE rather than after the commit so that the DB work
+    // a page costs counts towards the gap instead of adding to it.
+    if (page > startPage) await pacer.pace();
+
+    const res = await client.fetchPage(table, { since: pullCursor, page, limit: pageSize });
     if (!res.ok) {
-      // Cursor untouched. The mirror keeps whatever it already had (ST-R7).
+      // A 429 is not a verdict on this request, it is a verdict on our pace: the
+      // rest of the run slows down whether or not this page recovered.
+      if (res.kind === "rate_limit") pacer.slowDown();
+      // Cursor untouched. The mirror keeps whatever it already had (ST-R7), and
+      // the resume point left by the last committed page stays exactly where it
+      // is — that is what the next tick reads to carry on from.
       result.ok = false;
       result.error = res.error;
       await markTableError(db, table, res.error, res.kind);
-      log.error(`${table}: page ${page} failed — ${res.error}; cursor left at ${cursorBefore?.toISOString() ?? "null"}`);
+      log.error(
+        `${table}: page ${page} failed — ${res.error}; cursor left at ` +
+          `${cursorBefore?.toISOString() ?? "null"}, next tick resumes at page ` +
+          `${result.pages > 0 || resumable ? page : startPage}`,
+      );
       reportRefusals(table, result, ambiguousSamples, nonFiniteSamples, badDateSamples, log);
       return result;
     }
+    if (res.page.rateLimited === true) pacer.slowDown();
 
     const { rows, rawCount, dropped, ambiguousNumbers, nonFiniteNumbers, badDates, totalPages } = res.page;
     // Observation only: it names the raw wire keys of one row and the six
@@ -1019,7 +1234,10 @@ async function syncTable(
     if (dropped > 0) {
       log.warn(`${table}: dropped ${dropped} of ${rawCount} rows on page ${page} (no usable primary key)`);
     }
-    if (rawCount === 0) break;
+    if (rawCount === 0) {
+      reachedEnd = true;
+      break;
+    }
 
     // An ERP that ignores `page` returns page 1 forever. Detect it rather than
     // spin: the rows are already committed and idempotent, so stopping is safe.
@@ -1031,6 +1249,9 @@ async function syncTable(
         `${table}: page ${page} repeated page ${page - 1} verbatim — the 'page' query param ` +
           `looks ignored. Stopping this table; rows already committed are intact.`,
       );
+      // Not an end reached honestly, but a resume page against an ERP that
+      // ignores `page` would be a resume to nowhere. Start clean next tick.
+      reachedEnd = true;
       break;
     }
     previousSignature = signature;
@@ -1041,7 +1262,7 @@ async function syncTable(
     const pageMax = maxUpdatedAt(rows);
     const live = rows.filter((r) => r.deleted_at === null);
     const deletedIds = rows.filter((r) => r.deleted_at !== null).map(rowKey);
-    const { written, removed } = await commitPage(db, table, live, deletedIds, pageMax);
+    const { written, removed } = await commitPage(db, table, live, deletedIds, pageMax, page, pullCursor);
     result.pages += 1;
     result.rows += written;
     result.deleted += removed;
@@ -1065,15 +1286,48 @@ async function syncTable(
       const elapsed = Math.round((Date.now() - startedAt) / 1000);
       log.info(
         `${table}: full re-pull progress — ${result.pages} page(s), ${result.rows} row(s) committed in ` +
-          `${elapsed}s, cursor now ${result.cursorAfter?.toISOString() ?? "null"}`,
+          `${elapsed}s, cursor now ${result.cursorAfter?.toISOString() ?? "null"}, last committed page ${page}`,
       );
     }
 
-    if (totalPages !== null && page >= totalPages) break;
-    if (rawCount < pageSize) break;
+    if (totalPages !== null && page >= totalPages) {
+      reachedEnd = true;
+      break;
+    }
+    if (rawCount < pageSize) {
+      reachedEnd = true;
+      break;
+    }
     if (page === MAX_PAGES_PER_TABLE) {
       log.warn(`${table}: hit the ${MAX_PAGES_PER_TABLE}-page safety cap — pagination (A2) is probably wrong`);
+      reachedEnd = true;
     }
+  }
+
+  if (reachedEnd) {
+    // The window is exhausted: the next run starts at page 1 of whatever the
+    // cursor now selects, so the resume point must not survive.
+    await clearResume(db, table);
+    // THE DIAGNOSTIC FOR THE LOOP THAT STARTED ALL THIS. A table that committed
+    // pages and still has no cursor has no high-water mark to pull from, so
+    // every pass is a full pass. It is no longer a LOOP — the resume point
+    // carried this one through to the end — but it is still a full re-read of
+    // the table on every tick, and only the ERP can fix it.
+    if (result.pages > 0 && result.cursorAfter === null) {
+      log.warn(
+        `${table}: ${result.pages} page(s) committed and the cursor is STILL null — not one row in this ` +
+          `table carried a readable updated_at, so there is no high-water mark to pull from and every ` +
+          `pass re-reads the whole table. The mirror is correct; the load is not. Ask the ERP for an ` +
+          `updated_at (or an equivalent) on '${table}'.`,
+      );
+    }
+  } else {
+    // Stopped by the per-run page budget, not by the end of the data.
+    log.info(
+      `${table}: stopped at the ${budget}-page budget for this run (pages ${startPage}-${lastPage}); ` +
+        `the next tick resumes at page ${lastPage + 1}. This is the fair-share cap that keeps one large ` +
+        `table from spending the whole run — raise STOCK_SYNC_MAX_PAGES_PER_RUN if that is wrong.`,
+    );
   }
 
   if (result.pages === 0) await markTableOk(db, table);
@@ -1252,6 +1506,7 @@ async function fetchErpKeySet(
   table: SelarasTable,
   pageSize: number,
   log: SyncLogger,
+  pacer: RunPacer = new RunPacer(0, 1, 0),
 ): Promise<
   | { ok: true; keys: Set<string>; pages: number; dropped: number; projected: boolean; capped: boolean }
   | { ok: false; error: string; kind: SelarasFailureKind }
@@ -1264,8 +1519,15 @@ async function fetchErpKeySet(
   let previousSignature = "";
 
   for (let page = 1; page <= MAX_PAGES_PER_TABLE; page += 1) {
+    // FIX R2 — the sweep pages the FULL key set of every table, which is the
+    // single biggest burst of requests this service makes. It is paced exactly
+    // like the pull, and it backs off the same way.
+    if (page > 1) await pacer.pace();
     const res = await client.fetchKeyPage(table, { page, limit: pageSize });
-    if (!res.ok) return { ok: false, error: res.error, kind: res.kind };
+    if (!res.ok) {
+      if (res.kind === "rate_limit") pacer.slowDown();
+      return { ok: false, error: res.error, kind: res.kind };
+    }
 
     const { keys: pageKeys, rawCount, dropped: pageDropped, totalPages, projected: pageProjected } = res.page;
     dropped += pageDropped;
@@ -1321,6 +1583,7 @@ async function reconcileTable(
   pageSize: number,
   minRatio: number,
   log: SyncLogger,
+  pacer: RunPacer = new RunPacer(0, 1, 0),
 ): Promise<ReconcileTableResult> {
   const mirrored = await mirrorCount(db, table);
   const base: ReconcileTableResult = {
@@ -1333,7 +1596,7 @@ async function reconcileTable(
     projected: true,
   };
 
-  const fetched = await fetchErpKeySet(client, table, pageSize, log);
+  const fetched = await fetchErpKeySet(client, table, pageSize, log, pacer);
   if (!fetched.ok) {
     await markReconcileError(db, table, `reconcile aborted — ${fetched.error}`, fetched.kind);
     log.error(
@@ -1580,6 +1843,18 @@ export interface ErpSyncDeps {
   full?: boolean;
   /** Who asked for it. Audit only; logged verbatim on a full re-sync. */
   actor?: string | null;
+  /**
+   * FIX R2 — the pause between two page requests. Defaults to
+   * `STOCK_SYNC_PAGE_DELAY_MS`; 0 disables pacing. Injectable so a test can run
+   * at full speed (and so a pacing test can assert a delay it chose itself)
+   * without depending on the ambient environment.
+   */
+  pageDelayMs?: number;
+  /**
+   * FIX R4 — the most pages ONE table may pull in ONE run. Defaults to
+   * `STOCK_SYNC_MAX_PAGES_PER_RUN`; 0 disables the cap.
+   */
+  maxPagesPerRun?: number;
 }
 
 /**
@@ -1636,6 +1911,8 @@ export async function runErpSyncOnce(overrides: Partial<ErpSyncDeps> = {}): Prom
     log: overrides.log ?? defaultSyncLogger,
     full,
     actor: overrides.actor ?? null,
+    pageDelayMs: overrides.pageDelayMs ?? config.stock.syncPageDelayMs,
+    maxPagesPerRun: overrides.maxPagesPerRun ?? config.stock.syncMaxPagesPerRun,
   };
 
   const run = executeRun(deps).finally(() => {
@@ -1730,6 +2007,7 @@ export async function reconcileErpMirror(overrides: Partial<ErpSyncDeps> = {}): 
     pageSize: overrides.pageSize ?? config.stock.syncPageSize,
     intervalMs: overrides.intervalMs ?? config.stock.syncIntervalMs,
     log: overrides.log ?? defaultSyncLogger,
+    pageDelayMs: overrides.pageDelayMs ?? config.stock.syncPageDelayMs,
   };
 
   const run = executeReconcile(deps).finally(() => {
@@ -1744,6 +2022,13 @@ async function executeReconcile(deps: ErpSyncDeps): Promise<ReconcileRunResult> 
   const startedAt = Date.now();
   const tables: ReconcileTableResult[] = [];
   const minRatio = config.stock.reconcileMinRatio;
+  // One pacer for the whole sweep, same posture as the pull's (FIX R2).
+  const pacer = new RunPacer(
+    deps.pageDelayMs ?? config.stock.syncPageDelayMs,
+    config.stock.syncRateLimitSlowdown,
+    config.stock.syncMaxPageDelayMs,
+    log,
+  );
 
   let locked = false;
   try {
@@ -1758,9 +2043,9 @@ async function executeReconcile(deps: ErpSyncDeps): Promise<ReconcileRunResult> 
   }
 
   try {
-    for (const table of SYNC_TABLES) {
+    for (const table of SYNC_PULL_ORDER) {
       try {
-        tables.push(await reconcileTable(db, client, table, pageSize, minRatio, log));
+        tables.push(await reconcileTable(db, client, table, pageSize, minRatio, log, pacer));
       } catch (err) {
         // Anything the sweep itself threw. The purge is one transaction, so it
         // rolled back whole: the mirror is untouched, which is the safe outcome.
@@ -1813,6 +2098,16 @@ async function executeRun(deps: ErpSyncDeps): Promise<SyncRunResult> {
   const tables: SyncTableResult[] = [];
   let recompute: SkuKeyRecomputeResult | undefined;
   let cursorsCleared = 0;
+  // FIX R2 — ONE pacer for the whole run, so a 429 on the biggest table also
+  // slows the tables that have not been reached yet. Per-table pacers would let
+  // each one rediscover the limit for itself, at the ERP's expense.
+  const pacer = new RunPacer(
+    deps.pageDelayMs ?? config.stock.syncPageDelayMs,
+    config.stock.syncRateLimitSlowdown,
+    config.stock.syncMaxPageDelayMs,
+    log,
+  );
+  const maxPagesPerRun = deps.maxPagesPerRun ?? config.stock.syncMaxPagesPerRun;
 
   let locked = false;
   try {
@@ -1882,11 +2177,12 @@ async function executeRun(deps: ErpSyncDeps): Promise<SyncRunResult> {
       }
     }
 
-    // Order matters: lines reference headers, and live_fg last so on-hand is the
-    // freshest half of the ATP subtraction (§5).
-    for (const table of SYNC_TABLES) {
+    // Order matters, and it is NOT the declaration order — see SYNC_PULL_ORDER.
+    // Small and critical first (warna, live_fg), then headers before the lines
+    // that reference them, so a table that runs long cannot starve the rest.
+    for (const table of SYNC_PULL_ORDER) {
       try {
-        tables.push(await syncTable(db, client, table, pageSize, log, full));
+        tables.push(await syncTable(db, client, table, pageSize, log, full, pacer, maxPagesPerRun));
       } catch (err) {
         // Anything the table pass itself threw (a DB blip mid-transaction).
         // The transaction rolled back, so the cursor did not move.
@@ -1937,8 +2233,8 @@ async function executeRun(deps: ErpSyncDeps): Promise<SyncRunResult> {
     // next ordinary tick resumes from there rather than starting over.
     log.warn(
       `${label} finished with errors on ${failed.join(", ")} — ${rows} rows in ${durationMs}ms. ` +
-        `The mirror is readable: committed pages are intact and each failed table's cursor sits at its ` +
-        `last COMMITTED page, so the re-pull resumes there instead of restarting.`,
+        `The mirror is readable: committed pages are intact, and each failed table's cursor AND resume ` +
+        `page sit at its last COMMITTED page, so the re-pull carries on from there instead of restarting.`,
     );
   }
 

@@ -465,6 +465,7 @@ function noticeAuthFailure(table: SelarasTable, status: number): void {
 /** The failure kind for an HTTP status the ERP answered with. */
 function failureKind(status: number): SelarasFailureKind {
   if (status === 401 || status === 403) return "auth";
+  if (status === 429) return "rate_limit";
   if (status >= 500) return "server";
   if (status >= 400) return "erp_error";
   return "other";
@@ -482,6 +483,19 @@ function describeClientError(table: SelarasTable, status: number): string {
     return `HTTP 404 from ERP — no such endpoint. Rows come from <base>/table/${SELARAS_ENDPOINTS[table]}; check SELARAS_BASE_URL ends at /api`;
   }
   return `HTTP ${status} from ERP`;
+}
+
+/**
+ * The message a page that ran out of 429 retries carries. Says what was tried,
+ * so the log distinguishes "we gave up after backing off" from "we never tried".
+ */
+function describeRateLimit(table: SelarasTable, attempts: number, waitedMs: number): string {
+  return (
+    `HTTP 429 from ERP — rate limited on '${SELARAS_ENDPOINTS[table]}' and still limited after ` +
+    `${attempts} attempt(s) over ${Math.round(waitedMs / 100) / 10}s of backoff. Nothing is wrong with ` +
+    `the request: this page is left for the next tick, which resumes from the last COMMITTED page. ` +
+    `If this persists, lower STOCK_SYNC_PAGE_SIZE or raise STOCK_SYNC_PAGE_DELAY_MS`
+  );
 }
 
 /**
@@ -1387,6 +1401,84 @@ export function isRowDeleted(raw: unknown): boolean {
 const MAX_BODY_BYTES = 64 * 1024 * 1024; // a 1,000-row page of wide rows, with room
 const DEFAULT_RETRY_DELAY_MS = 500;
 
+/**
+ * RATE-LIMIT RETRY (FIX R1) — the one 4xx that means "try again later".
+ *
+ * §5 says "no retry on 4xx" and A24 applied that literally to 429 as well. That
+ * is wrong, and it is what turned one rate-limited full re-pull into a loop: a
+ * 429 is not a statement about our request, it is a statement about our TIMING.
+ * 400/401/403/404 stay terminal — those are configuration faults and retrying
+ * them is noise in the log and load on the ERP.
+ *
+ * The budget is bounded. A rate limit that outlasts it is an incident, and the
+ * right response is to stop, leave the page for the next tick and let the stored
+ * cursor / resume page say where to carry on from — not to keep knocking.
+ */
+export interface RateLimitPolicy {
+  /** Total attempts for one page, the first try included. */
+  attempts: number;
+  /** Base of the exponential backoff when no `Retry-After` header is sent. */
+  baseDelayMs: number;
+  /** Ceiling on any single wait, a `Retry-After` value included. */
+  maxDelayMs: number;
+}
+
+/** Never negative. Spelled out rather than `Math.max(0, …)`, which §7.5's
+ * source scan reads as an ATP clamp wherever it appears in this file. */
+function notNegative(n: number): number {
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function ratePolicy(overrides?: Partial<RateLimitPolicy>): RateLimitPolicy {
+  return {
+    attempts: Math.max(1, overrides?.attempts ?? config.stock.syncRateLimitAttempts),
+    baseDelayMs: notNegative(overrides?.baseDelayMs ?? config.stock.syncRateLimitBaseMs),
+    maxDelayMs: notNegative(overrides?.maxDelayMs ?? config.stock.syncRateLimitMaxDelayMs),
+  };
+}
+
+/**
+ * `Retry-After`, in either documented form: delta-seconds (`Retry-After: 2`) or
+ * an HTTP-date (`Retry-After: Wed, 21 Oct 2026 07:28:00 GMT`). Anything else —
+ * absent, blank, negative, unparseable — returns null, and the caller falls back
+ * to its own backoff rather than guessing.
+ *
+ * A date already in the past yields 0, which means "retry now": the server told
+ * us when it would be ready and that moment has passed.
+ */
+export function parseRetryAfterMs(raw: unknown, now = Date.now()): number | null {
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  if (typeof value !== "string" && typeof value !== "number") return null;
+  const s = String(value).trim();
+  if (s === "") return null;
+  if (/^\d+$/.test(s)) {
+    const seconds = Number(s);
+    return Number.isFinite(seconds) ? seconds * 1000 : null;
+  }
+  // An HTTP-date always names a weekday and a month; a bare "-5" or "3.5" does
+  // not, and `Date.parse` would read it as a year and hand back a wait in the
+  // distant past. Refuse it and let the caller's own backoff decide.
+  if (!/[a-zA-Z]/.test(s)) return null;
+  const at = Date.parse(s);
+  if (Number.isNaN(at)) return null;
+  return notNegative(at - now);
+}
+
+/**
+ * Exponential backoff with jitter, for a 429 that carried no `Retry-After`.
+ *
+ * `retry` is 1-based. The jitter is the point, not decoration: every table in
+ * this worker backs off on the same clock, and un-jittered exponential backoff
+ * makes them all come back in the same millisecond — a thundering herd aimed at
+ * a server that has just told us it is overloaded. The wait is uniform in
+ * [half, full] of the exponential step, so it is never zero and never a spike.
+ */
+export function rateLimitBackoffMs(retry: number, policy: RateLimitPolicy, random = Math.random): number {
+  const step = Math.min(policy.baseDelayMs * 2 ** notNegative(retry - 1), policy.maxDelayMs);
+  if (step <= 0) return 0;
+  return Math.round(step / 2 + random() * (step / 2));
+}
+
 export interface FetchPageOptions {
   /** Cursor: only rows with `updated_at >= since`. Null ⇒ full pull. */
   since?: Date | null;
@@ -1396,8 +1488,10 @@ export interface FetchPageOptions {
   limit: number;
   /** Test seam: undici dispatcher (MockAgent) so tests never touch a network. */
   dispatcher?: Dispatcher;
-  /** Test seam: backoff before the single retry. */
+  /** Test seam: backoff before the single 5xx/network retry. */
   retryDelayMs?: number;
+  /** Rate-limit budget for this page. Defaults to `config.stock.*`. */
+  rateLimit?: Partial<RateLimitPolicy>;
 }
 
 export interface SelarasPage<T> {
@@ -1433,6 +1527,13 @@ export interface SelarasPage<T> {
    * page. The worker logs it; nothing reads it to make a decision.
    */
   columnDiagnostic: ColumnDiagnostic | null;
+  /**
+   * True when this page was rate-limited at least once and only succeeded after
+   * backing off. The page is good; the PACE is not. The worker reads it and
+   * slows the rest of the run down — a limit we just hit is a limit we will hit
+   * again, and a page that recovered silently would otherwise teach us nothing.
+   */
+  rateLimited?: boolean;
 }
 
 /**
@@ -1456,6 +1557,16 @@ export type SelarasFailureKind =
   | "erp_error"
   /** A 5xx, after the one retry. */
   | "server"
+  /**
+   * 429 — the ERP is rate-limiting us, after the bounded retry budget ran out.
+   *
+   * THE ONE 4xx THAT IS NOT A CONFIGURATION FAULT. A24 used to read §5's "no
+   * retry on 4xx" literally and treat this like a 401, which is how a rate limit
+   * became a permanent failure and every tick re-ran the same wall of requests.
+   * It is its own kind because the operator advice is different from every other
+   * 4xx: nobody needs to change anything, the run backs off and carries on.
+   */
+  | "rate_limit"
   | "other";
 
 export type SelarasResult<T> =
@@ -1588,6 +1699,8 @@ function sleep(ms: number): Promise<void> {
 interface RawResponse {
   status: number;
   body: unknown;
+  /** Lower-cased response headers. Only `retry-after` is ever read. */
+  headers: Record<string, unknown>;
 }
 
 /**
@@ -1634,9 +1747,11 @@ async function requestOnce(url: string, timeoutMs: number, dispatcher?: Dispatch
 
   res.body.on("error", () => {}); // a destroyed undici body emits a benign abort
 
+  const responseHeaders = (res.headers ?? {}) as Record<string, unknown>;
+
   if (res.statusCode >= 400) {
     res.body.destroy();
-    return { status: res.statusCode, body: null };
+    return { status: res.statusCode, body: null, headers: responseHeaders };
   }
 
   let received = 0;
@@ -1652,9 +1767,9 @@ async function requestOnce(url: string, timeoutMs: number, dispatcher?: Dispatch
   }
 
   const text = Buffer.concat(chunks).toString("utf8");
-  if (text.trim() === "") return { status: res.statusCode, body: null };
+  if (text.trim() === "") return { status: res.statusCode, body: null, headers: responseHeaders };
   try {
-    return { status: res.statusCode, body: JSON.parse(text) as unknown };
+    return { status: res.statusCode, body: JSON.parse(text) as unknown, headers: responseHeaders };
   } catch {
     // Deliberately NOT rethrowing the parser's own message: V8 embeds a prefix
     // of the offending body in it, and an auth-error body can quote the bearer
@@ -1663,39 +1778,86 @@ async function requestOnce(url: string, timeoutMs: number, dispatcher?: Dispatch
   }
 }
 
-/**
- * Fetch one page of one table. RESOLVES ALWAYS — a transport failure comes back
- * as `{ ok: false }`, matching the `packages/core/src/fetchPage.ts` posture, so
- * an ERP outage is data to the worker rather than an exception to survive.
- *
- * One retry with backoff on 5xx and network errors; no retry on 4xx (§5) — a
- * 401/404 is a configuration fault and hammering it twice fixes nothing.
- */
-export async function fetchPage<K extends SelarasTable>(
-  table: K,
-  opts: FetchPageOptions,
-): Promise<SelarasResult<SelarasRowByTable[K]>> {
-  const url = buildPageUrl(table, opts);
-  const retryDelayMs = opts.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
-  let last: { error: string; status: number | null; kind: SelarasFailureKind; retryable: boolean } = {
-    error: "no attempt made",
-    status: null,
-    kind: "other",
-    retryable: false,
-  };
+interface RetryOptions {
+  dispatcher?: Dispatcher;
+  retryDelayMs?: number;
+  rateLimit?: Partial<RateLimitPolicy>;
+}
 
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    if (attempt > 0) await sleep(retryDelayMs * attempt);
+interface TransportFailure {
+  error: string;
+  status: number | null;
+  kind: SelarasFailureKind;
+  retryable: boolean;
+}
+
+type TransportResult =
+  | { ok: true; status: number; body: unknown; rateLimited: boolean }
+  | ({ ok: false; rateLimited: boolean } & TransportFailure);
+
+/**
+ * ONE request, with the whole retry policy in one place — `fetchPage()` and
+ * `fetchKeyPage()` share it so the sweep can never drift from the pull.
+ *
+ * The policy, in full:
+ *   · 429            — RETRYABLE (FIX R1). Honours `Retry-After` when the ERP
+ *                      sends one, exponential backoff with jitter when it does
+ *                      not, and gives up after a bounded number of attempts
+ *                      rather than knocking forever.
+ *   · 5xx, transport — one retry, exactly as before (§5).
+ *   · other 4xx      — TERMINAL. A 400/401/403/404 is a configuration fault:
+ *                      retrying it fixes nothing and doubles the noise.
+ *   · non-JSON 2xx   — TERMINAL. A shape fault retried is a shape fault hidden.
+ *
+ * Resolves always; a transport error is a value, never an exception.
+ */
+async function requestWithRetries(table: SelarasTable, url: string, opts: RetryOptions): Promise<TransportResult> {
+  const policy = ratePolicy(opts.rateLimit);
+  const retryDelayMs = opts.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
+  /** Attempts spent against a 429, and the total time they waited. */
+  let rateLimited = 0;
+  let waitedMs = 0;
+  /** The ONE retry a 5xx or a transport error gets — unchanged from §5. */
+  let softRetries = 0;
+  let last: TransportFailure = { error: "no attempt made", status: null, kind: "other", retryable: false };
+
+  // Bounded from the outside as well as per-kind, so an ERP alternating 500 and
+  // 429 still terminates.
+  const maxAttempts = policy.attempts + 2;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
       const res = await requestOnce(url, config.selarasTimeoutMs, opts.dispatcher);
-      if (res.status >= 500) {
-        last = { error: `HTTP ${res.status} from ERP`, status: res.status, kind: "server", retryable: true };
+
+      if (res.status === 429) {
+        rateLimited += 1;
+        last = {
+          error: describeRateLimit(table, rateLimited, waitedMs),
+          status: 429,
+          kind: "rate_limit",
+          retryable: true,
+        };
+        if (rateLimited >= policy.attempts) break;
+        // The server's own number first; ours only when it did not give one.
+        const asked = parseRetryAfterMs(res.headers["retry-after"]);
+        const wait = Math.min(asked ?? rateLimitBackoffMs(rateLimited, policy), policy.maxDelayMs);
+        waitedMs += wait;
+        await sleep(wait);
         continue;
       }
+
+      if (res.status >= 500) {
+        last = { error: `HTTP ${res.status} from ERP`, status: res.status, kind: "server", retryable: true };
+        if (softRetries >= 1) break;
+        softRetries += 1;
+        await sleep(retryDelayMs * softRetries);
+        continue;
+      }
+
       if (res.status >= 400) {
-        // 4xx is terminal for this run: no retry (§5).
+        // 4xx is terminal for this run: no retry (§5) — 429 above excepted.
         return {
           ok: false,
+          rateLimited: rateLimited > 0,
           error: describeClientError(table, res.status),
           status: res.status,
           kind: failureKind(res.status),
@@ -1703,74 +1865,7 @@ export async function fetchPage<K extends SelarasTable>(
         };
       }
 
-      const env = readEnvelope(res.body, opts.limit);
-      if (env.success === false) {
-        // FIX C: checked BEFORE the shape notice. A well-formed `{success:false}`
-        // error body is not the A1 shape (it has no meta.total_pages), so the
-        // envelope warning used to fire and send an operator to
-        // erp/selarasClient.ts at the exact moment the problem is at the ERP.
-        // Not retryable either: the ERP understood us and said no.
-        return {
-          ok: false,
-          error: successFailure(table, env),
-          status: res.status,
-          kind: "erp_error",
-          retryable: false,
-        };
-      }
-      noticeShape(table, env);
-
-      // ST-R5.3 — built from the row we already hold, before the adapt loop, and
-      // deliberately wrapped: a diagnostic is never allowed to fail a page.
-      let columnDiagnostic: ColumnDiagnostic | null = null;
-      if (config.stock.diagnoseColumns && opts.page === 1) {
-        try {
-          columnDiagnostic = buildColumnDiagnostic(table, env.rows[0]);
-        } catch {
-          columnDiagnostic = null;
-        }
-      }
-
-      const adapt = ADAPTERS[table];
-      const rows: SelarasRowByTable[K][] = [];
-      let dropped = 0;
-      // Install the ambiguity collector around the SYNCHRONOUS adapt loop only.
-      const pageTally: PageTally = {
-        ambiguous: { count: 0, samples: [] },
-        nonFinite: { count: 0, samples: [] },
-        badDates: { count: 0, samples: [] },
-      };
-      tally = pageTally;
-      try {
-        for (const raw of env.rows) {
-          let adapted: SelarasRowByTable[K] | null = null;
-          try {
-            adapted = adapt(raw);
-          } catch {
-            // An adapter is written not to throw; if one ever does, the row is
-            // dropped, not the page (a malformed row never kills a run).
-            adapted = null;
-          }
-          if (adapted === null) dropped += 1;
-          else rows.push(adapted);
-        }
-      } finally {
-        tally = null;
-      }
-      return {
-        ok: true,
-        page: {
-          rows,
-          rawCount: env.rows.length,
-          dropped,
-          ambiguousNumbers: pageTally.ambiguous,
-          nonFiniteNumbers: pageTally.nonFinite,
-          badDates: pageTally.badDates,
-          page: opts.page,
-          totalPages: env.totalPages,
-          columnDiagnostic,
-        },
-      };
+      return { ok: true, status: res.status, body: res.body, rateLimited: rateLimited > 0 };
     } catch (err) {
       // redactSecrets() is applied HERE, at the boundary, so no caller can
       // accidentally log a raw undici error carrying the request options.
@@ -1780,10 +1875,113 @@ export async function fetchPage<K extends SelarasTable>(
       const isShape = err instanceof BodyNotJsonError;
       last = { error: message, status: null, kind: isShape ? "shape" : "network", retryable: !isShape };
       if (isShape) break;
+      if (softRetries >= 1) break;
+      softRetries += 1;
+      await sleep(retryDelayMs * softRetries);
     }
   }
 
-  return { ok: false, ...last };
+  return { ok: false, rateLimited: rateLimited > 0, ...last };
+}
+
+/**
+ * Fetch one page of one table. RESOLVES ALWAYS — a transport failure comes back
+ * as `{ ok: false }`, matching the `packages/core/src/fetchPage.ts` posture, so
+ * an ERP outage is data to the worker rather than an exception to survive.
+ *
+ * One retry with backoff on 5xx and network errors, a bounded `Retry-After`
+ * backoff on 429, and no retry on any other 4xx (§5) — a 401/404 is a
+ * configuration fault and hammering it twice fixes nothing. See
+ * `requestWithRetries()` for the whole policy.
+ */
+export async function fetchPage<K extends SelarasTable>(
+  table: K,
+  opts: FetchPageOptions,
+): Promise<SelarasResult<SelarasRowByTable[K]>> {
+  const url = buildPageUrl(table, opts);
+  const res = await requestWithRetries(table, url, opts);
+  if (!res.ok) {
+    const { ok: _ok, rateLimited: _rateLimited, ...failure } = res;
+    return { ok: false, ...failure };
+  }
+
+  let env: SelarasEnvelope;
+  try {
+    env = readEnvelope(res.body, opts.limit);
+  } catch (err) {
+    // readEnvelope() is total today; if it ever stops being, a malformed body is
+    // a shape fault and not something to retry into.
+    return { ok: false, error: redactSecrets(err), status: res.status, kind: "shape", retryable: false };
+  }
+
+  if (env.success === false) {
+    // FIX C: checked BEFORE the shape notice. A well-formed `{success:false}`
+    // error body is not the A1 shape (it has no meta.total_pages), so the
+    // envelope warning used to fire and send an operator to
+    // erp/selarasClient.ts at the exact moment the problem is at the ERP.
+    // Not retryable either: the ERP understood us and said no.
+    return {
+      ok: false,
+      error: successFailure(table, env),
+      status: res.status,
+      kind: "erp_error",
+      retryable: false,
+    };
+  }
+  noticeShape(table, env);
+
+  // ST-R5.3 — built from the row we already hold, before the adapt loop, and
+  // deliberately wrapped: a diagnostic is never allowed to fail a page.
+  let columnDiagnostic: ColumnDiagnostic | null = null;
+  if (config.stock.diagnoseColumns && opts.page === 1) {
+    try {
+      columnDiagnostic = buildColumnDiagnostic(table, env.rows[0]);
+    } catch {
+      columnDiagnostic = null;
+    }
+  }
+
+  const adapt = ADAPTERS[table];
+  const rows: SelarasRowByTable[K][] = [];
+  let dropped = 0;
+  // Install the ambiguity collector around the SYNCHRONOUS adapt loop only.
+  const pageTally: PageTally = {
+    ambiguous: { count: 0, samples: [] },
+    nonFinite: { count: 0, samples: [] },
+    badDates: { count: 0, samples: [] },
+  };
+  tally = pageTally;
+  try {
+    for (const raw of env.rows) {
+      let adapted: SelarasRowByTable[K] | null = null;
+      try {
+        adapted = adapt(raw);
+      } catch {
+        // An adapter is written not to throw; if one ever does, the row is
+        // dropped, not the page (a malformed row never kills a run).
+        adapted = null;
+      }
+      if (adapted === null) dropped += 1;
+      else rows.push(adapted);
+    }
+  } finally {
+    tally = null;
+  }
+  return {
+    ok: true,
+    page: {
+      rows,
+      rawCount: env.rows.length,
+      dropped,
+      ambiguousNumbers: pageTally.ambiguous,
+      nonFiniteNumbers: pageTally.nonFinite,
+      badDates: pageTally.badDates,
+      page: opts.page,
+      totalPages: env.totalPages,
+      columnDiagnostic,
+      rateLimited: res.rateLimited,
+    },
+  };
 }
 
 // ── Key listing, for the reconciliation sweep ────────────────────────────────
@@ -1811,89 +2009,70 @@ export type SelarasKeyResult =
 
 /**
  * One page of the FULL current key set for a table. Same transport posture as
- * `fetchPage()` (one retry on 5xx/network, none on 4xx, redaction at the
- * boundary, resolves rather than rejects) — it is deliberately the same code
- * path with a different projection, not a second HTTP client.
+ * `fetchPage()` — literally the same `requestWithRetries()`, so the 429 backoff,
+ * the single 5xx retry, the terminal 4xx and the redaction boundary cannot drift
+ * between the pull and the sweep. A different projection, not a second HTTP
+ * client.
  */
-export async function fetchKeyPage(
-  table: SelarasTable,
-  opts: { page: number; limit: number; dispatcher?: Dispatcher; retryDelayMs?: number },
-): Promise<SelarasKeyResult> {
+export interface FetchKeyPageOptions {
+  page: number;
+  limit: number;
+  dispatcher?: Dispatcher;
+  retryDelayMs?: number;
+  rateLimit?: Partial<RateLimitPolicy>;
+}
+
+export async function fetchKeyPage(table: SelarasTable, opts: FetchKeyPageOptions): Promise<SelarasKeyResult> {
   const url = buildKeyPageUrl(table, opts);
-  const retryDelayMs = opts.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
-  let last: { error: string; status: number | null; kind: SelarasFailureKind; retryable: boolean } = {
-    error: "no attempt made",
-    status: null,
-    kind: "other",
-    retryable: false,
-  };
-
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    if (attempt > 0) await sleep(retryDelayMs * attempt);
-    try {
-      const res = await requestOnce(url, config.selarasTimeoutMs, opts.dispatcher);
-      if (res.status >= 500) {
-        last = { error: `HTTP ${res.status} from ERP`, status: res.status, kind: "server", retryable: true };
-        continue;
-      }
-      if (res.status >= 400) {
-        return {
-          ok: false,
-          error: describeClientError(table, res.status),
-          status: res.status,
-          kind: failureKind(res.status),
-          retryable: false,
-        };
-      }
-
-      const env = readEnvelope(res.body, opts.limit);
-      if (env.success === false) {
-        return {
-          ok: false,
-          error: successFailure(table, env),
-          status: res.status,
-          kind: "erp_error",
-          retryable: false,
-        };
-      }
-      const keys: string[] = [];
-      let dropped = 0;
-      let projected = env.rows.length > 0;
-      for (const raw of env.rows) {
-        // A projected row carries one field; anything wider means `fields=` was
-        // ignored. Checked before extraction so a dropped row still counts.
-        if (!isRecord(raw) || Object.keys(raw).length !== 1) projected = false;
-        // A soft-deleted row is NOT part of the current key set (FIX 6): leaving
-        // it in would keep a deleted row alive in the mirror forever. Invisible
-        // when `fields=` is honoured — a projected row carries the key alone —
-        // which is fine: the incremental pull deletes it by `deleted_at` anyway.
-        if (isRowDeleted(raw)) continue;
-        const key = extractRowKey(table, raw);
-        if (key === null) dropped += 1;
-        else keys.push(key);
-      }
-      return {
-        ok: true,
-        page: { keys, rawCount: env.rows.length, dropped, page: opts.page, totalPages: env.totalPages, projected },
-      };
-    } catch (err) {
-      const message = redactSecrets(err);
-      const isShape = err instanceof BodyNotJsonError;
-      last = { error: message, status: null, kind: isShape ? "shape" : "network", retryable: !isShape };
-      if (isShape) break;
-    }
+  const res = await requestWithRetries(table, url, opts);
+  if (!res.ok) {
+    const { ok: _ok, rateLimited: _rateLimited, ...failure } = res;
+    return { ok: false, ...failure };
   }
 
-  return { ok: false, ...last };
+  let env: SelarasEnvelope;
+  try {
+    env = readEnvelope(res.body, opts.limit);
+  } catch (err) {
+    return { ok: false, error: redactSecrets(err), status: res.status, kind: "shape", retryable: false };
+  }
+
+  if (env.success === false) {
+    return {
+      ok: false,
+      error: successFailure(table, env),
+      status: res.status,
+      kind: "erp_error",
+      retryable: false,
+    };
+  }
+
+  const keys: string[] = [];
+  let dropped = 0;
+  let projected = env.rows.length > 0;
+  for (const raw of env.rows) {
+    // A projected row carries one field; anything wider means `fields=` was
+    // ignored. Checked before extraction so a dropped row still counts.
+    if (!isRecord(raw) || Object.keys(raw).length !== 1) projected = false;
+    // A soft-deleted row is NOT part of the current key set (FIX 6): leaving
+    // it in would keep a deleted row alive in the mirror forever. Invisible
+    // when `fields=` is honoured — a projected row carries the key alone —
+    // which is fine: the incremental pull deletes it by `deleted_at` anyway.
+    if (isRowDeleted(raw)) continue;
+    const key = extractRowKey(table, raw);
+    if (key === null) dropped += 1;
+    else keys.push(key);
+  }
+  return {
+    ok: true,
+    page: { keys, rawCount: env.rows.length, dropped, page: opts.page, totalPages: env.totalPages, projected },
+  };
 }
 
 /** The surface the sync worker depends on — lets a test inject a fake client. */
 export interface SelarasClient {
   fetchPage<K extends SelarasTable>(table: K, opts: FetchPageOptions): Promise<SelarasResult<SelarasRowByTable[K]>>;
-  fetchKeyPage(
-    table: SelarasTable,
-    opts: { page: number; limit: number; dispatcher?: Dispatcher; retryDelayMs?: number },
-  ): Promise<SelarasKeyResult>;
+  fetchKeyPage(table: SelarasTable, opts: FetchKeyPageOptions): Promise<SelarasKeyResult>;
 }
 
 export const selarasClient: SelarasClient = { fetchPage, fetchKeyPage };

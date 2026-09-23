@@ -301,7 +301,7 @@ export interface Freshness {
 }
 
 /** Mirrors `SelarasFailureKind` in erp/selarasClient.ts; stored per table. */
-export type SyncErrorKind = "auth" | "network" | "shape" | "erp_error" | "server" | "other";
+export type SyncErrorKind = "auth" | "network" | "shape" | "erp_error" | "rate_limit" | "server" | "other";
 
 export interface SummaryTotals {
   skus: number;
@@ -933,6 +933,9 @@ const SYNC_ERROR_KINDS: readonly SyncErrorKind[] = [
   "network",
   "shape",
   "erp_error",
+  // 429, after the backoff budget ran out. Distinct from `erp_error` because the
+  // advice differs: nobody has to change anything, the next tick carries on.
+  "rate_limit",
   "server",
   "other",
 ];
