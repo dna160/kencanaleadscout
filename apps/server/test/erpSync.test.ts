@@ -1693,7 +1693,10 @@ describe.skipIf(db === null)("syncWorker — against a real mirror schema", () =
     // rate-limited so_line pass cannot starve them; headers still precede the
     // lines that reference them. live_fg used to run LAST, behind 138 pages of
     // so_line, and in production it failed on page 1 every single time.
-    expect(result.tables.map((t) => t.table)).toEqual(["warna", "live_fg", "so_header", "so_line"]);
+    // live_fg FIRST: it is physical on-hand, the number a rep quotes. When it ran
+    // last, a rate-limited so_line ate the whole budget and stock stopped updating
+    // while the page kept showing figures. so_header still precedes so_line.
+    expect(result.tables.map((t) => t.table)).toEqual(["live_fg", "warna", "so_header", "so_line"]);
     expect(workerMod.SYNC_PULL_ORDER.indexOf("live_fg")).toBeLessThan(workerMod.SYNC_PULL_ORDER.indexOf("so_line"));
     expect(workerMod.SYNC_PULL_ORDER.indexOf("so_header")).toBeLessThan(workerMod.SYNC_PULL_ORDER.indexOf("so_line"));
     expect(result.tables.every((t) => t.ok)).toBe(true);
