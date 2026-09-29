@@ -92,16 +92,27 @@ const MAX_PAGES_PER_TABLE = 1_000;
  *
  * SMALLEST AND MOST CRITICAL FIRST. `warna` (273 rows) and `live_fg` (1,464)
  * together are three pages; they are done before anything expensive begins, so
- * no amount of trouble further down can starve them. `so_header` still precedes
- * `so_line` because lines reference headers. Freshness of the on-hand side is
- * marginally reduced (it is read a few seconds earlier in the run than it used
- * to be) — against which: it is currently not read at all.
+ * no amount of trouble further down can starve them.
+ *
+ * `live_fg` is FIRST, by the product owner's ruling, because it is the physical
+ * on-hand side of every ATP figure — the one number a rep quotes to a customer.
+ * It is also tiny (1,464 rows, two pages), so putting it first costs the other
+ * tables about a second and guarantees that whatever else goes wrong in a run,
+ * stock was already read. This is the position it earns: when it ran LAST, a
+ * rate-limited `so_line` consumed the whole budget and on-hand stopped updating
+ * entirely while the page went on showing numbers.
+ *
+ * `warna` (287 rows) follows it. It only resolves colour NAMES for display, and
+ * nothing in the SKU key or ATP depends on it — `warna` is an id on both sides —
+ * so the worst case from demoting it is that a brand-new colour renders as its
+ * code for a single cycle. `so_header` still precedes `so_line` because lines
+ * reference headers.
  *
  * The COMPANION rule is the per-table page budget (`syncMaxPagesPerRun`): order
  * alone protects the tables that come first, and the budget is what stops one
  * table monopolising a run in any order.
  */
-export const SYNC_PULL_ORDER: readonly SelarasTable[] = ["warna", "live_fg", "so_header", "so_line"];
+export const SYNC_PULL_ORDER: readonly SelarasTable[] = ["live_fg", "warna", "so_header", "so_line"];
 
 /** Non-blocking pause. `unref` so a pending pace can never hold a process up. */
 function sleep(ms: number): Promise<void> {
