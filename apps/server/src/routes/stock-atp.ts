@@ -157,6 +157,40 @@ function likeNeedle(raw: string): string {
 export type SkuState = "tersedia" | "habis" | "kosong" | "perlu_produksi";
 
 /** The item object in /summary.items[], /sku/:sku_key.item and /shortfall.items[]. */
+/**
+ * One coating, and how much of this SKU's on-hand carries it.
+ *
+ * WHY THIS IS A LIST AND NOT A FIELD. `coating` lives on a physical roll
+ * (`tbl_1210.coating`) and on nothing else — `tbl_1203` has NO coating column, so
+ * an SO line commits no coating at all. That is why coating is NOT a segment of
+ * the SKU key (AMENDMENT 19's list is closed, and `erp_sku_key` is untouched by
+ * this feature): keying on it would spell `-` on every commitment and `PVDF` on
+ * every stock row, nothing would ever match, and ATP would equal on-hand for the
+ * whole catalogue — the exact over-promising failure AMENDMENT 19 was written to
+ * stop. The ERP does not commit a coating at order time either, which is the same
+ * fact `sn_fg IS NULL` on an SO line already states: the roll is chosen at
+ * production, not at order.
+ *
+ * The consequence, which was previously invisible: **PV and PVDF rolls that share
+ * a brand, colour, thickness and dimensions COLLAPSE INTO ONE SKU.** Their on-hand
+ * is summed and a commitment matches either, so the ATP shown against a PVDF panel
+ * may be part PE or PV stock. This list is that aggregation made READABLE. It does
+ * not change a single number — it says what the numbers were already made of.
+ *
+ * Do NOT "fix" this by adding coating to the key. See above.
+ */
+export interface CoatingBreakdown {
+  /**
+   * The ERP's `coating`, trimmed. `null` is the ONE unknown bucket: NULL, `""`
+   * and whitespace-only all land here together, because "we were not told" is a
+   * single fact however the ERP spells it — several near-empty buckets would read
+   * as several coatings and inflate `mixed_coating_skus`.
+   */
+  coating: string | null;
+  /** Σ `qty` of this SKU's stock rows carrying it. The list sums to `on_hand`. */
+  on_hand: number;
+}
+
 export interface SkuItem {
   sku_key: string;
   name: string;
@@ -191,6 +225,24 @@ export interface SkuItem {
    */
   autoclosed_committed: number;
   nearest_eta: string | null;
+  /**
+   * The per-coating split of `on_hand`, quantity descending (ties by coating,
+   * unknown last — the order must not shuffle between polls, same discipline as
+   * the page's `tail()` tie-break). ALWAYS present, `[]` when this SKU has no
+   * stock rows at all, never null, never omitted.
+   *
+   * `Σ coatings[].on_hand === on_hand`, always.
+   */
+  coatings: CoatingBreakdown[];
+  /**
+   * The convenience scalar, and it is deliberately NARROW: non-null ONLY when
+   * this SKU has exactly one coating and that coating is known. Two coatings
+   * under one key is a real fact about the stock, and a scalar would have to pick
+   * a winner — so it reads `null` instead and the caller is pushed to `coatings`.
+   * A mixed SKU can therefore never be mistaken for a single-coating one by a
+   * client that only reads this field: it sees "unknown", which is true.
+   */
+  coating: string | null;
 }
 
 /** One SO line, as returned by /sku/:sku_key, /stale-commitments and /exceptions. */
@@ -391,6 +443,31 @@ export interface SummaryTotals {
    * is what an alarm threshold should be set against.
    */
   exception_skus: number;
+  /**
+   * 2026-09-29, and the number that makes THIS change state its own size — the
+   * precedent is `autoclosed_aged_widened`: a change whose consequence is
+   * invisible ships with a counter, so the size of it is read rather than
+   * inferred.
+   *
+   * SKUs holding stock under MORE THAN ONE coating — i.e. SKUs where `atp` is a
+   * sum across physically different product. It is the size of the ambiguity the
+   * key composition has always carried and nobody could see: a rep promising this
+   * SKU's ATP against a PVDF job may be promising PE or PV rolls.
+   *
+   * IT MOVES NO STOCK AND MEASURES NO CHANGE OF OURS. Every one of these SKUs was
+   * already aggregated exactly this way before this feature existed; the only
+   * thing that changed is that the aggregation is now countable. `atp`,
+   * `on_hand`, `committed` and `sku_key` are byte-identical either way.
+   *
+   * The unknown bucket counts as a coating, deliberately. A SKU holding PVDF rolls
+   * and rolls whose coating the ERP has not told us is ambiguous in exactly the
+   * way this counter exists to surface — and the ambiguous direction is the one
+   * worth over-reporting, since the cost of looking is a glance at `coatings[]`
+   * and the cost of not looking is a promise we cannot supply. On a mirror that
+   * predates the column every stock row is NULL, so every SKU has ONE (unknown)
+   * bucket and this reads 0 until a sync has re-pulled `live_fg`.
+   */
+  mixed_coating_skus: number;
 }
 
 export interface SummaryResponse {
@@ -419,6 +496,14 @@ export interface OnHandRow {
   qty_m2: number | null;
   buffer_qty: number | null;
   buffer_status: string | null;
+  /**
+   * This ROLL's coating, verbatim from the mirror (untrimmed, uncollapsed — the
+   * detail sheet shows PPIC what the ERP actually holds against a serial they can
+   * walk to). `item.coatings[]` is the same population bucketed; this is the row
+   * level, so a PPIC user drilling in sees WHICH physical rolls are which.
+   * NULL on any row not yet re-pulled since the column landed.
+   */
+  coating: string | null;
   erp_updated_at: string | null;
 }
 
@@ -510,6 +595,8 @@ interface AggregateRow {
   on_hand: string | null;
   on_hand_m2: string | null;
   stock_rows: string | null;
+  /** The per-coating split, as a JSON text array. See `parseCoatings`. */
+  coatings: string | null;
   committed: string | null;
   live_lines: string | null;
   undated_lines: string | null;
@@ -651,6 +738,51 @@ function deriveState(onHand: number, adjustment: number, atp: number): SkuState 
  * `committed` comes from v_live_commitments and ONLY from there; the stale sum
  * is carried beside it as context and is never subtracted (§5A, ST-R17).
  */
+/**
+ * `coat.coatings` → `CoatingBreakdown[]`.
+ *
+ * The column is emitted as JSON **text** and parsed here rather than handed to
+ * the driver's json decoder, so this file owns the shape end to end and the
+ * result does not depend on which oids postgres.js decides to parse. Everything
+ * is validated on the way through: a row that is not the expected object is
+ * dropped rather than allowed to reach a client as `undefined`.
+ *
+ * `null` in (no stock rows for this SKU) → `[]`, never null. The SQL has already
+ * ordered and bucketed; this only rounds, exactly like every other quantity on
+ * this endpoint (§0 — derived on read).
+ */
+function parseCoatings(raw: string | null): CoatingBreakdown[] {
+  if (!raw) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  const out: CoatingBreakdown[] = [];
+  for (const entry of parsed) {
+    if (entry === null || typeof entry !== "object") continue;
+    const e = entry as { coating?: unknown; on_hand?: unknown };
+    out.push({
+      coating: optStr(e.coating),
+      on_hand: round2(numOf(e.on_hand)),
+    });
+  }
+  return out;
+}
+
+/**
+ * The scalar, and the whole reason it is safe to have one: it exists ONLY for the
+ * unambiguous case. Exactly one bucket, and that bucket known → the coating.
+ * Anything else — mixed, or the single bucket being the unknown one — reads null,
+ * so a caller that never looks at `coatings[]` can still never be TOLD "PVDF"
+ * about a SKU that is half PE.
+ */
+function scalarCoating(coatings: readonly CoatingBreakdown[]): string | null {
+  return coatings.length === 1 ? coatings[0]!.coating : null;
+}
+
 async function loadItems(
   db: Sql,
   skuKey?: string | readonly string[] | null,
@@ -669,6 +801,42 @@ async function loadItems(
              sum(coalesce(qty_m2, 0))     as on_hand_m2,
              count(*)                     as stock_rows
       from erp_live_fg ${f}
+      group by sku_key
+    ),
+    -- The per-coating split of on-hand. NO BACKTICKS BELOW: this whole query is a
+    -- JS template literal and one would end it.
+    --
+    -- Read off the SAME rows as the fg CTE above and grouped by the SAME sku_key,
+    -- so the two can never disagree: the buckets sum to on_hand by construction
+    -- rather than by assertion.
+    --
+    -- nullif(btrim(coating), '') is the unknown bucket, and it is ONE bucket: NULL,
+    -- '' and '   ' collapse together, because "we were not told" is a single fact
+    -- however the ERP spells it, and several near-empty buckets would read as
+    -- several coatings. Trimmed but NOT case-folded: the ERP's own spelling is what
+    -- an operator sees on the panel, and a folded bucket would have to invent a
+    -- display casing. If the ERP ever sends PVDF and pvdf they read as two buckets
+    -- and mixed_coating_skus over-reports -- which fails toward LOOKING, costing a
+    -- glance at coatings[], with the split right there in the response to diagnose
+    -- it from.
+    --
+    -- Ordering is quantity desc, then coating asc with unknown last. The tie-break
+    -- is not decoration: without it two equal buckets could swap places between
+    -- polls, which is the same reason the toolbar's tail() chain exists (UX 5.1).
+    coat_rows as (
+      select sku_key,
+             nullif(btrim(coalesce(coating, '')), '') as coating,
+             sum(qty)                                 as on_hand
+      from erp_live_fg ${f}
+      group by sku_key, nullif(btrim(coalesce(coating, '')), '')
+    ),
+    coat as (
+      select sku_key,
+             jsonb_agg(
+               jsonb_build_object('coating', coating, 'on_hand', on_hand)
+               order by on_hand desc, coating asc nulls last
+             )::text as coatings
+      from coat_rows
       group by sku_key
     ),
     live as (
@@ -770,6 +938,7 @@ async function loadItems(
            coalesce(fg.on_hand, 0)::text          as on_hand,
            coalesce(fg.on_hand_m2, 0)::text       as on_hand_m2,
            coalesce(fg.stock_rows, 0)::text       as stock_rows,
+           coat.coatings                          as coatings,
            coalesce(live.committed, 0)::text      as committed,
            coalesce(live.live_lines, 0)::text     as live_lines,
            coalesce(live.undated_lines, 0)::text  as undated_lines,
@@ -790,6 +959,7 @@ async function loadItems(
     left join ident i    on i.sku_key    = k.sku_key
     ${warnaName(db, "i")}
     left join fg         on fg.sku_key    = k.sku_key
+    left join coat       on coat.sku_key  = k.sku_key
     left join live       on live.sku_key  = k.sku_key
     left join stale      on stale.sku_key = k.sku_key
     left join autoclosed on autoclosed.sku_key = k.sku_key
@@ -818,6 +988,8 @@ async function loadItems(
         ? (p * l) / MM2_PER_M2
         : null;
 
+    const coatings = parseCoatings(r.coatings);
+
     const identity = {
       kode_barang: r.kode_barang,
       brand: r.brand,
@@ -844,6 +1016,8 @@ async function loadItems(
       stale_committed: round2(numOf(r.stale_committed)),
       autoclosed_committed: round2(numOf(r.autoclosed_committed)),
       nearest_eta: r.nearest_eta,
+      coatings,
+      coating: scalarCoating(coatings),
       stock_rows: numOf(r.stock_rows),
       live_lines: numOf(r.live_lines),
       undated_lines: numOf(r.undated_lines),
@@ -889,6 +1063,8 @@ function toWire(it: EngineItem): SkuItem {
     stale_committed: it.stale_committed,
     autoclosed_committed: it.autoclosed_committed,
     nearest_eta: it.nearest_eta,
+    coatings: it.coatings,
+    coating: it.coating,
   };
 }
 
@@ -1395,6 +1571,7 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
       autoclosed_spb_atp_delta: 0,
       exceptions: 0,
       exception_skus: 0,
+      mixed_coating_skus: 0,
     };
     for (const it of items) {
       totals[it.state] += 1;
@@ -1425,6 +1602,12 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
         totals.exceptions += it.live_lines + it.stale_lines;
         totals.exception_skus += 1;
       }
+      // 2026-09-29: the size of the coating ambiguity, following the
+      // `autoclosed_aged_widened` precedent — a consequence that is invisible
+      // gets a counter. More than one bucket under one key means this SKU's `atp`
+      // is a sum across physically different product. Nothing here moves a
+      // number; it measures what the numbers were always made of.
+      if (it.coatings.length > 1) totals.mixed_coating_skus += 1;
     }
 
     // Float addition over per-SKU sums; round once at the edge like every other
@@ -1468,10 +1651,11 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
       `,
       db<{
         erp_row_id: string; sn_fg: string | null; lokasi: string | null; qty: string; qty_m2: string | null;
-        buffer_qty: string | null; buffer_status: string | null; erp_updated_at: Date | string | null;
+        buffer_qty: string | null; buffer_status: string | null; coating: string | null;
+        erp_updated_at: Date | string | null;
       }[]>`
         select erp_row_id, sn_fg, lokasi, qty::text as qty, qty_m2::text as qty_m2,
-               buffer_qty::text as buffer_qty, buffer_status, erp_updated_at
+               buffer_qty::text as buffer_qty, buffer_status, coating, erp_updated_at
         from erp_live_fg
         where sku_key = ${skuKey}
         order by lokasi nulls last, sn_fg nulls last, erp_row_id
@@ -1506,6 +1690,10 @@ export async function stockAtpRoutes(app: FastifyInstance): Promise<void> {
         qty_m2: numOrNull(r.qty_m2),
         buffer_qty: numOrNull(r.buffer_qty),
         buffer_status: r.buffer_status,
+        // Which physical roll is which coating. `item.coatings[]` on this same
+        // response is the bucketed form of exactly these rows, so PPIC can read
+        // the split and then walk to the serials it is made of.
+        coating: r.coating,
         erp_updated_at: iso(r.erp_updated_at),
       })),
     };

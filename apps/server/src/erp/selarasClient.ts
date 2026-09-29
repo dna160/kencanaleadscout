@@ -182,6 +182,16 @@ export interface LiveFgRow extends MirrorRowBase {
   qty_m2: number | null;
   buffer_qty: number | null;
   buffer_status: string | null;
+  /**
+   * The roll's coating — PV / PVDF / PE. Mirrored VERBATIM (trimming and the
+   * unknown bucket are a read-side concern, spelled once in routes/stock-atp.ts).
+   *
+   * NOT part of the SKU key and never will be: `tbl_1203` has no coating column,
+   * so the demand side has nothing to spell, and keying on it would match every
+   * commitment against nothing (AMENDMENT 19's failure, same direction). It is a
+   * property of a PHYSICAL ROLL, which is why it lives here and not on SoLineRow.
+   */
+  coating: string | null;
   lokasi: string | null;
   sku_key: string;
   erp_updated_at: Date | null;
@@ -1055,6 +1065,9 @@ export function adaptLiveFgRow(raw: unknown): LiveFgRow | null {
     qty_m2: asNumber(pick(row, "qty_m2", "qtyM2", "m2", "qty_meter", "luas")),
     buffer_qty: asNumber(pick(row, "buffer_qty", "bufferQty")),
     buffer_status: asText(pick(row, "buffer_status", "bufferStatus")),
+    // `coating` is the documented and observed spelling; the twins are the usual
+    // alternatives, costing nothing and saving a re-pull if the wire disagrees.
+    coating: asText(pick(row, "coating", "coating_type", "coatingType", "jenis_coating")),
     lokasi: asText(pick(row, "lokasi", "location", "gudang", "warehouse")),
     sku_key: canonicalSkuKey(parts),
     erp_updated_at: pickUpdatedAt(row),

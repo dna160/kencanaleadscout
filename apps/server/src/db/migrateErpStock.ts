@@ -752,6 +752,7 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
         qty_m2         numeric,                      -- display only
         buffer_qty     numeric,                      -- does NOT reduce ATP in v1 (OQ-5)
         buffer_status  text,
+        coating        text,                         -- PV / PVDF / PE — a property of the ROLL, NOT of the key
         lokasi         text,                         -- carried, not a dimension in v1 (OQ-2)
         sku_key        text not null,                -- computed via erp_sku_key(...)
         erp_updated_at timestamptz,
@@ -764,6 +765,26 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
     await db`alter table erp_live_fg add column if not exists warna_text text`;
     await db`alter table erp_live_fg add column if not exists th_panel   numeric`;
     await db`alter table erp_live_fg add column if not exists sn_fg      text`;
+    // 2026-09-29. The ERP has been sending `coating` on tbl_1210 all along (it is
+    // in the documented column list AND in the live COLUMN DIAGNOSTIC wire keys);
+    // the rebuild simply had nowhere to put it, so it was dropped on the floor.
+    //
+    // IT IS NOT A KEY SEGMENT, AND MUST NEVER BECOME ONE. tbl_1203 carries no
+    // coating at all — the demand side has nothing to spell — so putting it in
+    // `erp_sku_key` would key every commitment as `-` against stock keyed `PVDF`
+    // and NOTHING would ever match again: open_commitment 0 for the whole
+    // catalogue and ATP equal to on-hand. That is the exact failure AMENDMENT 19
+    // records, in the exact same direction (over-promising). The ERP does not
+    // commit a coating at order time either — consistent with `sn_fg` being NULL
+    // on an SO line until production allocates a physical roll — so neither can
+    // we. The consequence (PV and PVDF rolls sharing one SKU) is made VISIBLE on
+    // the read side instead: see `coatings[]` in routes/stock-atp.ts.
+    //
+    // ADDITIVE AND NULLABLE, like summary_spb below: an existing mirror gets the
+    // column here with NO cursor reset, and every row already mirrored carries
+    // NULL until it is next fetched. Nothing reads it as a decision, so a NULL is
+    // simply "not re-pulled yet" and shows as the unknown bucket.
+    await db`alter table erp_live_fg add column if not exists coating    text`;
     await db`create index if not exists erp_live_fg_sku_idx on erp_live_fg (sku_key)`;
     await db`create index if not exists erp_live_fg_sn_idx  on erp_live_fg (sn_fg)`;
   } catch (liveFgErr) {

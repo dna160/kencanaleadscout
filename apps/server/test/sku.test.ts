@@ -362,6 +362,14 @@ describe("canonicalSkuKey — structural invariants (no database required)", () 
     expect(SKU_SEGMENT_SOURCES.th_panel.live_fg[0]).toBe("t");
     // And nothing that only one side has may be a segment.
     expect(Object.keys(SKU_SEGMENT_KINDS)).not.toContain("kode_barang");
+    // 2026-09-29 — `coating` is mirrored now (tbl_1210 sends it) and is the SAME
+    // family as kode_barang: tbl_1203 has no coating column, so the demand side
+    // has nothing to spell. Making it a segment would key every commitment as '-'
+    // against stock keyed 'PVDF' — nothing would match, ATP would equal on-hand
+    // for the whole catalogue, and the page would over-promise every SKU. The
+    // aggregation it causes (PV and PVDF rolls sharing one key) is surfaced as
+    // `item.coatings[]` instead; it is never repaired by widening the key.
+    expect(Object.keys(SKU_SEGMENT_KINDS)).not.toContain("coating");
   });
 
   it("emits exactly one field per configured segment, for every fixture", () => {
@@ -446,6 +454,12 @@ describe("canonicalSkuKey — structural invariants (no database required)", () 
     // The retired v1 name is not a segment any more, so a stale env var falls
     // back to the shipped composition rather than keying on a phantom column.
     expect(resolveSkuSegments(["kode_barang"])).toEqual(DEFAULT_SKU_SEGMENTS);
+    // Nor can an env var smuggle `coating` in: it is not a segment name, so the
+    // whitelist drops it and the shipped composition stands. The one knob that
+    // could have changed the key composition by configuration cannot reach it.
+    expect(resolveSkuSegments(["coating"])).toEqual(DEFAULT_SKU_SEGMENTS);
+    expect(resolveSkuSegments(["brand", "warna", "th", "th_panel", "p", "l", "coating"]))
+      .toEqual(DEFAULT_SKU_SEGMENTS);
     // The ERP's own spellings are accepted, because they are what a reader of
     // the API documentation has in front of them.
     expect(resolveSkuSegments(["brand", "warna", "th_alu_skin", "total_thickness_acp", "p", "l"]))

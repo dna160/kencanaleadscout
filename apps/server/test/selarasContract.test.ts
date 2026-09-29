@@ -1050,6 +1050,33 @@ describe("primary key — rows are keyed by `{table}_id`", () => {
     expect(adaptLiveFgRow(LIVE_FG_ROWS[0])?.sn_fg).toBe("FG-AAA-0001");
   });
 
+  it("mirrors `coating` off a live-FG row, and NEVER off the key or an SO line", () => {
+    // The owner's question: "why isn't there PV or PVDF?". The ERP sends it — it
+    // is in tbl_1210's documented column list and in the live COLUMN DIAGNOSTIC
+    // wire keys — and the rebuild simply had nowhere to put it.
+    expect(SPEC_COLUMNS[SELARAS_ENDPOINTS.live_fg]).toContain("coating");
+    // And it is NOT on the demand side. This is the load-bearing fact: an SO line
+    // carries no coating at all, which is why coating cannot be a key segment and
+    // why PV and PVDF collapse into one SKU.
+    expect(SPEC_COLUMNS[SELARAS_ENDPOINTS.so_line]).not.toContain("coating");
+
+    const fg = adaptLiveFgRow(LIVE_FG_ROWS[0]);
+    expect(fg?.coating).toBe("PVDF");
+    // Mirrored, and STILL not in the key. Adding it there would spell `-` on every
+    // commitment against stock spelled `PVDF`: nothing would ever match and ATP
+    // would equal on-hand for the whole catalogue (AMENDMENT 19's failure).
+    expect(fg?.sku_key).not.toContain("PVDF");
+    expect(fg?.sku_key.split("|").length).toBe(6);
+
+    // A row the ERP sends no coating for mirrors as NULL — the unknown bucket,
+    // and the state of every row on a mirror that has not been re-pulled yet.
+    expect(adaptLiveFgRow(LIVE_FG_ROWS[2])?.coating).toBeNull();
+
+    // `SoLineRow` has no such field to write, so the mirror cannot grow one by
+    // accident: the demand side is where a coating would have to come from.
+    expect(adaptSoLineRow(SO_LINE_ROWS[0])).not.toHaveProperty("coating");
+  });
+
   it("mirrors summary_spb / summary_do off an SO line, blanks as absent", () => {
     // ST-R22 rule 2 turns on the PRESENCE of `summary_spb`, so what the adapter
     // does with an empty one decides whether a line is auto-closed. Blank must

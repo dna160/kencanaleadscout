@@ -604,6 +604,15 @@ describe("adapters — one per table, on the verified column names", () => {
     expect(fg?.qty).toBe(2084);
     expect(fg?.lokasi).toBe("GD-01");
     expect(fg?.kode_barang).toBe("ACP-4MM"); // display only, never in the key
+    // 2026-09-29: the ERP has always sent this and we always threw it away. Like
+    // kode_barang it is display-only and NOT in the key — tbl_1203 has no coating
+    // column at all, so an SO line has none to match against.
+    expect(fg?.coating).toBe("PVDF");
+    expect(fg?.sku_key).not.toContain("PVDF");
+    // The second Black Galaxy roll carries no coating, which is exactly the
+    // mixed-coating case: two rolls, one sku_key, different (or unknown) coating.
+    expect(adaptLiveFgRow(FIXTURES.live_fg[1])?.coating).toBeNull();
+    expect(adaptLiveFgRow(FIXTURES.live_fg[1])?.sku_key).toBe(fg?.sku_key);
 
     // Casing tolerance is a property of the adapters, not of the fixtures.
     const camel = adaptSoLineRow({
@@ -1742,6 +1751,65 @@ describe.skipIf(db === null)("syncWorker — against a real mirror schema", () =
       // Mirrored verbatim; the view predicate is what rules a '-' out as absent.
       { id: "SOL-2004", summary_spb: "-", summary_do: null },
     ]);
+
+    // 2026-09-29: `coating` reaches the mirror. The whole path — adapter, upsert
+    // column list, table — exactly as summary_spb above, and for the same reason:
+    // a column the worker writes that the table does not have is a 42703 on every
+    // live_fg page, i.e. on-hand 0 for the entire catalogue.
+    //
+    // AND THE POINT OF THE FEATURE, visible right here in real fixture data: these
+    // two rolls carry the SAME sku_key and DIFFERENT coating. They are one SKU on
+    // the page, their on-hand is summed, and a commitment matches either.
+    const coats = await sql<{ erp_row_id: string; coating: string | null; sku_key: string }[]>`
+      select erp_row_id, coating, sku_key from erp_live_fg
+       where erp_row_id in ('FG-0001', 'FG-0002') order by erp_row_id
+    `;
+    expect(coats.map((r) => [r.erp_row_id, r.coating])).toEqual([
+      ["FG-0001", "PVDF"],
+      ["FG-0002", null],
+    ]);
+    expect(coats[0]?.sku_key).toBe(coats[1]?.sku_key);
+    // Coating is NOT a key segment, and this is what would catch it becoming one.
+    expect(coats[0]?.sku_key).not.toContain("PVDF");
+  });
+
+  it("an EXISTING mirror gains erp_live_fg.coating on migrate — and needs a re-pull to FILL it", async () => {
+    // The deployment question, answered mechanically rather than promised, in the
+    // same shape as the summary_spb test below.
+    //
+    // The column is added IN PLACE with no cursor reset: rows already mirrored keep
+    // their qty and their sku_key and carry NULL in the new column until they are
+    // next fetched. So the SCHEMA is there the moment the server boots, and the
+    // DATA is there only after live_fg has been re-pulled — which is why NULL has
+    // to read as the unknown bucket rather than as a coating.
+    await run(sql);
+    await sql`alter table erp_live_fg drop column coating cascade`;
+
+    await migrateMod.runErpStockMigrations(sql);
+
+    const added = await sql<{ erp_row_id: string; coating: string | null; qty: string; sku_key: string }[]>`
+      select erp_row_id, coating, qty::text as qty, sku_key from erp_live_fg where erp_row_id = 'FG-0001'
+    `;
+    // Present, empty, and nothing else about the row disturbed.
+    expect(added[0]?.coating).toBeNull();
+    expect(added[0]?.qty).toBe("2084");
+    expect(added[0]?.sku_key).toBe("ACP|4|0.3|4|4880|1220");
+
+    // No cursor was reset by adding it: this is an additive display column, not a
+    // key change, so it must NOT trigger the full re-pull AMENDMENT 19 needed.
+    const cursors = await sql<{ n: number }[]>`
+      select count(*)::int as n from erp_sync_state where cursor_value is not null
+    `;
+    expect(cursors[0]?.n).toBeGreaterThan(0);
+
+    // …and an ordinary sync FILLS it — no special path, but also not for free:
+    // until this runs, every SKU reads as one unknown-coating bucket.
+    await resetCursors(sql);
+    await run(sql);
+    const refetched = await sql<{ coating: string | null }[]>`
+      select coating from erp_live_fg where erp_row_id = 'FG-0001'
+    `;
+    expect(refetched[0]?.coating).toBe("PVDF");
   });
 
   it("an EXISTING mirror gains summary_spb / summary_do on migrate, with no re-pull", async () => {

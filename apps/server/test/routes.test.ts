@@ -75,6 +75,7 @@ import { stockRoutes } from "../src/routes/stock.js";
 import type {
   AdjustmentRow,
   BatchCloseResponse,
+  CoatingBreakdown,
   CommitLine,
   OverrideResponse,
   PagedResponse,
@@ -207,7 +208,20 @@ function keyOf(tag: string, over: Partial<SkuParts> = {}): string {
   return canonicalSkuKey(parts(tag, over));
 }
 
-type FgRow = { sn_fg: string; qty: number; qty_m2?: number; lokasi?: string; parts: SkuParts };
+type FgRow = {
+  sn_fg: string;
+  qty: number;
+  qty_m2?: number;
+  lokasi?: string;
+  parts: SkuParts;
+  /**
+   * 2026-09-29. The roll's coating (tbl_1210.coating). `undefined` means "the ERP
+   * did not send one" and mirrors as NULL — which is what every row on a mirror
+   * that predates the column looks like, so the fixtures written before this
+   * feature describe exactly that population and keep describing it.
+   */
+  coating?: string | null;
+};
 type LineRow = {
   id: string;
   qty_balance: number;
@@ -233,12 +247,13 @@ async function seedFg(tx: Tx, rows: readonly FgRow[]): Promise<void> {
     const pa = r.parts;
     await tx`
       insert into erp_live_fg (
-        erp_row_id, sn_fg, kode_barang, brand, warna, th, th_panel, p, l, qty, qty_m2, lokasi, sku_key
+        erp_row_id, sn_fg, kode_barang, brand, warna, th, th_panel, p, l, qty, qty_m2, lokasi, coating, sku_key
       ) values (
         ${r.sn_fg}, ${r.sn_fg}, ${String(pa.brand ?? "")}, ${String(pa.brand ?? "")},
         ${String(pa.warna ?? "")},
         ${Number(pa.th ?? 0)}, ${Number(pa.th_panel ?? 0)}, ${Number(pa.p ?? 0)}, ${Number(pa.l ?? 0)},
-        ${r.qty}, ${r.qty_m2 ?? null}, ${r.lokasi ?? "GD-A"}, ${canonicalSkuKey(pa)}
+        ${r.qty}, ${r.qty_m2 ?? null}, ${r.lokasi ?? "GD-A"}, ${r.coating ?? null},
+        ${canonicalSkuKey(pa)}
       )
     `;
   }
@@ -1731,6 +1746,10 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
         expect(Object.keys(one).sort()).toEqual(
           [
             "adjustment", "atp", "atp_m2", "autoclosed_committed", "brand", "brand_text",
+            // 2026-09-29: the item gained the per-coating split of on-hand and its
+            // narrow scalar twin. Additive — every field above is untouched, and
+            // neither new one is a key segment (see the coating block below).
+            "coating", "coatings",
             "committed", "kode_barang", "l",
             "name", "nearest_eta", "on_hand", "p", "sku_key", "stale_committed", "state", "th",
             "th_panel", "unit", "warna", "warna_name",
@@ -2691,6 +2710,294 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
         expect(body.live_commitments).toEqual([]);
         expect(body.stale_commitments).toEqual([]);
         expect(body.item.stale_committed).toBe(0);
+      });
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 8b · coating — the aggregation made visible (2026-09-29)
+  // ═══════════════════════════════════════════════════════════════════════════
+  //
+  // The owner asked why the stock page has no PV/PVDF. The ERP has been sending
+  // `coating` on tbl_1210 all along; the rebuild had nowhere to put it. It is now
+  // mirrored — and it is deliberately NOT in the SKU key, because tbl_1203 has no
+  // coating at all. The consequence of that, which nobody could previously see, is
+  // that PV and PVDF rolls sharing a brand/colour/thickness/size COLLAPSE INTO ONE
+  // SKU. These tests pin the shape that makes it visible, and pin — hard — that
+  // making it visible changed neither the key nor ATP.
+  describe("coating on /summary and /sku/:sku_key (2026-09-29)", () => {
+    /** The breakdown, as a plain comparable pair list. */
+    const asPairs = (c: readonly CoatingBreakdown[]): [string | null, number][] =>
+      c.map((e) => [e.coating, e.on_hand]);
+
+    it("one coating: the scalar is set and the breakdown has exactly one entry", async () => {
+      await inRollback(async (tx) => {
+        const pa = parts("COAT1");
+        const key = canonicalSkuKey(pa);
+        await seedFg(tx, [
+          { sn_fg: `${P}-c1-a`, qty: 60, parts: pa, coating: "PVDF" },
+          { sn_fg: `${P}-c1-b`, qty: 40, parts: pa, coating: "PVDF" },
+        ]);
+
+        const it_ = (await summaryItem(key))!;
+        expect(it_.on_hand).toBe(100);
+        // The common case stays simple: one coating, one scalar, no list to read.
+        expect(it_.coating).toBe("PVDF");
+        expect(asPairs(it_.coatings)).toEqual([["PVDF", 100]]);
+        // The invariant that makes the breakdown trustworthy at all.
+        expect(it_.coatings.reduce((n, e) => n + e.on_hand, 0)).toBe(it_.on_hand);
+      });
+    });
+
+    it("PV + PVDF under ONE key: both are exposed, they sum, and there is NO scalar", async () => {
+      await inRollback(async (tx) => {
+        // The whole point of the feature. These two rolls differ ONLY in coating,
+        // so they share a brand, colour, thickness and dimensions — and therefore
+        // a sku_key. Their on-hand is summed and a commitment matches either.
+        const pa = parts("COATMIX");
+        const key = canonicalSkuKey(pa);
+        await seedFg(tx, [
+          { sn_fg: `${P}-cm-pvdf`, qty: 60, parts: pa, coating: "PVDF" },
+          { sn_fg: `${P}-cm-pv`, qty: 40, parts: pa, coating: "PV" },
+        ]);
+
+        const it_ = (await summaryItem(key))!;
+        expect(it_.on_hand).toBe(100);
+        // Ordered by quantity descending, so the biggest share reads first.
+        expect(asPairs(it_.coatings)).toEqual([
+          ["PVDF", 60],
+          ["PV", 40],
+        ]);
+        expect(it_.coatings.reduce((n, e) => n + e.on_hand, 0)).toBe(100);
+        // AND THIS IS THE SAFETY PROPERTY: a mixed SKU exposes no scalar. A client
+        // that reads only `coating` can never be told "PVDF" about stock that is
+        // 40% PV — it is told nothing, which is true, and pushed to `coatings`.
+        expect(it_.coating).toBeNull();
+      });
+    });
+
+    it("null, empty and whitespace coatings land in ONE unknown bucket, not several", async () => {
+      await inRollback(async (tx) => {
+        const pa = parts("COATNULL");
+        const key = canonicalSkuKey(pa);
+        await seedFg(tx, [
+          { sn_fg: `${P}-cn-null`, qty: 5, parts: pa, coating: null },
+          { sn_fg: `${P}-cn-empty`, qty: 6, parts: pa, coating: "" },
+          { sn_fg: `${P}-cn-blank`, qty: 7, parts: pa, coating: "   " },
+        ]);
+
+        const it_ = (await summaryItem(key))!;
+        // "We were not told" is ONE fact however the ERP spells it. Three buckets
+        // here would read as three coatings and inflate `mixed_coating_skus`.
+        expect(asPairs(it_.coatings)).toEqual([[null, 18]]);
+        expect(it_.coatings.length).toBe(1);
+        // One bucket, but an UNKNOWN one — so still no scalar to mislead with.
+        expect(it_.coating).toBeNull();
+        expect(it_.on_hand).toBe(18);
+      });
+    });
+
+    it("a known coating and an unknown one are two buckets, unknown ordered last", async () => {
+      await inRollback(async (tx) => {
+        // The population a half-re-pulled mirror actually has, and it IS ambiguous:
+        // the unnamed rolls may or may not be PVDF, so the SKU is counted as mixed.
+        const pa = parts("COATHALF");
+        const key = canonicalSkuKey(pa);
+        await seedFg(tx, [
+          { sn_fg: `${P}-ch-known`, qty: 30, parts: pa, coating: "PVDF" },
+          { sn_fg: `${P}-ch-unknown`, qty: 30, parts: pa },
+        ]);
+
+        const it_ = (await summaryItem(key))!;
+        // Equal quantities, so the tie-break decides: unknown sorts LAST, and it
+        // does so deterministically — the order must not shuffle between polls.
+        expect(asPairs(it_.coatings)).toEqual([
+          ["PVDF", 30],
+          [null, 30],
+        ]);
+        expect(it_.coating).toBeNull();
+      });
+    });
+
+    it("a SKU with no stock at all has [] and null — never null for the array", async () => {
+      await inRollback(async (tx) => {
+        // Demand against a SKU we hold no roll of (ST-R5.3). There is no physical
+        // stock to have a coating, so the list is empty rather than absent.
+        const pa = parts("COATNONE");
+        const key = canonicalSkuKey(pa);
+        await seedLines(tx, [{ id: `${P}-cnone-line`, qty_balance: 12, eta: 3, parts: pa }]);
+
+        const it_ = (await summaryItem(key))!;
+        expect(it_.coatings).toEqual([]);
+        expect(it_.coating).toBeNull();
+        expect(it_.on_hand).toBe(0);
+      });
+    });
+
+    it("THE SKU KEY IS BYTE-IDENTICAL: coating is not, and must never become, a segment", async () => {
+      await inRollback(async (tx) => {
+        // The entire safety of this change rests on coating staying OUT of the key.
+        // Putting it in would spell `-` on every commitment (tbl_1203 has no
+        // coating column) against stock spelled `PVDF`, nothing would ever match,
+        // and ATP would equal on-hand for the whole catalogue — AMENDMENT 19's
+        // failure, in AMENDMENT 19's direction.
+        const pa = parts("COATKEY");
+        const key = canonicalSkuKey(pa);
+
+        // 1 · A golden literal. Not `canonicalSkuKey(...)` compared to itself: a
+        //     seventh segment would change both sides together and pass.
+        expect(key).toBe("WP7RT-COATKEY|907001|0.3|4|4880|1220");
+        expect(key.split("|").length).toBe(6);
+        expect(key).not.toContain("PVDF");
+
+        await seedFg(tx, [
+          { sn_fg: `${P}-ck-pvdf`, qty: 10, parts: pa, coating: "PVDF" },
+          { sn_fg: `${P}-ck-pv`, qty: 10, parts: pa, coating: "PV" },
+          { sn_fg: `${P}-ck-none`, qty: 10, parts: pa },
+        ]);
+
+        // 2 · Three rolls, three different coatings, ONE key — in the mirror, and
+        //     computed by the SQL twin of canonicalSkuKey, not by the seeder.
+        const keys = await tx<{ k: string }[]>`
+          select distinct erp_sku_key(brand, warna, th, th_panel, p, l) as k
+          from erp_live_fg where erp_row_id like ${`${P}-ck-%`}
+        `;
+        expect(keys.map((r: { k: string }) => r.k)).toEqual([key]);
+
+        // 3 · And the stored sku_key agrees with it for every one of them.
+        const stored = await tx<{ k: string }[]>`
+          select distinct sku_key as k from erp_live_fg where erp_row_id like ${`${P}-ck-%`}
+        `;
+        expect(stored.map((r: { k: string }) => r.k)).toEqual([key]);
+
+        // 4 · The SQL function's arity is still six. A seventh argument is how
+        //     coating would get into the key, and this is what would catch it.
+        const [fn] = await tx<{ n: number }[]>`
+          select pronargs::int as n from pg_proc where proname = 'erp_sku_key'
+        `;
+        expect(fn.n).toBe(6);
+
+        // 5 · One SKU on the wire, carrying all 30 lembar.
+        const it_ = (await summaryItem(key))!;
+        expect(it_.on_hand).toBe(30);
+        expect(it_.coatings.length).toBe(3);
+      });
+    });
+
+    it("ATP IS UNCHANGED: the same quantities read the same with and without coatings", async () => {
+      await inRollback(async (tx) => {
+        // Two SKUs, identical in every number. One has its rolls split PV/PVDF, the
+        // other carries no coating at all — the pre-change population. If exposing
+        // the breakdown touched the arithmetic, these two would disagree.
+        const mixed = parts("COATATPA");
+        const plain = parts("COATATPB");
+        await seedFg(tx, [
+          { sn_fg: `${P}-ca-a1`, qty: 60, parts: mixed, coating: "PVDF" },
+          { sn_fg: `${P}-ca-a2`, qty: 40, parts: mixed, coating: "PV" },
+          { sn_fg: `${P}-ca-b1`, qty: 60, parts: plain },
+          { sn_fg: `${P}-ca-b2`, qty: 40, parts: plain },
+        ]);
+        await seedLines(tx, [
+          { id: `${P}-ca-a-live`, qty_balance: 25, eta: 5, parts: mixed },
+          { id: `${P}-ca-b-live`, qty_balance: 25, eta: 5, parts: plain },
+        ]);
+        await seedAdjustment(tx, canonicalSkuKey(mixed), -3);
+        await seedAdjustment(tx, canonicalSkuKey(plain), -3);
+
+        const a = (await summaryItem(canonicalSkuKey(mixed)))!;
+        const b = (await summaryItem(canonicalSkuKey(plain)))!;
+
+        // The formula, spelled once: on_hand - committed + adjustment.
+        expect(a.atp).toBe(72);
+        expect(b.atp).toBe(72);
+        // And every number the formula is built from, side by side.
+        for (const f of ["on_hand", "committed", "adjustment", "atp", "state"] as const) {
+          expect(a[f]).toEqual(b[f]);
+        }
+        // THIS is the thing the owner cannot currently see: `a.atp` is 72 lembar
+        // of which at most 60 are PVDF. The number did not change; what changed is
+        // that the response now says what it is made of.
+        expect(asPairs(a.coatings)).toEqual([
+          ["PVDF", 60],
+          ["PV", 40],
+        ]);
+        expect(asPairs(b.coatings)).toEqual([[null, 100]]);
+      });
+    });
+
+    it("totals.mixed_coating_skus counts SKUs with MORE THAN ONE coating, and only those", async () => {
+      await inRollback(async (tx) => {
+        const before = (await GET<SummaryResponse>("/api/stock/summary")).body.totals;
+
+        const single = parts("COATCNT1"); // one known coating      → not counted
+        const unknown = parts("COATCNT2"); // one unknown bucket     → not counted
+        const two = parts("COATCNT3"); // PV + PVDF             → counted
+        const three = parts("COATCNT4"); // PV + PVDF + unknown   → counted ONCE
+        await seedFg(tx, [
+          { sn_fg: `${P}-cc-1`, qty: 5, parts: single, coating: "PVDF" },
+          { sn_fg: `${P}-cc-1b`, qty: 5, parts: single, coating: "PVDF" },
+          { sn_fg: `${P}-cc-2`, qty: 5, parts: unknown },
+          { sn_fg: `${P}-cc-2b`, qty: 5, parts: unknown, coating: "  " },
+          { sn_fg: `${P}-cc-3a`, qty: 5, parts: two, coating: "PVDF" },
+          { sn_fg: `${P}-cc-3b`, qty: 5, parts: two, coating: "PV" },
+          { sn_fg: `${P}-cc-4a`, qty: 5, parts: three, coating: "PVDF" },
+          { sn_fg: `${P}-cc-4b`, qty: 5, parts: three, coating: "PV" },
+          { sn_fg: `${P}-cc-4c`, qty: 5, parts: three },
+        ]);
+
+        const after = (await GET<SummaryResponse>("/api/stock/summary")).body.totals;
+        // Exactly the two ambiguous SKUs. Measured as a DELTA because this database
+        // is shared with the other packages' fixtures.
+        expect(after.mixed_coating_skus - before.mixed_coating_skus).toBe(2);
+
+        // And it agrees with the items it claims to be counting, item by item.
+        const { body } = await GET<SummaryResponse>("/api/stock/summary");
+        const mine = body.items.filter((i) => i.sku_key.startsWith("WP7RT-COATCNT"));
+        expect(mine.length).toBe(4);
+        expect(mine.filter((i) => i.coatings.length > 1).length).toBe(2);
+        // The two that are NOT counted are exactly the two with one bucket.
+        const singles = mine.filter((i) => i.coatings.length === 1).map((i) => i.coating);
+        expect(singles.length).toBe(2);
+        expect(new Set(singles)).toEqual(new Set([null, "PVDF"]));
+      });
+    });
+
+    it("/sku/:sku_key shows WHICH physical roll is which coating, beside the same breakdown", async () => {
+      await inRollback(async (tx) => {
+        // A PPIC user drilling into a mixed SKU. The item-level split says how much
+        // of the ATP is what; the on-hand rows say which serials to go and look at.
+        const pa = parts("COATDET");
+        const key = canonicalSkuKey(pa);
+        await seedFg(tx, [
+          { sn_fg: `${P}-cd-pvdf`, qty: 60, lokasi: "GD-A", parts: pa, coating: "PVDF" },
+          { sn_fg: `${P}-cd-pv`, qty: 40, lokasi: "GD-B", parts: pa, coating: "PV" },
+          { sn_fg: `${P}-cd-unk`, qty: 5, lokasi: "GD-C", parts: pa },
+        ]);
+
+        const { status, body } = await GET<SkuDetailResponse>(
+          `/api/stock/sku/${encodeURIComponent(key)}`,
+        );
+        expect(status).toBe(200);
+
+        // Per-roll, so a serial can be walked to.
+        expect(
+          body.on_hand_rows.map((r) => [r.sn_fg, r.coating] as [string | null, string | null]),
+        ).toEqual([
+          [`${P}-cd-pvdf`, "PVDF"],
+          [`${P}-cd-pv`, "PV"],
+          [`${P}-cd-unk`, null],
+        ]);
+
+        // The item on THIS response carries the same breakdown as /summary's does,
+        // and it is the bucketed form of exactly the rows above.
+        expect(asPairs(body.item.coatings)).toEqual([
+          ["PVDF", 60],
+          ["PV", 40],
+          [null, 5],
+        ]);
+        expect(body.item.coating).toBeNull();
+        const fromRows = body.on_hand_rows.reduce((n, r) => n + r.qty, 0);
+        expect(body.item.coatings.reduce((n, e) => n + e.on_hand, 0)).toBe(fromRows);
       });
     });
   });
