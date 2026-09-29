@@ -213,6 +213,26 @@ inventing a state that this spec did not design — raise it.
 .f-up{animation:flup 1.2s ease-out}
 .f-dn{animation:fldn 1.2s ease-out}
 
+/* ── coating (§5.1, §5.2) — /stock only ───────────────────────────────────── */
+.coats{display:flex;gap:4px;flex-wrap:wrap;align-items:center;margin-top:5px}
+.chip.coat     {background:var(--neutral-bg); color:var(--neutral-ink)}
+.chip.coat.mix {background:var(--warn-bg);    color:var(--warn-ink)}
+.coatsplit{font-size:11px;color:var(--ink-2);font-variant-numeric:tabular-nums;
+           overflow-wrap:anywhere;line-height:1.35}
+/* the ceiling. Deliberately NOT .atp: 16px not 22px, --warn-ink-strong not
+   --ink, and never without .capw beneath it. */
+.cap     {font-size:16px;font-weight:800;line-height:1.15;white-space:nowrap;
+          font-variant-numeric:tabular-nums;color:var(--warn-ink-strong)}
+.cap .un {font-size:11px;font-weight:700;color:var(--ink-2);margin-left:4px}
+.capw    {font-size:11px;font-weight:700;color:var(--warn-ink-strong);
+          margin-top:2px;line-height:1.35;white-space:normal}
+.capbar  {background:var(--warn-bg);color:var(--warn-ink-strong);
+          border-bottom:1px solid var(--warn-line);padding:10px 14px;
+          font-size:12px;line-height:1.45}
+.capbar.info{background:var(--neutral-bg);color:var(--neutral-ink);
+          border-bottom:1px solid var(--line);font-weight:500}
+.mixnote {font-size:11px;color:var(--ink-2);line-height:1.4;margin:-4px 0 10px}
+
 /* ── a11y (§9) ────────────────────────────────────────────────────────────── */
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
          overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
@@ -225,6 +245,14 @@ header :focus-visible{outline-color:var(--card)}
 The existing `@media(prefers-reduced-motion:reduce){*{animation:none!important;
 transition:none!important}}` rule is inherited and already neutralises `.sk`,
 `.f-up`, `.f-dn` and `.spin`. Do not add a second one.
+
+**Why the ceiling family is amber.** The three §4 connection families are slate
+(*switched off*), amber (*the data may be old*) and red (*broken, and waiting
+will not fix it*). The ceiling is none of those — it says *this number is not
+what it looks like* — but it lives entirely **inside the list card**, never in
+the banner slot above it, and the chips already speak amber for `st-habis` and
+`.umur.old`. Nothing new is claimed at the top of the page, so the three
+connection families stay unambiguous.
 
 ### 1.4 Number, date and duration formatting — identical on both pages
 
@@ -281,6 +309,11 @@ page is a defect on both.
 | reinstate (ST-R21) | **Aktifkan Lagi** | "Undo", "Restore" |
 | PPIC operator | **Petugas PPIC** | |
 | `actor` | **Petugas** | "User" |
+| `coatings[].coating` | **Coating** (kept, like ETA — universally used in the plant) | "Lapisan", "Pelapis" |
+| `coatings[].coating === null` | **Belum tercatat** / standing alone **Coating belum tercatat** | "Tanpa coating", "—", a blank, a coating name |
+| more than one bucket | **Campuran coating** | "Mixed", "Campur" |
+| `min(atp, on_hand)` under a coating filter | **`Maks. n`** + **Batas atas** | **never "Bisa Dijual"** — that word is reserved for `atp` and this is not it |
+| `totals.mixed_coating_skus` | **Campuran coating** *n* | a bare count with no sentence |
 | unit | from `item.unit`, normally **lembar** | |
 
 ### 1.6 `warna` is an ID, not a name — how the colour label is resolved
@@ -725,6 +758,15 @@ this order, omitting any whose value is 0 except the first:
 `stale_commitments` and `exceptions` are **not** shown to sales — they are PPIC
 hygiene numbers and would read as "something is broken" to a rep.
 
+`totals.mixed_coating_skus` **is** shown, because it is not hygiene: it is how
+often the headline number on this page spans two physically different products.
+It renders as a `.chip.coat.mix` in the strip — `Campuran coating 12` — and,
+because a bare count means nothing to a rep, one `.mixnote` line beneath it:
+`Sebagian SKU berisi lebih dari satu coating: stok di bawah satu kode barang
+tidak semuanya coating yang sama, jadi Bisa Dijual di baris itu belum tentu satu
+coating. Cek rincian coating di barisnya sebelum menjanjikan.` Both are absent at
+zero, and absent when an older payload has no such field.
+
 ### 5.1 Toolbar — ported from 1.0, not redesigned
 
 The 1.0 toolbar works and reps have learned it. Port the structure, the ids, the
@@ -738,11 +780,64 @@ up at 380px) **verbatim**. Only the option sets change, because the data changed
 | Kode barang | `kode` | `<option value="">Semua kode barang</option>` + distinct `kode_barang`, sorted. The placeholder says "kode barang" in full because "Semua kode" beside a live `Semua merek` reads as the merek select — see §11-A1. |
 | Ukuran | `size` | distinct `p×l`, numeric sort, rendered `4.880×1.220`. Omit the whole select when no item has both `p` and `l`. |
 | Tebal | `mm` | distinct `th`, numeric sort, rendered `0,3` (no `mm` suffix — `th` is not millimetres; panel thickness lives inside `kode_barang`). Label the select `title="Tebal (th)"`. Omit when empty. |
-| Urutkan | `sort` | `Warna A–Z` (default, persisted as `stk_sort`) · `Kode barang A–Z` · `Bisa dijual terbanyak` · `Bisa dijual paling sedikit`. The 1.0 `Coating` and `Sesuai file` options are dropped: there is no file, and although `coating` now EXISTS on the item (2026-09-29) it is a **list**, not a scalar, so "sort by coating" no longer has one obvious meaning — see §11-A2 before reinstating it. |
+| Urutkan | `sort` | `Warna A–Z` (default, persisted as `stk_sort`) · `Kode barang A–Z` · `Bisa dijual terbanyak` · `Bisa dijual paling sedikit` · `Pengiriman pesanan terdekat` · **`Urut: Coating`** (reinstated 2026-09-29 — see below). The 1.0 `Sesuai file` option is dropped: there is no file. |
 | Sembunyikan yang kosong | `hz` | checkbox, **default on**, persisted `stk_hide_kosong`. Hides `state === "kosong"` only. **Never hides `perlu_produksi`** — same guard as the 1.0 zero toggle. |
 | Hanya perlu produksi | `oo` | checkbox, default off. Replaces "Hanya overbooked" 1:1. |
 
-Coating filter: **deleted**, no field in the contract (§11-A2).
+**Coating — filter, column and sort. RULED BY THE OWNER 2026-09-29; the fork
+§11-A2 carried to review is closed.** The premise every line below follows from
+is that coating is **not** a segment of the SKU key and never will be: a
+sales-order line carries no coating, so a commitment cannot be attributed to one
+and **ATP is blended across coatings**.
+
+| Control | id | Behaviour |
+|---|---|---|
+| Coating | `coating` | `<option value="">Semua coating</option>` + the distinct coating names present in the current `/summary` response, `id` collation, **never a hardcoded list** — PVDF, PE and PV are what the catalogue holds today, not an enum, and §12 greps this page for them exactly as it greps for a merek. `+ Coating belum tercatat` when any unknown stock exists. The whole select is **omitted** while no *known* coating is present (the `Ukuran`/`Tebal` rule). Not persisted. Matches `item.coatings[].coating`, so it **SHOWS mixed SKUs** — see the ruling. |
+| Urut: Coating | `sort` | Keys on the item's **largest** bucket. Single-coating SKUs sort ahead of mixed ones inside the same coating, so a mixed row is never silently interleaved; unknown sorts after every named coating, and an item carrying no `coatings[]` at all after that. Ends in the same `tail()` chain, so the order is **total**. The option is **removed from the DOM** while no known coating exists, and a persisted `stk_sort=coating` falls back to `warna`. |
+
+**The ruling: a coating filter SHOWS a mixed SKU, it does not hide it.** Hiding a
+SKU that holds 60 PVDF sheets tells a rep there is no PVDF, and that costs a
+sale. But showing the blended ATP of 80 against a PVDF filter tells him he may
+promise 80 PVDF when at most 60 exists — the over-promise this whole rebuild
+exists to eliminate. So while a coating filter is active the row shows a
+**ceiling**:
+
+```
+ceiling(coating) = min(atp, on_hand of that coating)
+```
+
+It is an **upper bound and is labelled as one**. Commitments carry no coating, so
+part of what is already committed may itself be that coating and the true figure
+can be lower. It therefore never renders in `.atp`'s weight or `.atp`'s wording:
+
+- `.cap` — `Maks. 60 lembar`, 16px/800 in `--warn-ink-strong`, never 22px `--ink`.
+- `.capw` — `Batas atas coating PVDF`, plus ` — bisa lebih sedikit` **only** on a
+  mixed SKU. On a SKU whose stock is entirely that coating the figure is exact,
+  and a false warning there is how warnings stop being read.
+- the blended ATP stays on the row, named in full:
+  `Bisa Dijual (semua coating) 80 · Fisik 105 · Dipesan 25`.
+- when `ceiling ≤ 0` the ceiling **is** the ATP (`min(atp, on_hand)`, `atp ≤ 0`)
+  and nothing can be over-promised out of it, so the real number is shown as
+  itself with `Disaring coating PVDF — tidak ada stok yang bisa dijanjikan.`
+  `Maks. −120` would be a riddle, not a warning.
+- `.capbar`, one strip inside the list card, so a filtered view can never be
+  mistaken for an unfiltered one:
+  **`Angka di bawah adalah batas atas, bukan Bisa Dijual.`** `Daftar disaring ke
+  coating PVDF. Pesanan di ERP tidak mencatat coating, jadi sebagian stok yang
+  sudah dipesan bisa saja coating PVDF — jumlah sebenarnya bisa lebih sedikit.
+  Konfirmasi ke Petugas PPIC sebelum menjanjikan.`
+
+**`null` is UNKNOWN, never "no coating".** The word is `Belum tercatat` inside a
+split, `Coating belum tercatat` standing alone, `coating belum tercatat` inside a
+sentence. *Tanpa coating* is a different claim and appears nowhere.
+
+**Before the first re-pull every SKU reads as one unknown bucket.** 812 identical
+`belum tercatat` chips are noise, not information, so the per-row chips, the
+select and the sort all stand down together and the page says it once, in
+`.capbar.info`: `Coating belum tercatat untuk semua SKU. Data coating baru terisi
+setelah sinkronisasi ERP berikutnya, jadi untuk sementara stok tidak bisa
+disaring atau diurutkan per coating.` An item whose payload carries no
+`coatings[]` at all renders **nothing** — absent is not the same as unknown.
 
 Tie-breaking: keep the inherited `tail()` comparator (warna → kode → ukuran →
 key) so a colour never jumps position between polls. Substitute `sku_key` for
@@ -800,6 +895,16 @@ A merek that is byte-identical to the `kode_barang` prints once, not twice (the
 server's own `composeName()` falls back `brand_text ?? brand ?? kode_barang`, so
 they can coincide). When there is no merek the line simply starts at the
 `kode_barang`; nothing is reserved and no separator is left dangling.
+
+**The coating cell sits under the state chip, not in `.sub2`.** `.sub2` is the
+identity line (merek · kode · tebal · ukuran) and its separators are `·`; a
+coating split uses the same separator and would read as one more identifier.
+A single-coating SKU renders one `.chip.coat` carrying the coating name.
+A **mixed** SKU renders `.chip.coat.mix` — `Campuran coating`, amber — followed
+by the split **in full**, `PVDF 60 · PV 40 · Belum tercatat 5`. Never a lead
+value with the rest hidden: the lead value is precisely the number that would
+let a rep promise the wrong product, and the chip is also what tells a mixed row
+apart from a pure one in a list sorted by coating (§9.5, not by colour alone).
 
 `.sub2` carries `overflow-wrap:anywhere` on both pages: the line now holds two
 ERP-supplied identifiers, and an unbroken one must break rather than push the
@@ -2000,7 +2105,7 @@ worth the field.
 | # | Gap | This spec's assumption | Cost if the Architect rules otherwise |
 |---|---|---|---|
 | **A1** | ~~**The §4.1 `item` has no brand field, but ST-R8 requires "search/filter by brand".**~~ **RESOLVED — the premise is false.** CONTRACTS AMENDMENT 19 rekeyed the SKU on `brand \| warna \| th \| th_panel \| p \| l`, so `brand` and `brand_text` are on `SkuItem` *and* on `CommitLine`, and `CommitLine` has no `kode_barang` at all. | **ST-R8 is built** (§5.1): a second select, `Merek`, whose options are the merek labels present in the current response. The old rationale — *label it "Kode barang" because there is no brand field* — no longer holds and must not be cited; the two controls now sit side by side and each says in full what it filters. **What still holds is the ban on guessing**: `kode_barang` (`ACP-4MM`) conflates merek, lini produk and tebal panel, and no client-side prefix rule may split it. A merek is read from `brand_text`, then `brand`, and otherwise **not rendered at all**. | — |
-| **A2** | ~~No `coating` field; 1.0 had a coating filter.~~ **PARTLY RESOLVED 2026-09-29 — the field exists now, but it is not the field 1.0 had.** `erp_live_fg.coating` is mirrored and the item carries `coatings: [{coating, on_hand}]` (quantity desc, `null` = the one unknown bucket) plus a scalar `coating` that is non-null **only** when the SKU has exactly one known coating. It is a list because coating is **not** a SKU-key segment (`tbl_1203` has none, so it cannot be — CONTRACTS, "Open"), which means PV and PVDF rolls sharing brand/colour/thickness/size are **one SKU** with one summed on-hand. | The coating select stays **deleted for now**. Reinstating it is a product call, not a port: `eq(item.coating, want)` — the 1.0 rule — would silently hide every mixed SKU, and `item.coatings.some(…)` shows them while promising a quantity only partly of the requested coating. Read `totals.mixed_coating_skus` first: it is how many SKUs the question actually bites on. | If the owner wants the filter back, the semantics above must be chosen explicitly; the shape supports either. `Urut: Coating` has the same fork (sort on what, for a mixed SKU?). |
+| **A2** | ~~No `coating` field; 1.0 had a coating filter.~~ **PARTLY RESOLVED 2026-09-29 — the field exists now, but it is not the field 1.0 had.** `erp_live_fg.coating` is mirrored and the item carries `coatings: [{coating, on_hand}]` (quantity desc, `null` = the one unknown bucket) plus a scalar `coating` that is non-null **only** when the SKU has exactly one known coating. It is a list because coating is **not** a SKU-key segment (`tbl_1203` has none, so it cannot be — CONTRACTS, "Open"), which means PV and PVDF rolls sharing brand/colour/thickness/size are **one SKU** with one summed on-hand. | **CLOSED — the owner ruled 2026-09-29 and §5.1 is built to it.** Neither arm of the fork was taken whole: `item.coatings.some(…)` **shows** the mixed SKU (hiding 60 PVDF sheets costs a sale), and the quantity it shows is not the blended ATP but a **ceiling**, `min(atp, on_hand of that coating)`, labelled as an upper bound in its own type family with the blended ATP still on the row. `Urut: Coating` keys on the largest bucket, with pure SKUs ahead of mixed ones inside a coating. See §5.1. | — |
 | **A3** | `/stale-commitments` has no documented way to list rows already confirm-closed. Without it, the only undo path is the in-session tray, which dies on reload. | `?segment=closed` (§11.1). | Without it, delete the `Yang sudah ditutup` chip (§6.7) and say plainly in the tray footer that a reload makes a close unrecoverable from the UI. That is a materially worse product; I would not ship it. |
 | **A4** | `reason` on `close` is in the body but not marked required (it *is* marked required for adjustments). | Optional on the ETA Lewat segment (auto-composed), **mandatory** on Tanpa ETA and on bulk (§6.6, §6.8). | If made mandatory everywhere, the ETA Lewat one-tap becomes the §6.6.2 inline expander. ~15 lines, no layout change — but triage throughput drops by roughly an order of magnitude on a 4,158-row queue. |
 | **A5** | No bulk close endpoint. | 50 sequential `POST`s, concurrency 4, cancellable, partial-failure report (§6.8). | See CHALLENGE-1. |
@@ -2128,6 +2233,12 @@ to prevent, in the order they are usually got wrong.
 - [ ] The `/stock` `Merek` select lists only values present in the current
       response. **Grep for `Alcopan`, `Maco`, `Tajima` in both HTML files: zero
       hits.** A hardcoded brand list is the defect this control exists to avoid.
+- [ ] Same discipline for coating: **grep `PVDF` in both HTML files, zero hits**,
+      code and comments alike. The `Coating` select lists what the response
+      carries, and nothing else.
+- [ ] Under a coating filter no row renders a `.atp` headline above zero — the
+      number is `.cap`, and `Bisa Dijual (semua coating)` is still on the row.
+- [ ] `grep -i 'tanpa coating'` returns zero hits: `null` is unknown, not absent.
 - [ ] `stk_brand` survives a reload, and a stored merek that has left the
       catalogue resets to "" instead of emptying the table.
 - [ ] Every write is blocked without `#actor`, and disabled when
