@@ -143,8 +143,11 @@ const SEED_TABLES: readonly SeedTable[] = [
  * It is the one most likely to carry an in/out direction marker, and ONE row
  * shows ONE value of it — which cannot tell an enum from a constant. Whether
  * "movement" is derivable at all (§0.5) turns on exactly that distinction, so
- * this table is sampled a handful of rows deep and the DISTINCT values of its
- * direction- and status-shaped keys are reported. It is still one request.
+ * this table is sampled ERP_SCHEMA_PROBE_MOVEMENT_SAMPLE_LIMIT rows deep (100
+ * by default — five was tried in production and answered one value, which is
+ * the ambiguous answer; see the default's note in `config.ts`) and the DISTINCT
+ * values of its direction- and status-shaped keys are reported. It is still one
+ * request.
  */
 const MOVEMENT_TABLE = "tbl_1179_STMutasiFGMX";
 
@@ -238,6 +241,68 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
+/**
+ * Row arrays THESE TWO ENDPOINTS use, beyond the six `readEnvelope()` tolerates
+ * (`data`/`results`/`items`/`rows`/`records`/`list`).
+ *
+ * `tables` and `columns` are not guesses. Production ran this probe and both
+ * readers parsed to ZERO against these exact bodies:
+ *
+ *   GET <base>/tables          → { success, total, tables }
+ *   GET <base>/table/{t}/columns → { success, table, name, description,
+ *                                    total_columns, columns }
+ *
+ * — the payload under `tables` / `columns`, the count under `total` /
+ * `total_columns`. The forms already here were guessed before anyone had called
+ * either endpoint, so they are KEPT: one that is wrong on this deployment may
+ * be right on the next, and a reader that only understands today's shape is the
+ * failure this module exists to avoid.
+ *
+ * They live here rather than in `readEnvelope()`'s ROW_KEYS on purpose. That
+ * reader is the SYNC's, and a sync page carrying a `columns` array is not a
+ * page of rows — widening it would change how production data is read to fix a
+ * diagnostic.
+ */
+const TABLE_LIST_ROW_KEYS = ["tables", "table_list", "tableList", "table_names", "tableNames"] as const;
+const COLUMN_LIST_ROW_KEYS = ["columns", "column_list", "columnList", "column_names", "columnNames", "fields"] as const;
+
+/**
+ * The first of `keys` holding an ARRAY at the top level of `body`, matched
+ * exactly and then case-/separator-insensitively. Null when there is none.
+ * Total over `unknown`: never throws, whatever the body is.
+ */
+function readNamedRows(body: unknown, keys: readonly string[]): { rows: unknown[]; key: string } | null {
+  if (!isRecord(body)) return null;
+  for (const key of keys) {
+    const v = body[key];
+    if (Array.isArray(v)) return { rows: v, key };
+  }
+  const wanted = new Set(keys.map(foldTableName));
+  for (const [k, v] of Object.entries(body)) {
+    if (Array.isArray(v) && wanted.has(foldTableName(k))) return { rows: v, key: k };
+  }
+  return null;
+}
+
+/**
+ * `readEnvelope()`'s rows, or — when it found none — this endpoint's own key.
+ * `readEnvelope()` keeps precedence so every shape that worked before still
+ * parses identically; this only fills the gap where it came back empty.
+ */
+function endpointRows(
+  body: unknown,
+  env: { rows: unknown[]; shape: string },
+  keys: readonly string[],
+): { rows: unknown[]; shape: string } {
+  if (env.rows.length > 0) return { rows: env.rows, shape: env.shape };
+  const found = readNamedRows(body, keys);
+  if (found === null) return { rows: env.rows, shape: env.shape };
+  return {
+    rows: found.rows,
+    shape: `${env.shape}; rows READ AT '${found.key}' (${found.rows.length}) — the shape production reports`,
+  };
+}
+
 /** First present, non-empty, scalar value under any of `keys` — casing-tolerant. */
 function pickText(rec: Record<string, unknown>, keys: readonly string[]): string | null {
   const folded = new Map<string, unknown>();
@@ -271,15 +336,17 @@ export interface TableListReading {
 /**
  * `GET <base>/tables`, read defensively. NEVER throws.
  *
- * The response shape is UNVERIFIED — this endpoint is named in the client's
- * header and has never once been called — so every plausible form is accepted
- * and the form actually observed is reported: a row array under any of the
- * tolerated keys, entries that are plain strings, entries that are objects with
- * a name field, a MySQL-style `{Tables_in_kencana: "..."}` single-field row, or
- * a top-level object keyed BY table name.
+ * Production answers `{ success, total, tables }` — names under `tables`, and
+ * `total` is a row count, not a page count. Every OTHER form stays accepted
+ * too, because all of them (this one included) were guessed before the endpoint
+ * had ever been called and one deployment's shape is not another's: a row array
+ * under any of the tolerated keys, entries that are plain strings, entries that
+ * are objects with a name field, a MySQL-style `{Tables_in_kencana: "..."}`
+ * single-field row, or a top-level object keyed BY table name. The form actually
+ * observed is always reported.
  */
 export function readTableList(body: unknown, limit: number): TableListReading {
-  const env = readEnvelope(body, limit);
+  const env = endpointRows(body, readEnvelope(body, limit), TABLE_LIST_ROW_KEYS);
   const names: string[] = [];
   const unreadable: string[] = [];
   for (const entry of env.rows) {
@@ -334,9 +401,15 @@ export interface ColumnListReading {
   unreadable: readonly string[];
 }
 
-/** `GET <base>/table/{name}/columns`, read with the same tolerance. NEVER throws. */
+/**
+ * `GET <base>/table/{name}/columns`, read with the same tolerance. NEVER throws.
+ *
+ * Production answers `{ success, table, name, description, total_columns,
+ * columns }` — the columns under `columns`, the count under `total_columns`.
+ * The previously tolerated forms are all kept, for the same reason as above.
+ */
 export function readColumnList(body: unknown, limit: number): ColumnListReading {
-  const env = readEnvelope(body, limit);
+  const env = endpointRows(body, readEnvelope(body, limit), COLUMN_LIST_ROW_KEYS);
   const columns: ErpColumn[] = [];
   const unreadable: string[] = [];
   for (const entry of env.rows) {
@@ -397,8 +470,10 @@ export interface DistinctValues {
 
 /**
  * Distinct values of every status-shaped key across the sampled rows. One value
- * across five rows is reported as such — it could be an enum or a constant, and
- * five rows cannot tell, which is itself the thing a reader needs to know.
+ * across every sampled row is reported as such — it could be an enum or a
+ * constant, and a sample cannot tell, which is itself the thing a reader needs
+ * to know. The sample is sized (`ERP_SCHEMA_PROBE_MOVEMENT_SAMPLE_LIMIT`) so
+ * that answer is rare rather than routine.
  */
 export function distinctStatusValues(rows: readonly unknown[]): DistinctValues[] {
   const seen = new Map<string, Set<string>>();
