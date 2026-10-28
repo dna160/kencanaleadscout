@@ -182,6 +182,16 @@ export interface LiveFgRow extends MirrorRowBase {
   qty_m2: number | null;
   buffer_qty: number | null;
   buffer_status: string | null;
+  /**
+   * The roll's coating — PV / PVDF / PE. Mirrored VERBATIM (trimming and the
+   * unknown bucket are a read-side concern, spelled once in routes/stock-atp.ts).
+   *
+   * NOT part of the SKU key and never will be: `tbl_1203` has no coating column,
+   * so the demand side has nothing to spell, and keying on it would match every
+   * commitment against nothing (AMENDMENT 19's failure, same direction). It is a
+   * property of a PHYSICAL ROLL, which is why it lives here and not on SoLineRow.
+   */
+  coating: string | null;
   lokasi: string | null;
   sku_key: string;
   erp_updated_at: Date | null;
@@ -437,7 +447,34 @@ export function resetAuthNotices(): void {
   noticedAuthFailures.clear();
 }
 
-function noticeAuthFailure(table: SelarasTable, status: number): void {
+/**
+ * WHAT a request is for, as log text.
+ *
+ * This used to be a `SelarasTable`, which was right while the only caller was
+ * the mirror pull. The schema probe (`erp/schemaProbe.ts`) asks about ERP tables
+ * that are NOT mirrored and about `<base>/tables`, which is not a table read at
+ * all — so the transport layer takes a label rather than a member of a
+ * four-name union. Nothing about the retry policy, the redaction boundary or
+ * the auth placement differs between the two callers, and that is the point:
+ * the probe must be incapable of drifting from the sync's transport posture.
+ */
+export interface RequestSubject {
+  /** What a log line calls this request. Never a URL — a URL can carry secrets. */
+  label: string;
+  /**
+   * The ERP table name, when the request reads a table. Null for an endpoint
+   * that is not one (`/tables`), so the 400/404 hints do not invent a table.
+   */
+  erpTable: string | null;
+}
+
+/** The subject of a mirrored table's own request. */
+function tableSubject(table: SelarasTable): RequestSubject {
+  return { label: table, erpTable: SELARAS_ENDPOINTS[table] };
+}
+
+function noticeAuthFailure(subject: RequestSubject, status: number): void {
+  const table = subject.label;
   const key = `${table}:${status}`;
   if (noticedAuthFailures.has(key)) return;
   noticedAuthFailures.add(key);
@@ -471,16 +508,21 @@ function failureKind(status: number): SelarasFailureKind {
   return "other";
 }
 
-function describeClientError(table: SelarasTable, status: number): string {
+function describeClientError(subject: RequestSubject, status: number): string {
+  const erp = subject.erpTable;
   if (status === 401 || status === 403) {
-    noticeAuthFailure(table, status);
+    noticeAuthFailure(subject, status);
     return `HTTP ${status} from ERP — credentials rejected (auth mode '${config.selarasAuthMode}'); see the [selaras] line above`;
   }
   if (status === 400) {
-    return `HTTP 400 from ERP — the request was refused, most likely an unknown filter or order_by column for '${SELARAS_ENDPOINTS[table]}' (GET <base>/table/${SELARAS_ENDPOINTS[table]}/columns lists them)`;
+    return erp === null
+      ? `HTTP 400 from ERP — the request was refused on '${subject.label}'; check SELARAS_BASE_URL ends at /api`
+      : `HTTP 400 from ERP — the request was refused, most likely an unknown filter or order_by column for '${erp}' (GET <base>/table/${erp}/columns lists them)`;
   }
   if (status === 404) {
-    return `HTTP 404 from ERP — no such endpoint. Rows come from <base>/table/${SELARAS_ENDPOINTS[table]}; check SELARAS_BASE_URL ends at /api`;
+    return erp === null
+      ? `HTTP 404 from ERP — no such endpoint for '${subject.label}'; check SELARAS_BASE_URL ends at /api`
+      : `HTTP 404 from ERP — no such endpoint. Rows come from <base>/table/${erp}; check SELARAS_BASE_URL ends at /api, and that the table name is spelled as the ERP spells it`;
   }
   return `HTTP ${status} from ERP`;
 }
@@ -489,9 +531,9 @@ function describeClientError(table: SelarasTable, status: number): string {
  * The message a page that ran out of 429 retries carries. Says what was tried,
  * so the log distinguishes "we gave up after backing off" from "we never tried".
  */
-function describeRateLimit(table: SelarasTable, attempts: number, waitedMs: number): string {
+function describeRateLimit(subject: RequestSubject, attempts: number, waitedMs: number): string {
   return (
-    `HTTP 429 from ERP — rate limited on '${SELARAS_ENDPOINTS[table]}' and still limited after ` +
+    `HTTP 429 from ERP — rate limited on '${subject.erpTable ?? subject.label}' and still limited after ` +
     `${attempts} attempt(s) over ${Math.round(waitedMs / 100) / 10}s of backoff. Nothing is wrong with ` +
     `the request: this page is left for the next tick, which resumes from the last COMMITTED page. ` +
     `If this persists, lower STOCK_SYNC_PAGE_SIZE or raise STOCK_SYNC_PAGE_DELAY_MS`
@@ -503,10 +545,10 @@ function describeRateLimit(table: SelarasTable, attempts: number, waitedMs: numb
  * empty one: an empty page would advance the cursor past rows we never saw, and
  * the mirror would keep a stale commitment forever with nothing in the log.
  */
-function successFailure(table: SelarasTable, env: SelarasEnvelope): string {
+function successFailure(subject: RequestSubject, env: SelarasEnvelope): string {
   void env;
   return (
-    `ERP answered 200 with success=false for '${SELARAS_ENDPOINTS[table]}' — the ERP itself refused ` +
+    `ERP answered 200 with success=false for '${subject.erpTable ?? subject.label}' — the ERP itself refused ` +
     `the request, so the page fetched nothing, the cursor stays put and nothing was mirrored. This ` +
     `is an ERP-side error, NOT a client shape problem: check the ERP, not the envelope reader`
   );
@@ -1055,6 +1097,9 @@ export function adaptLiveFgRow(raw: unknown): LiveFgRow | null {
     qty_m2: asNumber(pick(row, "qty_m2", "qtyM2", "m2", "qty_meter", "luas")),
     buffer_qty: asNumber(pick(row, "buffer_qty", "bufferQty")),
     buffer_status: asText(pick(row, "buffer_status", "bufferStatus")),
+    // `coating` is the documented and observed spelling; the twins are the usual
+    // alternatives, costing nothing and saving a re-pull if the wire disagrees.
+    coating: asText(pick(row, "coating", "coating_type", "coatingType", "jenis_coating")),
     lokasi: asText(pick(row, "lokasi", "location", "gudang", "warehouse")),
     sku_key: canonicalSkuKey(parts),
     erp_updated_at: pickUpdatedAt(row),
@@ -1217,6 +1262,98 @@ function describeWireKey(key: string, value: unknown): string {
   return key;
 }
 
+
+// ── The table-agnostic half of the diagnostic (shared with the schema probe) ─
+//
+// `buildColumnDiagnostic()` below answers a sku_key question about one of the
+// four MIRRORED tables. The schema probe asks a strictly smaller question about
+// tables nobody here has ever seen: what are this row's keys called, and — for
+// the keys that decide a date basis or a stage model — what is in them.
+//
+// That smaller question is this pair of functions, and `buildColumnDiagnostic()`
+// now calls them rather than spelling the key walk a second time. A probe that
+// described keys by its own rules would be describing a row shape nobody reads.
+
+/** A key whose VALUE is logged, because the value is the finding. */
+export type NotableKeyKind = "date" | "status";
+
+export interface NotableKey {
+  /** The wire key, in the row's own spelling. */
+  key: string;
+  kind: NotableKeyKind;
+  /** Redacted, truncated. Never a whole row, never an object's contents. */
+  value: string;
+}
+
+export interface RowKeyDiagnostic {
+  /** Raw wire key names, sorted. Nested keys as `name{a,b}` (see describeWireKey). */
+  keys: readonly string[];
+  /** True when the row carried more keys than `keys` lists (see MAX_WIRE_KEYS). */
+  keysTruncated: boolean;
+  /** Date- and status-shaped keys WITH their values, in key order. */
+  notable: readonly NotableKey[];
+}
+
+/**
+ * Keys whose value decides the DATE BASIS. BLUEPRINT-DRAFT §2.4: "a work order
+ * created on the 3rd, started on the 5th and finished on the 9th appears in a
+ * different bucket under each basis", so which date columns exist, and what they
+ * actually contain, is not a detail that can be deferred. Indonesian spellings
+ * included because this ERP's columns are a mix of both languages.
+ */
+const DATE_KEY_RE = /(^|[^a-z])(date|datetime|timestamp|tanggal|tgl|waktu|time)([^a-z]|$)|_at$|^at_/i;
+
+/**
+ * Keys whose value decides the STAGE MODEL, or the IN/OUT direction of a
+ * movement. §0.4 ("how a row says where it is in the flow") and §0.5 (whether
+ * raw-material movement is derivable at all) are both answered from these.
+ */
+const STATUS_KEY_RE =
+  /status|state|approv|stage|tahap|posisi|kondisi|progress|jenis|tipe|^type$|_type|type_|kind|flag|direction|arah|in_?out|masuk|keluar|mutasi|mutation|movement|sign|debit|kredit|credit|is_|^aktif|active|closed|selesai|batal|cancel/i;
+
+/**
+ * An id / foreign key. EXCLUDED, and the exclusion matters: `STATUS_KEY_RE`
+ * carries `mutasi` so that a column literally named `jenis_mutasi` is reported
+ * as a direction marker — and without this guard that same rule claims
+ * `tbl_1179_STMutasiFGMX_id`, whose five distinct integer values then drown the
+ * one line that answers §0.5. An `_id`'s value is an opaque row number; it
+ * decides no date basis and no stage, and it is still in the key list above.
+ */
+const ID_KEY_RE = /(^|_)id$/i;
+
+function notableKind(key: string): NotableKeyKind | null {
+  if (ID_KEY_RE.test(key)) return null;
+  // Date first: `status_date` is a date whose VALUE is a date, and reading it as
+  // a status would print a timestamp under a heading that promises an enum.
+  if (DATE_KEY_RE.test(key)) return "date";
+  if (STATUS_KEY_RE.test(key)) return "status";
+  return null;
+}
+
+/**
+ * Key names of ONE raw row, plus the values of the date- and status-shaped keys.
+ * Total over `unknown`: a non-object yields null rather than throwing, because
+ * nothing in a diagnostic may ever fail the thing it is describing.
+ *
+ * Values are rendered by `sampleValue()`, so a container contributes its SHAPE
+ * and its child key names and never its contents — that is the line between a
+ * diagnostic and a customer-data leak (§7.9).
+ */
+export function buildRowKeyDiagnostic(raw: unknown): RowKeyDiagnostic | null {
+  if (!isRecord(raw)) return null;
+  const entries = Object.entries(raw);
+  const shown = entries.slice(0, MAX_WIRE_KEYS);
+  const keys = shown.map(([k, v]) => redactSecrets(describeWireKey(k, v))).sort();
+  const notable: NotableKey[] = [];
+  for (const [k, v] of shown) {
+    const kind = notableKind(k);
+    if (kind === null) continue;
+    notable.push({ key: redactSecrets(k), kind, value: sampleValue(v) });
+  }
+  notable.sort((a, b) => a.key.localeCompare(b.key));
+  return { keys, keysTruncated: entries.length > shown.length, notable };
+}
+
 /**
  * Build the diagnostic for ONE raw row. Total over `unknown` — a non-object row
  * yields null rather than throwing, because nothing here may ever fail a page.
@@ -1227,11 +1364,11 @@ function describeWireKey(key: string, value: unknown): string {
  */
 export function buildColumnDiagnostic(table: SelarasTable, raw: unknown): ColumnDiagnostic | null {
   if (!isRecord(raw)) return null;
+  // The key walk is shared with the schema probe, so what one of them calls a
+  // wire key the other cannot call something else.
+  const rowKeys = buildRowKeyDiagnostic(raw);
+  if (rowKeys === null) return null;
   const entries = Object.entries(raw);
-  const keys = entries
-    .slice(0, MAX_WIRE_KEYS)
-    .map(([k, v]) => redactSecrets(describeWireKey(k, v)))
-    .sort();
 
   const side = SKU_SIDE_BY_TABLE[table];
   const segments: SegmentProbe[] = [];
@@ -1291,8 +1428,8 @@ export function buildColumnDiagnostic(table: SelarasTable, raw: unknown): Column
     table,
     erpTable: SELARAS_ENDPOINTS[table],
     side,
-    keys,
-    keysTruncated: entries.length > keys.length,
+    keys: rowKeys.keys,
+    keysTruncated: rowKeys.keysTruncated,
     segments,
     unmatched,
   };
@@ -1811,7 +1948,7 @@ type TransportResult =
  *
  * Resolves always; a transport error is a value, never an exception.
  */
-async function requestWithRetries(table: SelarasTable, url: string, opts: RetryOptions): Promise<TransportResult> {
+async function requestWithRetries(subject: RequestSubject, url: string, opts: RetryOptions): Promise<TransportResult> {
   const policy = ratePolicy(opts.rateLimit);
   const retryDelayMs = opts.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
   /** Attempts spent against a 429, and the total time they waited. */
@@ -1831,7 +1968,7 @@ async function requestWithRetries(table: SelarasTable, url: string, opts: RetryO
       if (res.status === 429) {
         rateLimited += 1;
         last = {
-          error: describeRateLimit(table, rateLimited, waitedMs),
+          error: describeRateLimit(subject, rateLimited, waitedMs),
           status: 429,
           kind: "rate_limit",
           retryable: true,
@@ -1858,7 +1995,7 @@ async function requestWithRetries(table: SelarasTable, url: string, opts: RetryO
         return {
           ok: false,
           rateLimited: rateLimited > 0,
-          error: describeClientError(table, res.status),
+          error: describeClientError(subject, res.status),
           status: res.status,
           kind: failureKind(res.status),
           retryable: false,
@@ -1899,7 +2036,7 @@ export async function fetchPage<K extends SelarasTable>(
   opts: FetchPageOptions,
 ): Promise<SelarasResult<SelarasRowByTable[K]>> {
   const url = buildPageUrl(table, opts);
-  const res = await requestWithRetries(table, url, opts);
+  const res = await requestWithRetries(tableSubject(table), url, opts);
   if (!res.ok) {
     const { ok: _ok, rateLimited: _rateLimited, ...failure } = res;
     return { ok: false, ...failure };
@@ -1922,7 +2059,7 @@ export async function fetchPage<K extends SelarasTable>(
     // Not retryable either: the ERP understood us and said no.
     return {
       ok: false,
-      error: successFailure(table, env),
+      error: successFailure(tableSubject(table), env),
       status: res.status,
       kind: "erp_error",
       retryable: false,
@@ -2024,7 +2161,7 @@ export interface FetchKeyPageOptions {
 
 export async function fetchKeyPage(table: SelarasTable, opts: FetchKeyPageOptions): Promise<SelarasKeyResult> {
   const url = buildKeyPageUrl(table, opts);
-  const res = await requestWithRetries(table, url, opts);
+  const res = await requestWithRetries(tableSubject(table), url, opts);
   if (!res.ok) {
     const { ok: _ok, rateLimited: _rateLimited, ...failure } = res;
     return { ok: false, ...failure };
@@ -2040,7 +2177,7 @@ export async function fetchKeyPage(table: SelarasTable, opts: FetchKeyPageOption
   if (env.success === false) {
     return {
       ok: false,
-      error: successFailure(table, env),
+      error: successFailure(tableSubject(table), env),
       status: res.status,
       kind: "erp_error",
       retryable: false,
@@ -2067,6 +2204,61 @@ export async function fetchKeyPage(table: SelarasTable, opts: FetchKeyPageOption
     ok: true,
     page: { keys, rawCount: env.rows.length, dropped, page: opts.page, totalPages: env.totalPages, projected },
   };
+}
+
+
+// ── Arbitrary read-only endpoints (the schema probe's only entry point) ──────
+
+/**
+ * `<base>/<segments…>?<params>`, with the configured auth placement applied.
+ *
+ * The schema probe needs `<base>/tables` and `<base>/table/{name}/columns` —
+ * the two sibling endpoints the sync does not use, named in this module's header
+ * since 2026-09-11 and never called. Built HERE rather than in the probe so that
+ * a URL carrying credentials is still produced in exactly one file, and so the
+ * probe cannot accidentally reach a non-GET path: every segment is encoded and
+ * the method is fixed by `fetchErpJson()` below.
+ */
+export function buildErpPathUrl(segments: readonly string[], params?: Readonly<Record<string, string>>): string {
+  const base = config.selarasBaseUrl.replace(/\/+$/, "");
+  const path = segments.map((seg) => encodeURIComponent(seg)).join("/");
+  const url = new URL(`${base}/${path}`);
+  for (const [k, v] of Object.entries(params ?? {})) url.searchParams.set(k, v);
+  applyQueryAuth(url);
+  return url.toString();
+}
+
+export interface FetchErpJsonOptions extends RetryOptions {
+  /** What a log line calls this request. NEVER a URL — a URL can carry secrets. */
+  label: string;
+  /** The ERP table name when this reads a table; null/absent for `/tables`. */
+  erpTable?: string | null;
+  url: string;
+}
+
+export type ErpJsonResult =
+  | { ok: true; status: number; body: unknown; rateLimited: boolean }
+  | { ok: false; error: string; status: number | null; kind: SelarasFailureKind; retryable: boolean; rateLimited: boolean };
+
+/**
+ * ONE read-only GET against the ERP, through the SAME `requestWithRetries()` the
+ * mirror pull uses — the same 429 budget and `Retry-After` honouring, the same
+ * single 5xx retry, the same terminal 4xx, and the same `redactSecrets()`
+ * boundary on every error. Resolves always; a transport failure is a value.
+ *
+ * It exists so the schema probe has no HTTP client of its own. A second client
+ * would be a second place for the 429 policy to drift and a second place for a
+ * credential to reach a log line, and this project has already paid for both of
+ * those once (the production 429 loop; §7.9).
+ */
+export async function fetchErpJson(opts: FetchErpJsonOptions): Promise<ErpJsonResult> {
+  const subject: RequestSubject = { label: opts.label, erpTable: opts.erpTable ?? null };
+  const res = await requestWithRetries(subject, opts.url, opts);
+  if (!res.ok) {
+    const { ok: _ok, ...failure } = res;
+    return { ok: false, ...failure };
+  }
+  return res;
 }
 
 /** The surface the sync worker depends on — lets a test inject a fake client. */

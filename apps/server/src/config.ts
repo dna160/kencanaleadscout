@@ -430,6 +430,79 @@ export const config = {
      */
     diagnoseColumns: bool("STOCK_SYNC_DIAGNOSE_COLUMNS", true),
   },
+  /**
+   * ── ERP SCHEMA DISCOVERY PROBE (`erp/schemaProbe.ts`) ────────────────────
+   *
+   * A DIAGNOSTIC, not a feature. It runs ONCE, shortly after boot, reads
+   * `<base>/tables` and then `columns` + one sample row for the tables that
+   * plausibly relate to production, and prints the result to the log. Nothing
+   * reads its output but a human.
+   *
+   * It exists because `selaras2.io` is unreachable from every development
+   * environment we have (403 at CONNECT from the egress proxy, verified
+   * 2026-10-26) while production reaches it fine, and Railway's logs are
+   * readable from outside. The logs are therefore the only channel the ERP's
+   * real shape can come back through, and `docs/produksi-1.0/BLUEPRINT-DRAFT.md`
+   * §0 is blocked on exactly that shape: two table names, their columns, their
+   * join, and whether raw-material movement exists in the ERP at all.
+   *
+   * The alternative is building the dashboard against guessed column names,
+   * which has already cost this project two cycles (`kode_barang` 42703 on
+   * every page; a SKU key that could never match).
+   *
+   * OFF BY DEFAULT, and it stays off: once the output has been read, the answer
+   * belongs in the Blueprint and the flag goes back to unset.
+   */
+  erpProbe: {
+    /** THE FLAG. Unset ⇒ the probe does not exist: no timer, no request, no log. */
+    enabled: bool("ERP_SCHEMA_PROBE", false),
+    /**
+     * How long after boot the probe first looks for an idle moment.
+     *
+     * Not zero: `startErpSync()` fires its first tick immediately, so a probe
+     * that started at t=0 would be queued behind a full pull anyway. Waiting
+     * lets the app finish booting and start serving before anything optional
+     * touches the ERP.
+     */
+    delayMs: int("ERP_SCHEMA_PROBE_DELAY_MS", 20_000),
+    /**
+     * How long the probe will wait for the sync to be idle before giving up.
+     *
+     * It NEVER runs beside a sync run: the ERP's limiter is shared and this
+     * project has already had one production 429 loop (see
+     * `docs/stock-2.0/HANDOVER.md`). A sync that is still running when this
+     * budget expires means the probe logs why it skipped and does nothing —
+     * one wasted deploy is cheaper than a second rate-limit incident.
+     */
+    waitForIdleMs: int("ERP_SCHEMA_PROBE_WAIT_MS", 600_000),
+    /**
+     * Ceiling on how many tables are probed, so a 400-table ERP cannot turn one
+     * diagnostic into 800 requests. Tables trimmed by the cap are NAMED in the
+     * log rather than silently dropped — a table nobody can see is a table
+     * nobody can ask about, which is the failure this probe exists to prevent.
+     */
+    maxTables: int("ERP_SCHEMA_PROBE_MAX_TABLES", 60),
+    /**
+     * `limit` for the sample page. ONE row: this reads key NAMES, plus the
+     * values of date- and status-shaped keys, and one row answers both.
+     */
+    sampleLimit: int("ERP_SCHEMA_PROBE_SAMPLE_LIMIT", 1),
+    /**
+     * Sample size for the movement table (`tbl_1179_STMutasiFGMX`) alone, which
+     * is the one most likely to carry an in/out direction marker. One row shows
+     * one value of it, which cannot tell an enum from a constant — and whether
+     * `movement` is derivable at all (§0.5) turns on that distinction. Still one
+     * request, so it costs nothing.
+     */
+    movementSampleLimit: int("ERP_SCHEMA_PROBE_MOVEMENT_SAMPLE_LIMIT", 5),
+    /**
+     * Extra ERP table names to probe BY NAME, whatever the name heuristic
+     * thinks. This is how the SECOND round costs an env change rather than a
+     * deploy: the Work Order table name is unknown today, comes back in the
+     * first run's `/tables` listing, and goes in here.
+     */
+    extraTables: csv("ERP_SCHEMA_PROBE_EXTRA_TABLES", []),
+  },
 } as const;
 
 export const hasDatabase = Boolean(config.databaseUrl);

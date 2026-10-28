@@ -493,10 +493,53 @@ SKU whose text legitimately contains `%`. WP-7 tests the round trip.
 
 ## Open — not resolved, carried to review
 
-- **`coating` is absent from the §4.1 item.** The 1.0 page had a working coating
-  filter and sort; both are dropped because the contract has no field for it. If
-  coating matters to reps, it needs a field on `erp_live_fg` and in the item
-  shape. Raised by WP-5; needs a product answer, not an engineering one.
+- ~~**`coating` is absent from the §4.1 item.**~~ **ANSWERED 2026-09-29 — the
+  owner asked for it back, and answering it exposed something else.** The ERP was
+  sending `coating` all along (`tbl_1210`'s documented column list, and the live
+  `live_fg` COLUMN DIAGNOSTIC wire keys); we received it and dropped it. It is now
+  mirrored on `erp_live_fg` and exposed on the item.
+
+  **It is NOT in the SKU key, and must never be.** `tbl_1203` has no coating
+  column — confirmed against both the documented list and a real API response — so
+  an SO line carries none. Adding it would key every commitment as `-` against
+  stock keyed `PVDF`, nothing would ever match, and ATP would equal on-hand for the
+  entire catalogue: AMENDMENT 19's failure, in AMENDMENT 19's direction. The ERP
+  does not commit a coating at order time either, which is the same fact `sn_fg IS
+  NULL` on an SO line already states — the roll is chosen at production.
+
+  **The consequence, which was previously invisible and is the important half:**
+  PV and PVDF rolls that share a brand, colour, thickness and dimensions
+  **collapse into one SKU**. Their on-hand is summed and a commitment matches
+  either, so the ATP shown against a PVDF panel may be part PE or PV stock. 1.0
+  had no such problem because 1.0's key *did* include coating
+  (`routes/stock.ts`); 2.0's cannot. That is why the item carries a **breakdown**
+  and not a scalar:
+
+  ```jsonc
+  "coatings": [ { "coating": "PVDF", "on_hand": 60 },
+                { "coating": "PV",   "on_hand": 40 },
+                { "coating": null,   "on_hand":  5 } ],   // null = the ONE unknown bucket
+  "coating": null                                          // scalar ONLY when there is exactly one, known
+  ```
+
+  Ordered by quantity descending (ties by coating, unknown last, so it never
+  shuffles between polls); always present, `[]` when the SKU holds no stock;
+  `Σ coatings[].on_hand === on_hand`. The scalar is deliberately narrow so a mixed
+  SKU can never be mistaken for a single-coating one by a client reading only it.
+  `/sku/:sku_key` carries `coating` on each `on_hand_rows[]` entry as well, so PPIC
+  drilling in sees which physical rolls are which. `totals.mixed_coating_skus`
+  counts SKUs holding more than one — the size of the ambiguity, following the
+  `autoclosed_aged_widened` precedent.
+
+  **Nothing moved.** `sku_key`, `atp`, `on_hand` and `committed` are byte-identical
+  before and after; asserted, not argued.
+
+  **Still a product question**, and now a sharper one: whether §5.1's coating
+  filter comes back, and what it should mean on a mixed SKU. A 1:1 port of the 1.0
+  control (`eq(item.coating, want)`) would silently **hide** every mixed SKU, since
+  their scalar is null. Matching against any bucket
+  (`item.coatings.some(c => eq(c.coating, want))`) shows them but promises a
+  quantity that is only partly the requested coating. **Carried to review.**
 - ~~**`.fltchips` / `.fchip`** are defined independently in `stock.html` and
   `stock-ppic.html`… They are not byte-identical. Reconcile.~~ **CLOSED
   2026-09-11.** Re-checked at audit. `stock-ppic.html` had already adopted
@@ -589,7 +632,16 @@ All 30 contrast pairs are computed in UX-SPEC §9.2, not asserted.
   none and `kode_barang` conflates brand, line and panel thickness. The filter is
   labelled "Kode barang" rather than guessing a prefix rule. Same family as the
   missing `coating`: both need a column on the aggregate, and both are product
-  questions. **Carried to review.**
+  questions. **Carried to review.** — *Superseded twice: AMENDMENT 19 put `brand`
+  on the item, and 2026-09-29 put `coatings[]` there. Neither needed the key to
+  change; see the coating entry under "Open" above for why coating in particular
+  must stay out of it.*
+
+- **A SKU may aggregate more than one coating** (2026-09-29). Not a defect and not
+  fixable by widening the key — the demand side has no coating to key on. It is
+  measured rather than hidden: `totals.mixed_coating_skus`, and the per-SKU split
+  in `item.coatings[]`. A non-zero count means some ATP figures span physically
+  different product.
 - **Customer names are PPIC-only.** Nothing in the PRD says whether sales may see
   which customer holds a commitment. Withholding is the reversible default; that
   is a commercial call, not a UI one. **Carried to review.**
@@ -1210,3 +1262,93 @@ not move. That `autoclosed_lines` and `widened_auto` are **both 27** is the whol
 point: on this population *every* auto-close is one AMENDMENT 20's status gate
 would have missed, because nothing here is `DO`. That is the owner's complaint,
 measured.
+
+---
+
+## AMENDMENT 23 — coating is a property of stock, never of identity (ST-R23)
+
+**Ruled after the owner asked why the sales page shows no PV/PVDF.** It is the
+first amendment driven by a *missing* feature rather than a wrong one, and the
+answer turned out to be a correctness finding wearing a UI question's clothes.
+
+### The finding
+
+Three facts, each verified rather than assumed:
+
+| | `coating` present? | how established |
+|---|---|---|
+| ERP stock table `tbl_1210` | **yes** | in the live `live_fg` COLUMN DIAGNOSTIC wire keys |
+| our mirror `erp_live_fg` | **was no** | `information_schema` — 19 columns, none of them coating |
+| ERP order lines `tbl_1203` | **no** | documented columns, and a real curled row |
+
+The ERP sends coating on every stock row and we were discarding it. That half is
+a one-column fix. The other half is not.
+
+### Why coating cannot enter the SKU key
+
+Stock has a coating. **Demand does not.** A sales-order line records brand,
+colour, thickness and dimensions, and nothing about PE, PV or PVDF. Adding
+coating as a seventh segment would key stock as `…|PVDF` and every commitment as
+`…|-`, so nothing would match, `open_commitment` would collapse to zero and ATP
+would read as raw on-hand everywhere — over-promising on every line in the
+catalogue. **The worst possible failure direction, reached by trying to be more
+precise.**
+
+This is the same shape as AMENDMENT 21's evidence-versus-absence rule, one level
+up: an absent *field* licenses an inference no more than an absent *date* does.
+The ERP does not commit a coating at order time — consistent with `sn_fg` being
+null until production allocates a specific roll — so neither can we.
+
+`SKU_SEGMENT_SOURCES` and `erp_sku_key` are therefore closed to coating. Arity
+stays 6, pinned against `pg_proc`, and `resolveSkuSegments(["coating"])` falls
+back to the shipped composition so not even an env var can smuggle it in.
+
+### The consequence, which was already live and invisible
+
+Where PV and PVDF sheets share brand, colour, thickness and size, **they are one
+SKU today.** Their on-hand is summed and a commitment consumes from the pool
+without regard to coating. 1.0 could carry a scalar `coating` precisely because
+1.0's key *included* coating, making every item single-coated by construction;
+2.0's key cannot, so a scalar here is not a simplification of the same thing —
+it is a different and false claim.
+
+So the split is exposed rather than flattened: `coatings[]`, quantity-desc,
+unknown bucket last, summing to `on_hand` by construction. The scalar `coating`
+survives only for genuinely single-coating SKUs; a mixed SKU reads `null`, so a
+client reading only the scalar can never be told "PVDF" about stock that is 40%
+PV. `null` means **unknown, never "no coating"** — which matters because every
+row reads unknown until the first re-pull.
+
+`totals.mixed_coating_skus` measures the ambiguity. Following the
+`autoclosed_aged_widened` precedent: it counts a state that already existed
+rather than one this change created, so the size of the problem is readable
+instead of inferred. The fixtures cannot honestly predict that number; the
+counter answers it for free the day after the re-pull.
+
+### The filter ruling
+
+A coating filter **shows** mixed SKUs; it does not hide them. The literal 1.0
+port — `eq(item.coating, want)` — hides every mixed SKU silently, because their
+scalar is null. But showing the blended ATP beside a coating filter is worse:
+80 promiseable against a PVDF filter when at most 60 sheets are PVDF.
+
+Under an active coating filter a row therefore shows a **ceiling**:
+
+```
+ceiling(coating) = min(atp, on_hand of that coating)
+```
+
+**An upper bound, labelled as one.** Commitments carry no coating, so the
+committed sheets may themselves be PVDF and the true figure can be lower. It is
+never rendered with the weight or wording of an ATP.
+
+### What this does not fix
+
+If sales is genuinely promising a specific coating at order time, this makes the
+ambiguity *visible* but cannot remove it — the fix would have to be an ERP-side
+coating field on `tbl_1203`. Carried to review with `mixed_coating_skus` as the
+evidence for whether it is worth asking for.
+
+**Zero ATP delta.** No arithmetic changed; proven by running two SKUs with
+identical quantities side by side, one split PV/PVDF and one uncoated, and
+asserting every field of the formula matches.
