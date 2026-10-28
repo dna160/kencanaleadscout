@@ -48,6 +48,7 @@ import { stockAtpRoutes } from "./routes/stock-atp.js";
 import { runStockMigrations } from "./db/migrateStock.js";
 import { runErpStockMigrations } from "./db/migrateErpStock.js";
 import { startErpSync, stopErpSync } from "./erp/syncWorker.js";
+import { startErpSchemaProbe, stopErpSchemaProbe } from "./erp/schemaProbe.js";
 
 const PUBLIC_DIR = fileURLToPath(new URL("../public", import.meta.url));
 
@@ -191,6 +192,15 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // [PROD 1.0] One-shot ERP schema discovery probe — a DIAGNOSTIC, gated behind
+  // ERP_SCHEMA_PROBE and completely inert without it (no timer, no log line).
+  // Armed AFTER listen() on an unref'd timer so it can neither delay a boot nor
+  // keep the process alive, and it never runs beside a mirror sync. It exists
+  // because selaras2.io is unreachable from every dev environment we have while
+  // production reaches it fine, so the Railway log is the only channel the ERP's
+  // real table shape can come back through. See erp/schemaProbe.ts.
+  startErpSchemaProbe();
+
   // Railway replaces a container by sending SIGTERM and then killing it, so this
   // is the ordinary end of every deploy — not an exceptional path.
   let shuttingDown = false;
@@ -201,6 +211,9 @@ async function main(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     app.log.info({ signal }, "shutting down");
+    // Before app.close(): an armed or in-flight probe has no business sending
+    // another ERP request once we are going away.
+    stopErpSchemaProbe();
     await app.close();
     // BEFORE closeDatabase(): handing the ERP run guard back is a write, so it
     // needs the connection. Skipping it used to leave `erp_sync_state.running`
