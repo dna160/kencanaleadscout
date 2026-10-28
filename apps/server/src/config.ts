@@ -493,8 +493,22 @@ export const config = {
      * one value of it, which cannot tell an enum from a constant — and whether
      * `movement` is derivable at all (§0.5) turns on that distinction. Still one
      * request, so it costs nothing.
+     *
+     * 100, not 5. Production ran with 5 and `in_out` came back ONE distinct
+     * value ("Out") across all five rows; `status` and `sub_status` came back
+     * one value each ("null"). That is exactly the answer the sample exists to
+     * avoid — it cannot distinguish an enum from a constant, so §0.5 stayed open
+     * and the run has to be repeated. 5 was never enough: a second value
+     * appearing in 1 row of 20 is missed by five rows three times out of four.
+     * At 100 rows a value as rare as 1-in-20 is missed with probability 0.6%
+     * (8% of the time at 50), and the rows of this table arrive in insertion
+     * order, so a run of same-direction rows at the head is the expected case
+     * rather than a surprise. The cost is unchanged: still ONE request, a page
+     * a tenth the size of the 1000-row pages the sync already pulls every few
+     * minutes (STOCK_SYNC_PAGE_SIZE), and no extra log lines — only the
+     * DISTINCT values are printed, never the rows.
      */
-    movementSampleLimit: int("ERP_SCHEMA_PROBE_MOVEMENT_SAMPLE_LIMIT", 5),
+    movementSampleLimit: int("ERP_SCHEMA_PROBE_MOVEMENT_SAMPLE_LIMIT", 100),
     /**
      * Extra ERP table names to probe BY NAME, whatever the name heuristic
      * thinks. This is how the SECOND round costs an env change rather than a

@@ -213,3 +213,125 @@ say so on screen. That is a finding to report, not a gap to quietly absorb.
 Metric definitions, the panel set, the page route, thresholds, and anything
 naming a column. All of it waits on §0. Writing it now would be writing fiction
 with the authority of a spec.
+
+---
+
+## 5 · VERIFIED SCHEMA (probe run in production, 2026-10-28 08:05 UTC)
+
+Read off live rows, not documentation. The `/columns` endpoint parsed to zero
+(reader bug — see §5.5), so these are **sample-row wire keys**, which is the
+stronger evidence anyway: it is what the API actually emits.
+
+### 5.1 `tbl_1236_DBRequestProduksiID` — Request Produksi · 50 keys
+
+```
+alu, approval_factory_manager(+_label), batch, catatan_untuk_so, created_at,
+customer_name(+_text), deleted_at, keterangan_untuk_stock, l, loaded_by, m2,
+mixed_filter, no_request(+_label,_text), no_urut, p, po_no,
+project_name(+_text), qty_delivered_so, qty_lembar, qty_so, referensi_alu,
+sales_name(+_text), sn_fg(+_label,_text), so_ms, so_no, status_request(+_label),
+sticker(+_label,_text), stock_saat_ini, tanggal_request,
+tbl_1236_DBRequestProduksiID_id, th_alu_skin, total_thickness_acp, updated_at,
+updated_user_id, user_id, warna(+_label,_text), wo_no
+```
+
+**`wo_no` is here.** That answers §0.3 — the join to Work Order is a work-order
+number carried on the request, not a key we have to infer. `so_no` likewise
+joins back to the Sales Orders already mirrored, so production can be tied to
+the demand that caused it.
+
+**The SKU columns are `warna`, `th_alu_skin`, `total_thickness_acp`, `p`, `l` —
+identical to `tbl_1203`.** Request Produksi therefore keys through the existing
+`canonicalSkuKey` on the demand-side mapping, with no new segment logic. That is
+a significant saving and it was not a given.
+
+Dates: `tanggal_request` (date), `created_at`, `updated_at` (datetime).
+Stage: `status_request` ("Waiting"), `approval_factory_manager` ("Waiting").
+Quantities: `qty_lembar`, `qty_so`, `qty_delivered_so`, `stock_saat_ini`.
+
+### 5.2 `tbl_1179_STMutasiFGMX` — FG mutations · 48 keys
+
+```
+batch_warna, brand(+_label,_text), coating, created_at,
+customer_name(+_label,_text), deleted_at, fg_category(+_text), gudang(+_label),
+in_out, kode_barang, kode_warna, l, loaded_by, m2, meter, mutasi_code,
+mutasi_date, nama_barang, p, protective_film(+_label,_text), qty, remarks,
+sn_fg(+_label,_old,_text), status, sub_status, sumber, sys_month, sys_year, t,
+tbl_1179_STMutasiFGMX_id, th, updated_at, updated_user_id, user_id,
+warna(+_label,_text)
+```
+
+**`in_out` exists.** §0.5's question — does the ERP say which way the goods
+went — is answered **yes**. The sampled value was `"Out"`.
+
+**Not yet settled:** all 5 sampled rows read `"Out"`, so we have confirmed the
+field exists and carries a direction, but **not** that `"In"` is among its
+values, nor its full domain. One value across a small sample cannot distinguish
+an enum from a constant. Treating `in_out` as a two-valued enum before that is
+confirmed would be assuming a column's behaviour from a plausible name, which is
+the §0 failure mode in a new costume. The next probe run samples deeper.
+
+`mutasi_date` is the movement date, and the natural date basis for this table.
+`mutasi_code` samples as `KP/DO-11506/10/26` — DO references, consistent with
+`"Out"` rows being deliveries.
+
+**It carries `brand`, `warna`, `th`, `t`, `p`, `l` — the full stock-side SKU
+mapping, same as `tbl_1210`** — plus `coating`, `gudang`, `sumber`,
+`fg_category`. So movements key to SKUs on the existing composition, and can be
+grouped by warehouse and source.
+
+### 5.3 `tbl_1324_DBStockOpnameFG` — stock opname · 14 keys
+
+```
+created_at, deleted_at, gudang(+_label), loaded_by, qty, sn_fg(+_label,_old),
+tanggal, tbl_1324_DBStockOpnameFG_id, updated_at, updated_user_id, user_id
+```
+
+No status or stage column — it is a count at a date (`tanggal`), keyed by serial
+(`sn_fg`), not by product identity. It cannot join the SKU key directly.
+
+### 5.4 Not found
+
+`tbl_1328` and `tbl_1235` both **404** on the bare numeric prefix. The PRD cites
+only their numbers, and prefix resolution needed the `/tables` listing, which
+failed to parse. Unresolved, not disproven.
+
+**The Work Order table name is still unknown** for the same reason — though
+`wo_no` on Request Produksi means we now know what joins to it.
+
+### 5.5 What went wrong, and what it cost
+
+Both metadata readers returned zero against real responses:
+
+| endpoint | actual envelope | reader expected |
+|---|---|---|
+| `/tables` | `{success, total, tables}` | six other forms, not `tables` |
+| `/table/{t}/columns` | `{success, table, name, description, total_columns, columns}` | six other forms, not `columns` |
+
+The shapes were guessed before anyone had ever called these endpoints. The probe
+printed the observed envelope on every request precisely so this would be a
+quick fix rather than a mystery, and that is what it is. Cost: one more run to
+get the table list and the Work Order name.
+
+**The sample-row path — the part that matters — worked first time.**
+
+### 5.6 Collateral finding: the ERP is reachable
+
+The boot-time `ETIMEDOUT` on all four sync tables was **transient** (container
+networking not ready at boot). The probe reached the ERP from the same container
+minutes later and made 11 successful requests. The sync's own cursors were left
+at their last committed page, so nothing was lost.
+
+---
+
+## 6 · What §1's open risk now looks like
+
+`tbl_1179_STMutasiFGMX` is **finished-goods** movement. It gives a real,
+directional, dated, SKU-keyed movement series — which is most of a production
+dashboard — but it is the **FG end only**.
+
+Nothing seen so far tracks raw aluminium being consumed. If no equivalent
+raw-material mutation table exists, then "raw material to finished goods" can be
+shown as *goods arriving into stock and leaving it*, not as *material being
+turned into goods*, and the page must say which it is. The complete `/tables`
+listing settles this, and is the first thing to read from the next run.

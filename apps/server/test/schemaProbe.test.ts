@@ -217,6 +217,23 @@ interface Fault {
 let faults: Fault = {};
 let requestPaths: string[] = [];
 
+/**
+ * Which envelope the two SCHEMA endpoints answer in.
+ *
+ * `verified` is the shape this fixture has always used (the sync's envelope,
+ * with MySQL-flavoured rows under `data`) and every other test keeps it.
+ * `production` is what Railway logged on 2026-10-28 when the probe ran for
+ * real — key for key, not a paraphrase:
+ *
+ *   GET <base>/tables            → { success, total, tables }
+ *   GET <base>/table/{t}/columns → { success, table, name, description,
+ *                                    total_columns, columns }
+ *
+ * Both readers parsed to ZERO against these. Keeping BOTH styles in the fixture
+ * is the point: the fix must add a form, not swap one guess for another.
+ */
+let envelopeStyle: "verified" | "production" = "verified";
+
 function envelope(table: string, rows: unknown[], limit: number): unknown {
   return {
     success: true,
@@ -236,6 +253,32 @@ function envelope(table: string, rows: unknown[], limit: number): unknown {
   };
 }
 
+/** `/tables`, in whichever shape `envelopeStyle` asks for. */
+function tablesBody(): unknown {
+  if (envelopeStyle === "production") {
+    // `total` is a ROW COUNT, and the names are under `tables`.
+    return { success: true, total: TABLE_LIST.length, tables: [...TABLE_LIST] };
+  }
+  // MySQL-flavoured single-field rows — a shape the reader must tolerate, and
+  // one of the forms it was written against before the endpoint had been called.
+  return envelope("tables", TABLE_LIST.map((t) => ({ Tables_in_kencana: t })), 1);
+}
+
+/** `/table/{t}/columns`, in whichever shape `envelopeStyle` asks for. */
+function columnsBody(table: string, cols: readonly Col[]): unknown {
+  if (envelopeStyle === "production") {
+    return {
+      success: true,
+      table,
+      name: table,
+      description: null,
+      total_columns: cols.length,
+      columns: [...cols],
+    };
+  }
+  return envelope(table, [...cols], 1);
+}
+
 function erpRespond(rawPath: string): { statusCode: number; data: unknown; headers: Record<string, string> } {
   requestPaths.push(rawPath);
   const url = new URL(rawPath, BASE_URL);
@@ -250,13 +293,7 @@ function erpRespond(rawPath: string): { statusCode: number; data: unknown; heade
   if (segments.length === 1 && segments[0] === "tables") {
     const status = faults.status?.["tables"];
     if (status !== undefined) return { statusCode: status, data: `upstream said ${status}`, headers: {} };
-    // MySQL-flavoured single-field rows — a shape the reader must tolerate, and
-    // the probe has never seen this endpoint, so it may well be this one.
-    return {
-      statusCode: 200,
-      data: envelope("tables", TABLE_LIST.map((t) => ({ Tables_in_kencana: t })), 1),
-      headers: json,
-    };
+    return { statusCode: 200, data: tablesBody(), headers: json };
   }
 
   if (segments[0] !== "table" || segments[1] === undefined) {
@@ -279,11 +316,11 @@ function erpRespond(rawPath: string): { statusCode: number; data: unknown; heade
       // deliberate one and not an accident of the fixture.
       return {
         statusCode: 200,
-        data: envelope(table, [{ column_name: "id", data_type: "int(11)", is_nullable: "NO" }], 1),
+        data: columnsBody(table, [{ column_name: "id", data_type: "int(11)", is_nullable: "NO" }]),
         headers: json,
       };
     }
-    return { statusCode: 200, data: envelope(table, cols, 1), headers: json };
+    return { statusCode: 200, data: columnsBody(table, cols), headers: json };
   }
 
   // GET <base>/table/{name}?limit=N&page=1 — the sample page
@@ -321,6 +358,7 @@ afterAll(async () => {
 beforeEach(() => {
   faults = {};
   requestPaths = [];
+  envelopeStyle = "verified";
   probeConfig.enabled = true;
   probeConfig.maxTables = 60;
   probeConfig.extraTables = [];
@@ -898,6 +936,34 @@ describe("read-only", () => {
 // ── 8. The tolerant readers, in isolation ────────────────────────────────────
 
 describe("readTableList tolerates a shape nobody has verified", () => {
+  /**
+   * THE SHAPE PRODUCTION ANSWERS WITH, key for key as Railway logged it on
+   * 2026-10-28: `{ success, total, tables }`. The reader returned ZERO names
+   * against this body — the miss that left the Work Order table unnamed and
+   * `tbl_1328` / `tbl_1235` unresolved.
+   */
+  it("reads { success, total, tables } — the shape production answered with", () => {
+    const r = readTableList({ success: true, total: 3, tables: ["tbl_1_A", "tbl_2_B", "tbl_3_C"] }, 1);
+    expect(r.names).toEqual(["tbl_1_A", "tbl_2_B", "tbl_3_C"]);
+    expect(r.shape).toContain("tables");
+  });
+
+  it("reads the same shape when `tables` carries objects rather than strings", () => {
+    const r = readTableList({ success: true, total: 2, tables: [{ table_name: "tbl_1_A" }, { name: "tbl_2_B" }] }, 1);
+    expect(r.names).toEqual(["tbl_1_A", "tbl_2_B"]);
+  });
+
+  it("never reads `total` or `success` as data: the count is metadata, not a table", () => {
+    const r = readTableList({ success: true, total: 2, tables: ["tbl_1_A", "tbl_2_B"] }, 1);
+    expect(r.names).toEqual(["tbl_1_A", "tbl_2_B"]);
+    expect(r.unreadable).toEqual([]);
+  });
+
+  it("still prefers a row array readEnvelope() understands when a body carries both", () => {
+    const r = readTableList({ success: true, data: ["tbl_FROM_DATA"], tables: ["tbl_FROM_TABLES"] }, 1);
+    expect(r.names).toEqual(["tbl_FROM_DATA"]);
+  });
+
   it("reads the verified envelope with MySQL-style single-field rows", () => {
     const r = readTableList({ success: true, meta: {}, data: [{ Tables_in_kencana: "tbl_1_A" }] }, 1);
     expect(r.names).toEqual(["tbl_1_A"]);
@@ -931,9 +997,82 @@ describe("readTableList tolerates a shape nobody has verified", () => {
       expect(() => readTableList(body, 1)).not.toThrow();
     }
   });
+
+  it("stays total over garbage under the production key, too", () => {
+    for (const body of [
+      { success: true, total: 0, tables: [] },
+      { tables: "not-an-array" },
+      { tables: null },
+      { tables: 7 },
+      { tables: {} },
+      { tables: [null, 0, "", [], {}, { oid: 1 }] },
+      { TABLES: ["tbl_1_A"] },
+    ] as unknown[]) {
+      expect(() => readTableList(body, 1), JSON.stringify(body)).not.toThrow();
+    }
+    // Case and separators are tolerated, the way every other key here is.
+    expect(readTableList({ TABLES: ["tbl_1_A"] }, 1).names).toEqual(["tbl_1_A"]);
+    // An empty list is an empty list, not a crash and not a fabricated name.
+    expect(readTableList({ success: true, total: 0, tables: [] }, 1).names).toEqual([]);
+  });
 });
 
 describe("readColumnList tolerates the same range", () => {
+  /**
+   * THE SHAPE PRODUCTION ANSWERS WITH, key for key as Railway logged it on
+   * 2026-10-28: `{ success, table, name, description, total_columns, columns }`.
+   * The reader returned ZERO columns against it.
+   */
+  it("reads { success, table, name, description, total_columns, columns } — the production shape", () => {
+    const r = readColumnList(
+      {
+        success: true,
+        table: "tbl_1179_STMutasiFGMX",
+        name: "tbl_1179_STMutasiFGMX",
+        description: null,
+        total_columns: 2,
+        columns: [
+          { column_name: "in_out", data_type: "varchar(8)", is_nullable: "YES" },
+          { column_name: "qty", data_type: "decimal(18,4)", is_nullable: "YES" },
+        ],
+      },
+      1,
+    );
+    expect(r.columns.map((c) => c.name)).toEqual(["in_out", "qty"]);
+    expect(r.columns[0]).toMatchObject({ name: "in_out", type: "varchar(8)" });
+    expect(r.shape).toContain("columns");
+  });
+
+  it("does not mistake the envelope's own `table` / `name` / `description` for columns", () => {
+    const r = readColumnList(
+      {
+        success: true,
+        table: "tbl_1328_STMutasiInternalMX",
+        name: "tbl_1328_STMutasiInternalMX",
+        description: "internal transfers",
+        total_columns: 1,
+        columns: [{ column_name: "no_transfer", data_type: "varchar(32)", is_nullable: "YES" }],
+      },
+      1,
+    );
+    expect(r.columns.map((c) => c.name)).toEqual(["no_transfer"]);
+    expect(r.shape).not.toContain("FELL BACK");
+  });
+
+  it("reads the production shape when `columns` carries bare names", () => {
+    const r = readColumnList(
+      { success: true, table: "t", name: "t", description: null, total_columns: 2, columns: ["no_wo", "status_wo"] },
+      1,
+    );
+    expect(r.columns.map((c) => c.name)).toEqual(["no_wo", "status_wo"]);
+    expect(r.columns.every((c) => c.type === null)).toBe(true);
+  });
+
+  it("still prefers a row array readEnvelope() understands when a body carries both", () => {
+    const r = readColumnList({ success: true, data: [{ Field: "from_data" }], columns: [{ Field: "from_columns" }] }, 1);
+    expect(r.columns.map((c) => c.name)).toEqual(["from_data"]);
+  });
+
   it("reads information_schema-style rows with type and nullability", () => {
     const r = readColumnList(
       { data: [{ column_name: "no_wo", data_type: "varchar(32)", is_nullable: "YES" }] },
@@ -964,6 +1103,27 @@ describe("readColumnList tolerates the same range", () => {
     for (const body of [null, undefined, 0, "", [], {}, [1, 2], [null]]) {
       expect(() => readColumnList(body, 1)).not.toThrow();
     }
+  });
+
+  it("stays total over garbage under the production key, too", () => {
+    for (const body of [
+      { success: true, table: "t", name: "t", description: null, total_columns: 0, columns: [] },
+      { columns: "not-an-array" },
+      { columns: null },
+      { columns: 7 },
+      { columns: {} },
+      { columns: [null, 0, "", [], {}, { oid: 1 }] },
+      { COLUMNS: ["no_wo"] },
+    ] as unknown[]) {
+      expect(() => readColumnList(body, 1), JSON.stringify(body)).not.toThrow();
+    }
+    expect(readColumnList({ COLUMNS: ["no_wo"] }, 1).columns.map((c) => c.name)).toEqual(["no_wo"]);
+    expect(
+      readColumnList(
+        { success: true, table: "t", name: "t", description: null, total_columns: 0, columns: [] },
+        1,
+      ).columns,
+    ).toEqual([]);
   });
 });
 
@@ -1065,5 +1225,139 @@ describe("distinctStatusValues", () => {
   it("ignores rows that are not objects", () => {
     expect(() => distinctStatusValues([null, 7, "x", undefined])).not.toThrow();
     expect(distinctStatusValues([null, 7])).toEqual([]);
+  });
+});
+
+// ── 11. The envelope shapes production actually answered with ────────────────
+//
+// 2026-10-28: the probe ran in production and worked, except that BOTH schema
+// readers parsed to zero — the listing and every column list. The cost was the
+// run itself: the Work Order table stayed unnamed and `tbl_1328` / `tbl_1235`
+// stayed unresolved. This section runs the WHOLE probe against those shapes,
+// verbatim, through the real transport, because unit tests of a reader prove
+// the reader and not the run.
+
+describe("the production envelope shapes (observed 2026-10-28), end to end", () => {
+  it("parses the complete listing and every column list, with no ZERO-parse warning", async () => {
+    envelopeStyle = "production";
+    const c = capture();
+    const res = await runErpSchemaProbeOnce(deps(c));
+    expect(res.ran).toBe(true);
+    expect(res.tablesListed).toBe(TABLE_LIST.length);
+
+    const text = all(c);
+    // Every name in the listing, including the irrelevant ones: a name nobody
+    // sees is a name nobody can ask about, which is the whole point of step 1.
+    for (const t of TABLE_LIST) expect(text, t).toContain(t);
+
+    // The two zero-parse warnings production actually emitted must be absent.
+    const warns = c.warns.join("\n");
+    expect(warns).not.toContain("parsed to ZERO names");
+    expect(warns).not.toContain("parsed to ZERO columns");
+
+    // And the four §0 answers the run is for all arrive.
+    expect(res.probed).toContain(WO_TABLE); // §0.1, found only via the listing
+    expect(text).toContain("no_wo:varchar(32)"); // §0.2, from `columns`
+    expect(text).toContain("no_request"); // §0.3, the join key on both sides
+    expect(text).toMatch(/jenis_mutasi: 2 distinct — "IN", "OUT"/); // §0.5
+    // `tbl_1328` resolves from the listing, which is what the miss prevented.
+    expect(text).toContain(`'tbl_1328' → resolved to '${TRANSFER_TABLE}'`);
+  });
+
+  it("names the shape it read in the log, so the next reader fix needs no guessing", async () => {
+    envelopeStyle = "production";
+    const c = capture();
+    await runErpSchemaProbeOnce(deps(c));
+    const text = all(c);
+    expect(text).toContain("Envelope observed:");
+    // The key the rows actually came from, said out loud for both endpoints.
+    expect(text).toMatch(/GET <base>\/tables → HTTP 200,.*Envelope observed:.*'tables'/s);
+    expect(text).toMatch(/COLUMNS — HTTP 200,.*'columns'/);
+  });
+
+  it("still parses the previously tolerated shape — the fix ADDED a form, it did not swap one", async () => {
+    envelopeStyle = "verified"; // `{ success, meta, data: [{Tables_in_kencana}] }`
+    const c = capture();
+    const res = await runErpSchemaProbeOnce(deps(c));
+    expect(res.tablesListed).toBe(TABLE_LIST.length);
+    expect(res.probed).toContain(WO_TABLE);
+    expect(all(c)).toContain("no_wo:varchar(32)");
+    expect(c.warns.join("\n")).not.toContain("parsed to ZERO");
+  });
+});
+
+// ── 12. The movement sample limit ────────────────────────────────────────────
+//
+// Production sampled 5 rows of the movement table and got ONE distinct value of
+// `in_out` ("Out"), and one each of `status` and `sub_status` ("null"). That is
+// the ambiguous answer: it cannot tell an enum from a constant, which is the
+// only question §0.5 asks. The default is sized so that outcome means "constant"
+// rather than "too few rows".
+
+describe("the movement sample limit is sized to settle §0.5", () => {
+  it("defaults high enough that one distinct value is an answer, not an artefact", () => {
+    // Pinned deliberately: a regression to a handful of rows reproduces exactly
+    // the production outcome that made this fix necessary.
+    expect(configMod.config.erpProbe.movementSampleLimit).toBe(100);
+    expect(configMod.config.erpProbe.movementSampleLimit).toBeGreaterThanOrEqual(50);
+  });
+
+  it("asks for that many rows of the movement table, and ONE row of every other, in ONE request each", async () => {
+    const c = capture();
+    await runErpSchemaProbeOnce(deps(c));
+    const samples = requestPaths.filter((p) => /\/table\/[^/]+\?/.test(p));
+    const movement = samples.filter((p) => p.includes(MUTASI_TABLE));
+    expect(movement).toHaveLength(1); // still exactly one request
+    expect(movement[0]).toContain(`limit=${configMod.config.erpProbe.movementSampleLimit}`);
+    expect(movement[0]).toContain("limit=100");
+    // Everything else stays at one row: the bigger page is for §0.5 alone.
+    for (const other of samples.filter((p) => !p.includes(MUTASI_TABLE))) {
+      expect(other, other).toContain("limit=1");
+    }
+  });
+
+  it("a limit of 5 would have missed a direction that 100 rows finds", () => {
+    // A minority direction one row in twenty — the realistic shape of an ERP
+    // whose rows arrive in insertion order and whose receipts come in batches.
+    const rows = Array.from({ length: 100 }, (_, i) => ({
+      id: i + 1,
+      in_out: i % 20 === 19 ? "In" : "Out",
+    }));
+    const atFive = distinctStatusValues(rows.slice(0, 5)).find((d) => d.key === "in_out");
+    const atHundred = distinctStatusValues(rows).find((d) => d.key === "in_out");
+    expect(atFive?.values).toEqual(["Out"]); // the production outcome, reproduced
+    expect(atHundred?.values).toEqual(["In", "Out"]); // §0.5, settled
+  });
+
+  it("keeps the caveat line verbatim, for the case where one value survives the bigger sample", async () => {
+    // It did its job in production — "1 distinct value" was readable as the
+    // ambiguity it was — and a raised sample does not retire it: a constant
+    // really can be a constant, and then this is still the honest answer.
+    const { readFileSync } = await import("node:fs");
+    const { dirname, join } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const src = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "..", "src", "erp", "schemaProbe.ts"),
+      "utf8",
+    );
+    expect(src).toContain(
+      "ONE value across every sampled row: an enum with a dominant value, or a constant. " +
+        "These rows cannot tell; raise ERP_SCHEMA_PROBE_MOVEMENT_SAMPLE_LIMIT to find out.",
+    );
+    // And the probe still reaches the line that carries it.
+    const c = capture();
+    await runErpSchemaProbeOnce(deps(c));
+    expect(all(c)).toContain("DIRECTION/STATUS CANDIDATES");
+  });
+
+  it("reports `in_out`, `status` and `sub_status` as the direction/status candidates they are", () => {
+    // The three keys production came back single-valued on. If any of them were
+    // not recognised as status-shaped, a bigger sample would settle nothing.
+    const d = distinctStatusValues([
+      { in_out: "Out", status: "null", sub_status: "null" },
+      { in_out: "In", status: "POSTED", sub_status: "null" },
+    ]);
+    expect(d.map((x) => x.key)).toEqual(["in_out", "status", "sub_status"]);
+    expect(d.find((x) => x.key === "in_out")?.values).toEqual(["In", "Out"]);
   });
 });
