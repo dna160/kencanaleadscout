@@ -70,6 +70,8 @@ import { config } from "../src/config.js";
 import { canonicalSkuKey, type SkuParts } from "../src/erp/sku.js";
 import { closeDatabase, getSql } from "../src/db/client.js";
 import { runErpStockMigrations } from "../src/db/migrateErpStock.js";
+import { runMigrations } from "../src/db/migrate.js";
+import { syHunterRoutes } from "../src/routes/sy-hunter.js";
 import { stockAtpRoutes } from "../src/routes/stock-atp.js";
 import { stockRoutes } from "../src/routes/stock.js";
 import type {
@@ -2911,5 +2913,156 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
       `;
       expect(r).toEqual({ fg: 0, lines: 0, ov: 0, adj: 0 });
     });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SY Handler pipeline — POST /api/sy/pipeline/advance and /revert
+//
+// REGRESSION (42P18): the advance upsert once used its note parameter only
+// inside `$n is not null`, which Postgres cannot type when postgres.js sends the
+// value as `unknown`. Statements are prepared whole, so EVERY advance failed —
+// first insert and conflict update alike. These tests send exactly the bodies
+// the Handler page (`public/sy-handler.html` → `advance()`) sends: `contact_id`
+// as a string, `meeting_at`/`pipe_note` omitted, empty or set.
+//
+// Same rollback harness as above; the contact is minted inside the transaction.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe.skipIf(!hasDb)("SY Handler pipeline routes", () => {
+  const SY = `${P}-sy`;
+  let syApp: FastifyInstance;
+
+  beforeAll(async () => {
+    realDb = getSql();
+    if (!realDb) throw new Error("DATABASE_URL is set but getSql() returned null");
+    // The sy_* tables come from the boot migration; run it only if they are absent
+    // or predate the handler columns this suite writes.
+    const [c] = await realDb<{ n: number }[]>`
+      select count(*)::int as n from information_schema.columns
+      where table_schema = 'public' and table_name = 'sy_pipeline'
+        and column_name in ('messaged_at', 'replied_at', 'pipe_note')
+    `;
+    if (!c || c.n < 3) await runMigrations(realDb);
+
+    syApp = Fastify({ logger: false });
+    await syApp.register(syHunterRoutes);
+    await syApp.ready();
+  }, 60_000);
+
+  afterAll(async () => {
+    await syApp?.close();
+    await closeDatabase();
+  });
+
+  async function mintContact(tx: Tx): Promise<string> {
+    const [row] = await tx<{ id: string }[]>`
+      insert into sy_contacts (priority, company_name, source)
+      values ('P1', ${`${SY} contact`}, ${SY})
+      returning id
+    `;
+    return String(row!.id);
+  }
+
+  /** Mirror of the page's `advance()`: JSON.stringify drops undefined keys. */
+  function advance(contact_id: string, to_stage: string, meeting_at?: string, pipe_note?: string) {
+    return syApp.inject({
+      method: "POST",
+      url: "/api/sy/pipeline/advance",
+      payload: { contact_id, to_stage, meeting_at, pipe_note },
+    });
+  }
+
+  async function pipeRow(tx: Tx, id: string) {
+    const [row] = await tx`
+      select stage, messaged_at, replied_at, meeting_at, pipe_note
+      from sy_pipeline where contact_id = ${id}
+    `;
+    return row;
+  }
+
+  it("REGRESSION (42P18): fresh → messaged → replied → meeting_set → won through the API", async () => {
+    await inRollback(async (tx) => {
+      const id = await mintContact(tx);
+      await tx`insert into sy_pipeline (contact_id, stage, called_at) values (${id}, 'fresh', now())`;
+
+      const steps: Array<[string, string?]> = [
+        ["messaged"],
+        ["replied"],
+        ["meeting_set", "2026-11-12T03:30:00.000Z"],
+        ["won"],
+      ];
+      for (const [stage, meetingAt] of steps) {
+        const res = await advance(id, stage, meetingAt);
+        expect(res.statusCode, `${stage}: ${res.body}`).toBe(200);
+        expect((await pipeRow(tx, id)).stage).toBe(stage);
+      }
+
+      const row = await pipeRow(tx, id);
+      expect(row.messaged_at).not.toBeNull();
+      expect(row.replied_at).not.toBeNull();
+      expect(new Date(row.meeting_at).toISOString()).toBe("2026-11-12T03:30:00.000Z");
+      expect(row.pipe_note).toBeNull();
+    });
+  });
+
+  it("REGRESSION (42P18): the insert path works too — advancing a contact with no pipeline row", async () => {
+    await inRollback(async (tx) => {
+      const id = await mintContact(tx);
+      const res = await advance(id, "messaged");
+      expect(res.statusCode, res.body).toBe(200);
+      const row = await pipeRow(tx, id);
+      expect(row.stage).toBe("messaged");
+      expect(row.messaged_at).not.toBeNull();
+    });
+  });
+
+  it("pipe_note: a value sets it, omission keeps it, an empty string clears it", async () => {
+    await inRollback(async (tx) => {
+      const id = await mintContact(tx);
+      expect((await advance(id, "messaged", undefined, "")).statusCode).toBe(200);
+      expect((await pipeRow(tx, id)).pipe_note).toBe("");
+
+      expect((await advance(id, "messaged", undefined, "asked for price list")).statusCode).toBe(200);
+      expect((await pipeRow(tx, id)).pipe_note).toBe("asked for price list");
+
+      // Stage buttons send no note — the saved one must survive the advance.
+      expect((await advance(id, "replied")).statusCode).toBe(200);
+      expect((await pipeRow(tx, id)).pipe_note).toBe("asked for price list");
+
+      expect((await advance(id, "replied", undefined, "")).statusCode).toBe(200);
+      expect((await pipeRow(tx, id)).pipe_note).toBe("");
+    });
+  });
+
+  it("an unparseable meeting_at is a 400, and nothing is written", async () => {
+    await inRollback(async (tx) => {
+      const id = await mintContact(tx);
+      const res = await advance(id, "meeting_set", "next tuesday-ish");
+      expect(res.statusCode).toBe(400);
+      expect(await pipeRow(tx, id)).toBeUndefined();
+    });
+  });
+
+  it("revert steps back one stage after an advance", async () => {
+    await inRollback(async (tx) => {
+      const id = await mintContact(tx);
+      expect((await advance(id, "messaged")).statusCode).toBe(200);
+      expect((await advance(id, "replied")).statusCode).toBe(200);
+      const res = await syApp.inject({
+        method: "POST",
+        url: "/api/sy/pipeline/revert",
+        payload: { contact_id: id },
+      });
+      expect(res.statusCode, res.body).toBe(200);
+      expect((await pipeRow(tx, id)).stage).toBe("messaged");
+    });
+  });
+
+  it("nothing this suite wrote survived its transaction", async () => {
+    const [r] = await realDb!<{ n: number }[]>`
+      select count(*)::int as n from sy_contacts where source = ${SY}
+    `;
+    expect(r).toEqual({ n: 0 });
   });
 });

@@ -402,6 +402,9 @@
             confirmBtn.addEventListener("click", () => {
               const input = card.querySelector('input[type="datetime-local"]');
               if (!input.value) { input.focus(); return; }
+              // render() is suspended while any meeting row is open; close this one
+              // first or the board never re-renders after the advance succeeds.
+              card.querySelector(`#meeting-${cssEscape(contactId)}`).classList.remove("show");
               advance(contactId, "meeting_set", new Date(input.value).toISOString());
             });
           }

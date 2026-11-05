@@ -245,21 +245,31 @@ export async function syHunterRoutes(app: FastifyInstance) {
     const now        = new Date().toISOString();
     const messagedAt = to_stage === "messaged" ? now : null;
     const repliedAt  = to_stage === "replied"  ? now : null;
-    const meetingVal = meeting_at ?? null;
+    const meetingVal = meeting_at || null;
     const noteVal    = pipe_note  ?? null;
+    if (meetingVal !== null && Number.isNaN(Date.parse(meetingVal))) {
+      return reply.code(400).send({ error: "Invalid meeting_at." });
+    }
 
+    // Every nullable parameter carries an explicit cast. postgres.js sends JS
+    // strings and nulls as type `unknown`, and Postgres cannot infer a type for
+    // a parameter that only appears as `coalesce($n, ...)` / `$n is not null` in
+    // the DO UPDATE branch — the whole statement then fails with 42P18.
+    // `coalesce(note, old)` keeps the old note when none was sent, while an
+    // explicit "" still clears it.
     await db`
       insert into sy_pipeline
         (contact_id, stage, messaged_at, replied_at, meeting_at, pipe_note, updated_at)
       values
         (${contact_id}, ${to_stage},
-         ${messagedAt}, ${repliedAt}, ${meetingVal}, ${noteVal}, now())
+         ${messagedAt}::timestamptz, ${repliedAt}::timestamptz,
+         ${meetingVal}::timestamptz, ${noteVal}::text, now())
       on conflict (contact_id) do update set
         stage       = ${to_stage},
-        messaged_at = coalesce(${messagedAt}, sy_pipeline.messaged_at),
-        replied_at  = coalesce(${repliedAt},  sy_pipeline.replied_at),
-        meeting_at  = coalesce(${meetingVal}, sy_pipeline.meeting_at),
-        pipe_note   = case when ${noteVal} is not null then ${noteVal} else sy_pipeline.pipe_note end,
+        messaged_at = coalesce(${messagedAt}::timestamptz, sy_pipeline.messaged_at),
+        replied_at  = coalesce(${repliedAt}::timestamptz,  sy_pipeline.replied_at),
+        meeting_at  = coalesce(${meetingVal}::timestamptz, sy_pipeline.meeting_at),
+        pipe_note   = coalesce(${noteVal}::text,           sy_pipeline.pipe_note),
         updated_at  = now()
     `;
     return { ok: true };
