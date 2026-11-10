@@ -112,6 +112,14 @@ export interface MirrorRowBase {
 
 export interface SoHeaderRow extends MirrorRowBase {
   id: string;
+  /**
+   * The SO number (`SO.26/12821`) — Selaras' `tbl_1202.po_no`, verified by the
+   * 2026-11-10 sweep. It is the ONLY key that ties a header to its lines
+   * (`tbl_1203.po_no`), to its DOs (`tbl_1082.so_no`) and to production
+   * requests (`tbl_1236.so_no`). The ERP has no line→header id column.
+   */
+  po_no: string | null;
+  /** Display copy of the SO number; equal to `po_no` (kept for existing readers). */
   so_number: string | null;
   customer_name_text: string | null;
   sales_name_text: string | null;
@@ -127,6 +135,13 @@ export interface SoHeaderRow extends MirrorRowBase {
  */
 export interface SoLineRow extends MirrorRowBase {
   id: string;
+  /** The SO number this line belongs to (`tbl_1203.po_no`) — the join key to the header. */
+  po_no: string | null;
+  /**
+   * Legacy guess at a line→header id. Selaras has no such column (verified
+   * 2026-11-10), so this is NULL in production; the join uses `po_no`. Kept so
+   * a mirror or fixture that does carry it still joins.
+   */
   so_id: string | null;
   brand: string | null;
   brand_text: string | null;
@@ -990,9 +1005,13 @@ export function adaptSoHeaderRow(raw: unknown): SoHeaderRow | null {
   if (!row) return null;
   const id = asText(pick(row, ...pkNames("so_header")));
   if (id === null) return null; // no primary key ⇒ nothing to upsert onto
+  // `po_no` IS the SO number on tbl_1202 (verified 2026-11-10). The other
+  // spellings were pre-sweep guesses that matched nothing upstream.
+  const poNo = asText(pick(row, "po_no", "poNo"));
   return {
     id,
-    so_number: asText(pick(row, "so_number", "soNumber", "no_so", "nomor_so", "no_order")),
+    po_no: poNo,
+    so_number: poNo ?? asText(pick(row, "so_number", "soNumber", "no_so", "nomor_so", "no_order")),
     customer_name_text: asText(pick(row, "customer_name_text", "customer_name", "customer", "nama_customer", "nama_pelanggan")),
     sales_name_text: asText(pick(row, "sales_name_text", "sales_name", "sales", "nama_sales")),
     po_date: asDateOnly(pick(row, "po_date", "poDate", "tgl_po", "tanggal_po", "order_date")),
@@ -1010,6 +1029,7 @@ export function adaptSoLineRow(raw: unknown): SoLineRow | null {
   const parts = skuParts(row, "so_line");
   return {
     id,
+    po_no: asText(pick(row, "po_no", "poNo")),
     so_id: asText(pick(row, "so_id", "soId", "header_id", "id_so", "parent_id", `${SELARAS_ENDPOINTS.so_header}_id`)),
     ...parts,
     ...identityText(row),

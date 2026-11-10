@@ -412,6 +412,7 @@ async function upsertSoHeaders(tx: AnySql, rows: readonly SoHeaderRow[]): Promis
     insert into erp_so_header ${tx(
       batch,
       "id",
+      "po_no",
       "so_number",
       "customer_name_text",
       "sales_name_text",
@@ -420,6 +421,7 @@ async function upsertSoHeaders(tx: AnySql, rows: readonly SoHeaderRow[]): Promis
       "erp_updated_at",
     )}
     on conflict (id) do update set
+      po_no              = excluded.po_no,
       so_number          = excluded.so_number,
       customer_name_text = excluded.customer_name_text,
       sales_name_text    = excluded.sales_name_text,
@@ -442,6 +444,7 @@ async function upsertSoLines(tx: AnySql, rows: readonly SoLineRow[]): Promise<nu
     insert into erp_so_line ${tx(
       batch,
       "id",
+      "po_no",
       "so_id",
       "brand",
       "brand_text",
@@ -465,6 +468,7 @@ async function upsertSoLines(tx: AnySql, rows: readonly SoLineRow[]): Promise<nu
       "erp_updated_at",
     )}
     on conflict (id) do update set
+      po_no             = excluded.po_no,
       so_id             = excluded.so_id,
       brand             = excluded.brand,
       brand_text        = excluded.brand_text,

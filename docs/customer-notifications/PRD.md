@@ -128,7 +128,7 @@ packages/core         pure IP (phone normalization → E.164, scraping)
 - **No auth on `main` yet.** LeadScout 2.0 Phase A (Clerk, role areas, `AUTH_ENFORCED` off/shadow/on) exists as an unapplied patch. Until it lands, `/notify` writes are guarded by `NOTIFY_ADMIN_TOKEN`.
 - **Rep rosters are per vertical:** `salespeople` (has `phone_e164`), `distributor_salespeople` (has `phone_e164`), `project_salespeople` and `mirae_salespeople` (no phone). Kabar Pesanan does **not** use them; the rep comes from Selaras (D9).
 
-**Known defect (blocks live triggers).** The mirror's SO adapter reads the SO number from `so_number`/`no_so`/…, and the line→header link from `so_id`/…. Selaras has neither: the real key is `po_no` on both tables. So `erp_so_header.so_number` and `erp_so_line.so_id` are very likely NULL in production. Stock ATP doesn't need the link; notifications do. Fixed in WP-1.
+**Fixed defect (WP-1, ✅).** The mirror's SO adapter used to read the SO number from `so_number`/`no_so`/…, and the line→header link from `so_id`/…. Selaras has neither: the real key is `po_no` on both tables, so the old join matched nothing in production. Both mirror tables now carry `po_no`; lines find their header through `SO_HEADER_LOOKUP_SQL` (a lateral `limit 1` on `po_no`, falling back to `so_id`), which can never duplicate a line even if two header rows share an SO number. The first boot after deploy resets the `so_header` / `so_line` sync cursors once, so both tables are re-pulled in full and `po_no` gets filled in.
 
 ---
 
@@ -197,8 +197,8 @@ packages/core         pure IP (phone normalization → E.164, scraping)
 All additive; migrations run on boot. ✅ = built.
 
 **Mirror extensions (WP-1 / WP-2)**
-- `erp_so_header` + `po_no` (fixes the key), `customer_name_id`, `customer_final`, `buyer_name`, `penerima`, `kontak_penerima`, `alamat_kirim`, `top_limit`, `top_limit_value`, `approval_new`, `created_at_erp`, `deleted_at`.
-- `erp_so_line` + `po_no` (the join key, replacing `so_id`).
+- `erp_so_header` + `po_no` (fixes the key ✅), `customer_name_id`, `customer_final`, `buyer_name`, `penerima`, `kontak_penerima`, `alamat_kirim`, `top_limit`, `top_limit_value`, `approval_new`, `created_at_erp`, `deleted_at`.
+- `erp_so_line` + `po_no` (the join key, replacing `so_id`) ✅.
 - `erp_do_header` ← `tbl_1082`: `id`, `so_no`, `no_sj`, `sj_date`, `do_created_at`, `cara_kirim`, `cancel_order`, `print_status`, `top`, `top_days`, `due_date`, `invoice_no`, `customer_name_id`, `total_lembar`, `total_m2`, `erp_updated_at`.
 - `erp_do_line` ← `tbl_1205`: `id`, `po_no`, `so_item_no`, `sj_id`, `sj_date`, `sn_fg`, `item_details`, `qty_delivered`, `erp_updated_at`.
 - `erp_request_produksi` ← `tbl_1236`: `id`, `so_no`, `so_ms`, `wo_no`, `no_request`, `tanggal_request`, SKU columns, `qty_lembar`, `erp_updated_at`.
@@ -403,7 +403,7 @@ Each WP is independently testable. The order is the dependency order.
   - Merge, deploy.
   - Set `NOTIFY_ADMIN_TOKEN`.
   - Smoke-test `/notify` with a real SO number.
-- **WP-1. Mirror key fix** (`erp/selarasClient.ts` adapters, `migrateErpStock.ts`, `syncWorker.ts`).
+- **WP-1. Mirror key fix** ✅ (`erp/selarasClient.ts` adapters, `migrateErpStock.ts`, `syncWorker.ts`; tests in `test/soKey.test.ts` and `atp.test.ts`).
   - Map `po_no` on 1202 and 1203; add `po_no` columns; join lines↔header on `po_no`.
   - One-time full re-pull of both tables.
   - Test: fixture rows with `po_no` populate both, and the line→header join is non-null.

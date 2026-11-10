@@ -575,7 +575,7 @@ export function buildCommitmentViewSql(
            ${hasSpb} as has_spb,
            (${fullyShipped}) as fully_shipped
     from erp_so_line l
-    left join erp_so_header h on h.id = l.so_id
+    ${SO_HEADER_LOOKUP_SQL}
     left join stock_commitment_overrides o on o.so_line_id = l.id
     where l.approval = any (${approved})
       and l.qty_balance > 0
@@ -663,6 +663,42 @@ export async function applyCommitmentViews(
   }
 }
 
+async function hasColumn(db: Sql, table: string, column: string): Promise<boolean> {
+  const [r] = await db<{ n: string }[]>`
+    select count(*)::text as n from information_schema.columns
+     where table_name = ${table} and column_name = ${column}
+       and table_schema = current_schema()
+  `;
+  return Number(r?.n ?? 0) > 0;
+}
+
+/**
+ * How an SO line (alias `l`, `erp_so_line`) finds its header (alias `h`).
+ *
+ * WP-1 (Kabar Pesanan PRD §4, verified 2026-11-10): Selaras has NO line→header
+ * id column. Both tables carry the SO number as `po_no`, and that is the key.
+ * The old `h.id = l.so_id` join matched nothing in production because `so_id`
+ * was never on the wire — every commitment showed a blank SO / customer.
+ *
+ * It is a LATERAL ... LIMIT 1 on purpose, not a plain join: `po_no` is not a
+ * declared unique key upstream, and a plain join against two header rows with
+ * the same number would DUPLICATE the line — doubling its qty_balance in every
+ * Σ over the views and under-promising stock. One line in, one row out, always;
+ * a duplicate header can only change which customer name is shown, never ATP.
+ *
+ * `l.so_id` stays as a fallback for a line without `po_no` (fixtures, and any
+ * mirror row written before the re-pull reaches it).
+ */
+export const SO_HEADER_LOOKUP_SQL = `
+    left join lateral (
+      select hh.customer_name_text, hh.sales_name_text, hh.so_number, hh.po_date
+        from erp_so_header hh
+       where hh.po_no = l.po_no
+          or (l.po_no is null and hh.id = l.so_id)
+       order by hh.erp_updated_at desc nulls last, hh.id desc
+       limit 1
+    ) h on true`;
+
 export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> {
   /**
    * Set by a one-time structural change that invalidates what is already
@@ -672,6 +708,13 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
    * than it keep their retired key forever and never match anything again.
    */
   let needsFullRepull = false;
+  /**
+   * WP-1: set when `po_no` is first added to the SO mirror tables. Every SO row
+   * already mirrored has it NULL, and cursors only move forward, so without a
+   * reset those rows would never learn their SO number. Narrower than
+   * `needsFullRepull`: only the two SO tables, never live_fg / warna.
+   */
+  let needsSoRepull = false;
   // ── erp_sku_key() — the SQL half of the canonical key (ST-R5.1) ─────────────
   // First, because everything that mirrors a row computes a sku_key with it.
   try {
@@ -782,7 +825,8 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
     await db`
       create table if not exists erp_so_line (
         id                text primary key,          -- ERP line PK (tbl_1203_..._id)
-        so_id             text,                      -- FK -> erp_so_header.id
+        po_no             text,                      -- SO number; the join key to erp_so_header.po_no
+        so_id             text,                      -- legacy guess; NULL upstream (see SO_HEADER_LOOKUP_SQL)
         brand             text,
         brand_text        text,
         warna             text,                      -- id into tbl_1228_DBRMWarnaID
@@ -853,6 +897,13 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
     await db`create index if not exists erp_so_line_sku_idx  on erp_so_line (sku_key)`;
     await db`create index if not exists erp_so_line_live_idx on erp_so_line (approval, qty_balance, estimate_delivery)`;
     await db`create index if not exists erp_so_line_so_idx   on erp_so_line (so_id)`;
+    // WP-1: the real line→header key. Added nullable; the one-time re-pull below
+    // fills it for rows mirrored before this column existed.
+    if (!(await hasColumn(db, "erp_so_line", "po_no"))) {
+      needsSoRepull = true;
+      await db`alter table erp_so_line add column if not exists po_no text`;
+    }
+    await db`create index if not exists erp_so_line_po_idx   on erp_so_line (po_no)`;
   } catch (soLineErr) {
     console.error("[migrateErpStock] erp_so_line step failed (non-fatal):", soLineErr);
   }
@@ -862,6 +913,7 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
     await db`
       create table if not exists erp_so_header (
         id                 text primary key,
+        po_no              text,                     -- SO number (tbl_1202.po_no); what lines/DOs point at
         so_number          text,
         customer_name_text text,
         sales_name_text    text,
@@ -871,6 +923,13 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
         synced_at          timestamptz not null default now()
       )
     `;
+    // WP-1: `po_no` is the SO number upstream (tbl_1202.po_no) and the key the
+    // lines, DOs and production requests point at. Indexed for the lateral join.
+    if (!(await hasColumn(db, "erp_so_header", "po_no"))) {
+      needsSoRepull = true;
+      await db`alter table erp_so_header add column if not exists po_no text`;
+    }
+    await db`create index if not exists erp_so_header_po_idx on erp_so_header (po_no)`;
   } catch (soHeaderErr) {
     console.error("[migrateErpStock] erp_so_header step failed (non-fatal):", soHeaderErr);
   }
@@ -1009,6 +1068,16 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
           "idempotent upsert, so this is safe).",
       );
       await db`update erp_sync_state set cursor_value = null`;
+    } else if (needsSoRepull) {
+      console.warn(
+        "[migrateErpStock] WP-1: erp_so_header / erp_so_line gained po_no (the real SO key, " +
+          "verified 2026-11-10) — resetting their sync cursors so the next sync re-pulls both " +
+          "tables in full and fills it. Upserts are idempotent; on-hand and warna are untouched.",
+      );
+      await db`
+        update erp_sync_state set cursor_value = null
+         where table_name in ('so_header', 'so_line')
+      `;
     }
   } catch (syncStateErr) {
     console.error("[migrateErpStock] erp_sync_state step failed (non-fatal):", syncStateErr);
