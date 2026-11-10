@@ -39,4 +39,80 @@ export async function runNotifyMigrations(db: Sql): Promise<void> {
   `;
   await db`create index if not exists notify_ledger_created_idx on notify_ledger (created_at desc)`;
   await db`create index if not exists notify_ledger_so_idx on notify_ledger (so_no)`;
+
+  // ── WP-4: the ledger is also the OUTBOX (PRD §5.2, §6) ──────────────────
+  // Live rows are planned before they are rendered: the recipient and the text
+  // are resolved at SEND time (fresh phone, pre-send recheck), so both start
+  // empty. Test rows keep filling them up front as before.
+  await db`alter table notify_ledger alter column to_number drop not null`;
+  await db`alter table notify_ledger alter column body drop not null`;
+  await db`alter table notify_ledger drop constraint if exists notify_ledger_mode_check`;
+  await db`
+    alter table notify_ledger add constraint notify_ledger_mode_check
+      check (mode in ('test', 'live', 'shadow'))
+  `;
+  await db`alter table notify_ledger add column if not exists event_id         bigint`;
+  await db`alter table notify_ledger add column if not exists subject_ref      text`; // DO id for MV3
+  await db`alter table notify_ledger add column if not exists due_at           timestamptz`;
+  await db`alter table notify_ledger add column if not exists attempts         int not null default 0`;
+  await db`alter table notify_ledger add column if not exists leased_until     timestamptz`;
+  await db`alter table notify_ledger add column if not exists template_version text`;
+  await db`alter table notify_ledger add column if not exists lid              text`;
+  await db`alter table notify_ledger add column if not exists sent_at          timestamptz`;
+  await db`alter table notify_ledger add column if not exists delivered_at     timestamptz`;
+  await db`alter table notify_ledger add column if not exists read_at          timestamptz`;
+  await db`alter table notify_ledger add column if not exists cancel_reason    text`;
+  await db`alter table notify_ledger add column if not exists meta             jsonb not null default '{}'::jsonb`;
+  // The dispatcher's claim query.
+  await db`
+    create index if not exists notify_ledger_due_idx on notify_ledger (due_at)
+     where status in ('pending', 'sending')
+  `;
+  await db`create index if not exists notify_ledger_to_idx on notify_ledger (to_number, sent_at)`;
+
+  // Planner state: which mode is active, since when, and the last event planned.
+  await db`alter table notify_settings add column if not exists live_mode            text`;
+  await db`alter table notify_settings add column if not exists activation_watermark timestamptz`;
+  await db`alter table notify_settings add column if not exists planned_event_id     bigint not null default 0`;
+
+  // ── Consent and contacts (PRD §9.3) ─────────────────────────────────────
+  await db`
+    create table if not exists notify_contacts (
+      phone_e164         text primary key,
+      lid                text,
+      consent_state      text not null default 'implied'
+                         check (consent_state in ('implied', 'explicit', 'opted_out')),
+      consent_source     text,
+      opted_out_at       timestamptz,
+      first_contacted_at timestamptz,
+      notes              text,
+      updated_at         timestamptz not null default now()
+    )
+  `;
+
+  // ── Per-customer overrides (PRD §9.1 step 1, §7 mutes) ──────────────────
+  await db`
+    create table if not exists notify_customer_overrides (
+      customer_name_id text primary key,               -- tbl_1054 id, as on erp_so_header
+      phone_e164       text,                           -- replaces kontak_penerima when set
+      muted            boolean not null default false,
+      set_by           text,
+      reason           text,
+      updated_at       timestamptz not null default now()
+    )
+  `;
+
+  // ── Rep phones for the sales CC (PRD §9.4, D9) ──────────────────────────
+  // Keyed by the Selaras rep id (tbl_1130), vertical-agnostic. Falls away once
+  // Selaras carries the phone itself (erp_sales.phone).
+  await db`
+    create table if not exists notify_sales_contacts (
+      erp_sales_id text primary key,
+      sales_name   text,
+      phone_e164   text,
+      cc_enabled   boolean not null default true,
+      source       text not null default 'manual' check (source in ('manual', 'selaras')),
+      updated_at   timestamptz not null default now()
+    )
+  `;
 }

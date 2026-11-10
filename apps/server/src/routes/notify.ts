@@ -76,6 +76,31 @@ async function readSystemNumber(): Promise<{ systemNumber: string | null; update
   }
 }
 
+/** Live-trigger state for /notify (mode, since when, outbox counts). */
+async function liveStatus(): Promise<{
+  mode: string;
+  activeMode: string | null;
+  since: string | null;
+  counts: Record<string, number>;
+} | null> {
+  const db = getSql();
+  if (!db) return { mode: config.notify.live, activeMode: null, since: null, counts: {} };
+  try {
+    const [s] = await db<{ live_mode: string | null; activation_watermark: Date | null }[]>`
+      select live_mode, activation_watermark from notify_settings where id = 1`;
+    const rows = await db<{ status: string; n: number }[]>`
+      select status, count(*)::int as n from notify_ledger where mode in ('live', 'shadow') group by status`;
+    return {
+      mode: config.notify.live,
+      activeMode: s?.live_mode ?? null,
+      since: s?.activation_watermark?.toISOString() ?? null,
+      counts: Object.fromEntries(rows.map((r) => [r.status, r.n])),
+    };
+  } catch {
+    return { mode: config.notify.live, activeMode: null, since: null, counts: {} };
+  }
+}
+
 interface TestBody {
   milestone?: unknown;
   customerNumber?: unknown;
@@ -100,6 +125,7 @@ export async function notifyRoutes(app: FastifyInstance): Promise<void> {
       erpLookupAvailable: erpLookupAvailable(),
       databaseAvailable: Boolean(getSql()),
       milestones: MILESTONES.map((m) => ({ key: m, ...MILESTONE_INFO[m] })),
+      live: await liveStatus(),
     };
   });
 
@@ -245,14 +271,64 @@ export async function notifyRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/notify/ledger", async (req, reply) => {
     const db = getSql();
     if (!db) return reply.code(503).send({ error: "Database tidak tersedia." });
-    const limit = Math.min(200, Math.max(1, Number((req.query as { limit?: string }).limit) || 50));
+    const q = req.query as { limit?: string; mode?: string; status?: string; so_no?: string };
+    const limit = Math.min(200, Math.max(1, Number(q.limit) || 50));
+    const mode = q.mode && ["test", "live", "shadow"].includes(q.mode) ? q.mode : null;
+    const status = typeof q.status === "string" && /^[a-z_]{1,20}$/.test(q.status) ? q.status : null;
+    const soNo = typeof q.so_no === "string" && q.so_no.trim() ? q.so_no.trim() : null;
     const rows = await db`
       select id, mode, milestone, so_no, recipient_role, to_number, from_number, body, channel,
-             status, provider_message_id, error, context_source, created_at
+             status, provider_message_id, error, context_source, created_at,
+             due_at, sent_at, cancel_reason, attempts, template_version, meta
       from notify_ledger
-      order by created_at desc
+      where (${mode}::text is null or mode = ${mode})
+        and (${status}::text is null or status = ${status})
+        and (${soNo}::text is null or so_no = ${soNo})
+      order by created_at desc, id desc
       limit ${limit}
     `;
     return { rows };
+  });
+
+  // ── Rep phones for the sales CC (PRD §9.4; the /notify table is WP-6) ──
+  app.get("/api/notify/sales-contacts", async (_req, reply) => {
+    const db = getSql();
+    if (!db) return reply.code(503).send({ error: "Database tidak tersedia." });
+    const rows = await db`
+      select coalesce(es.id, nc.erp_sales_id) as erp_sales_id,
+             coalesce(es.sales_name, nc.sales_name) as sales_name,
+             es.department, es.active,
+             es.phone as selaras_phone, nc.phone_e164, coalesce(nc.cc_enabled, true) as cc_enabled,
+             nc.updated_at
+        from erp_sales es
+        full outer join notify_sales_contacts nc on nc.erp_sales_id = es.id
+       where es.deleted_at is null or es.id is null
+       order by (lower(coalesce(es.active, '')) in ('yes', 'active', '1', 'true')) desc, 2
+    `;
+    return { rows };
+  });
+
+  app.put("/api/notify/sales-contacts/:id", async (req, reply) => {
+    if (!authorized(req, reply)) return;
+    const db = getSql();
+    if (!db) return reply.code(503).send({ error: "Database tidak tersedia." });
+    const id = str((req.params as { id?: unknown }).id);
+    if (!id) return reply.code(400).send({ error: "ID sales Selaras kosong." });
+    const body = (req.body ?? {}) as { phone?: unknown; ccEnabled?: unknown; salesName?: unknown };
+    const raw = str(body.phone);
+    const phone = raw ? normalizeNumber(raw) : null;
+    if (raw && !phone) return reply.code(400).send({ error: "Nomor sales bukan nomor HP Indonesia yang valid." });
+    const cc = body.ccEnabled === undefined ? true : body.ccEnabled === true;
+    const name = str(body.salesName) || null;
+    await db`
+      insert into notify_sales_contacts (erp_sales_id, sales_name, phone_e164, cc_enabled, source, updated_at)
+      values (${id}, ${name}, ${phone}, ${cc}, 'manual', now())
+      on conflict (erp_sales_id) do update set
+        phone_e164 = excluded.phone_e164,
+        cc_enabled = excluded.cc_enabled,
+        sales_name = coalesce(excluded.sales_name, notify_sales_contacts.sales_name),
+        updated_at = now()
+    `;
+    return { erpSalesId: id, phone, phoneDisplay: phone ? toLocalDisplay(phone) : null, ccEnabled: cc };
   });
 }

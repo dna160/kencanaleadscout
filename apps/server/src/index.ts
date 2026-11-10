@@ -52,6 +52,7 @@ import { runOrderMigrations } from "./db/migrateOrders.js";
 import { runEventMigrations } from "./db/migrateEvents.js";
 import { startEventDeriver, stopEventDeriver } from "./events/runner.js";
 import { orderEventRoutes } from "./routes/order-events.js";
+import { startNotifyDispatcher, stopNotifyDispatcher } from "./notify/dispatcher.js";
 import { startOrderSync, stopOrderSync } from "./erp/orderSync.js";
 import { erpWebhookRoutes } from "./routes/erp-webhook.js";
 import { notifyRoutes } from "./routes/notify.js";
@@ -207,6 +208,9 @@ async function main(): Promise<void> {
   startOrderSync();
   // WP-3: derive order events from each lane batch, plus a catch-up sweep.
   startEventDeriver();
+  // WP-4: plan + send messages from events. NOTIFY_LIVE=off (default) records
+  // the mode and sends nothing; shadow sends only to reps.
+  await startNotifyDispatcher();
 
   try {
     await app.listen({ host: config.host, port: config.port });
@@ -233,6 +237,7 @@ async function main(): Promise<void> {
     // operator to confirm with PPIC about an ERP that was perfectly healthy.
     // It never throws, and it releases only rows this process owns.
     await stopOrderSync();
+    await stopNotifyDispatcher();
     await stopEventDeriver();
     const erp = await stopErpSync();
     app.log.info({ ...erp }, "erp sync stopped");

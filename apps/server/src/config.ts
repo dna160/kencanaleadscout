@@ -495,6 +495,38 @@ export const config = {
     adminToken: str("NOTIFY_ADMIN_TOKEN"),
     /** Test sends allowed per rolling 10 minutes (per server process). */
     testSendsPer10Min: int("NOTIFY_TEST_SENDS_PER_10MIN", 30),
+
+    // ── Live triggers (PRD §5.2, §7, §9, WP-4) ──
+    /**
+     * `off` (default): events are recorded, nothing is planned or sent.
+     * `shadow`: every message goes ONLY to the SO's rep, prefixed [SHADOW] and
+     *   annotated with what live mode would have done (PRD §13 Phase 1).
+     * `on`: customers receive the messages and the rep gets the CC.
+     * Changing the mode starts it fresh from that moment (activation watermark):
+     * events from before the switch are never sent.
+     */
+    live: oneOf("NOTIFY_LIVE", ["off", "shadow", "on"] as const, "off"),
+    dispatchIntervalMs: int("NOTIFY_DISPATCH_INTERVAL_MS", 15_000),
+    /** Hold before release, minutes (PRD §5.0): absorbs SOs deleted/edited right after entry. */
+    holdMinutes: {
+      so_received: intOrZero("NOTIFY_HOLD_MV1_MIN", 10),
+      production_started: intOrZero("NOTIFY_HOLD_MV2_MIN", 0),
+      delivery_scheduled: intOrZero("NOTIFY_HOLD_MV3_MIN", 0),
+    },
+    /** Customer messages per phone per WIB day; the rest wait for the next day. */
+    dailyCapPerPhone: int("NOTIFY_DAILY_CAP_PER_PHONE", 3),
+    /** Sending window, WIB hours [start, end). Outside it messages wait. */
+    quietStartHour: int("NOTIFY_SEND_FROM_HOUR", 7),
+    quietEndHour: int("NOTIFY_SEND_UNTIL_HOUR", 20),
+    /**
+     * An event describing a movement older than this is not sent (no catch-up
+     * blast after an outage, PRD §16). Measured on the ERP's own timestamp.
+     */
+    maxEventAgeHours: int("NOTIFY_MAX_EVENT_AGE_HOURS", 24),
+    /** Customers never messaged (related parties, PRD §7). Case-insensitive substring match. */
+    excludeCustomers: csv("NOTIFY_EXCLUDE_CUSTOMERS", ["Anugerah Kencana Panelindo", "KMI", "Kencana SY Build"]),
+    /** A number on SOs of this many different customers in 90 days is held for review. */
+    sharedNumberCustomers: int("NOTIFY_SHARED_NUMBER_CUSTOMERS", 3),
   },
 } as const;
 

@@ -50,6 +50,12 @@ export interface OrderContext {
   source: "erp" | "sample";
 }
 
+/**
+ * Recorded on every ledger row (PRD §8). Bump when wording changes, so a
+ * complaint about a message can be traced to the exact template that sent it.
+ */
+export const TEMPLATE_VERSION = "2026-11-10.1";
+
 export const FOOTER = "_Balas STOP untuk berhenti menerima notifikasi pesanan._";
 export const SIGNATURE = "— PT Kencana Panelindo";
 
@@ -102,6 +108,11 @@ const INTRO =
 export interface RenderOptions {
   /** Prepend the one-time introduction (first message ever sent to this number). */
   introduce?: boolean;
+  /**
+   * Step 3 only: the SO's "received" message never went out because the DO
+   * arrived while it was still on hold, so this one says both (PRD §7 MV1 merge).
+   */
+  mergedReceived?: boolean;
 }
 
 /** The message the customer receives. */
@@ -120,14 +131,15 @@ export function renderCustomerMessage(m: Milestone, ctx: OrderContext, opts: Ren
   } else {
     const d = ctx.delivery;
     if (!d) throw new Error("delivery_scheduled needs ctx.delivery");
+    const lead = opts.mergedReceived
+      ? `Pesanan Anda nomor *${ctx.soNo}* telah kami terima dan`
+      : `Pesanan *${ctx.soNo}*`;
     if (d.pickup) {
-      parts.push(
-        `Pesanan *${ctx.soNo}* sudah siap diambil mulai ${formatDateId(d.sjDate)} (No. DO ${d.sjNo}).`,
-      );
+      parts.push(`${lead} sudah siap diambil mulai ${formatDateId(d.sjDate)} (No. DO ${d.sjNo}).`);
       parts.push(`Barang:\n${formatItems(ctx.items)}`);
       parts.push("Silakan koordinasikan waktu pengambilan dengan sales Anda.");
     } else {
-      parts.push(`Pesanan *${ctx.soNo}* telah dijadwalkan untuk dikirim.`);
+      parts.push(`${lead} telah dijadwalkan untuk dikirim.`);
       const lines = [`No. surat jalan: ${d.sjNo}`, `Jadwal pengiriman: ${formatDateId(d.sjDate)}`];
       if (d.address) lines.push(`Alamat kirim: ${d.address}`);
       parts.push(lines.join("\n"));
@@ -150,9 +162,12 @@ export function renderSalesCc(
   ctx: OrderContext,
   customerNumber: string,
   customerText: string,
+  /** Shown above the copy, e.g. that the customer could NOT be reached. */
+  warning?: string,
 ): string {
   return [
     `📋 *Salinan Kabar Pesanan* — ${MILESTONE_INFO[m].label}`,
+    ...(warning ? [`⚠️ ${warning}`] : []),
     `Pelanggan: ${ctx.customerName} (${customerNumber})\nSO: ${ctx.soNo}`,
     "— Pesan yang dikirim ke pelanggan —",
     customerText,
@@ -226,4 +241,33 @@ export function sampleContext(today: Date, salesName: string | null, salesWa: st
     delivery: { sjNo: `KP/DO-UJI/${mm}/${yy}`, sjDate: ymd(tomorrow), pickup: false, address: null, partial: false },
     source: "sample",
   };
+}
+
+/**
+ * Shadow mode (PRD §13 Phase 1): the rep receives the exact customer text,
+ * plus what live mode would have done with it, so they can grade it.
+ */
+export function renderShadow(m: Milestone, soNo: string, verdict: string, customerText: string): string {
+  return [
+    `[SHADOW] 📋 *Kabar Pesanan* — ${MILESTONE_INFO[m].label} · SO ${soNo}`,
+    `Mode uji: pesan ini HANYA dikirim ke Anda. ${verdict}`,
+    "— Pesan untuk pelanggan —",
+    customerText,
+    "_Mohon nilai: apakah pesan ini benar? Balas BENAR atau SALAH + alasannya._",
+  ].join("\n\n");
+}
+
+/**
+ * To the rep only: a DO was cancelled in Selaras AFTER the customer was told it
+ * was scheduled (PRD §7 do.cancelled). The customer is not messaged again
+ * automatically; the rep decides what to say.
+ */
+export function renderDoCancelledNotice(soNo: string, sjNo: string, customerName: string, shadow: boolean): string {
+  return [
+    `${shadow ? "[SHADOW] " : ""}⚠️ *Kabar Pesanan* — DO dibatalkan`,
+    `DO ${sjNo} untuk SO ${soNo} (${customerName}) dibatalkan di Selaras setelah pesan jadwal pengiriman ${
+      shadow ? "(mode uji) dibuat" : "terkirim ke pelanggan"
+    }.`,
+    "Pelanggan tidak menerima pesan otomatis lanjutan. Mohon informasikan pelanggan bila perlu.",
+  ].join("\n\n");
 }

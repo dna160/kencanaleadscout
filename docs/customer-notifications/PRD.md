@@ -428,12 +428,16 @@ Each WP is independently testable. The order is the dependency order.
   - **Added:** rows created more than `EVENTS_HORIZON_DAYS` (60) ago produce no events, so the WP-1 re-pull of 75k historic SOs isn't recorded as news.
   - Payloads carry business facts only, never phone numbers: WP-4 reads the recipient from the mirror at send time.
   - Read-only: `GET /api/orders/events?so_no=&type=&limit=` and `GET /api/orders/sync-status`.
-- **WP-4. Rules + outbox + dispatcher** (`src/notify/rules.ts`, `dispatcher.ts`).
-  - Event → outbox rows (customer + sales CC) with `due_at` = hold.
-  - Recipient resolution (§9.1) and exclusions (§7).
-  - Dispatcher: lease with `SKIP LOCKED`, recheck, merge MV1+MV3, caps, quiet hours, staleness pause, channel send, status update.
-  - Shadow mode routes **all** messages to the rep, prefixed "[SHADOW]".
-  - Flags: `NOTIFY_LIVE=off|shadow|on`; activation watermark.
+- **WP-4. Rules + outbox + dispatcher** ✅ (`notify/rules.ts` pure policy, `notify/context.ts`, `notify/dispatcher.ts`; tests in `test/dispatcher.test.ts`)
+  - Planner: event → outbox rows (customer + sales CC) in `notify_ledger` with `due_at` = hold. One row per (mode, step, subject, role); step 3 is per DO.
+  - Recipient resolution (§9.1): override → `kontak_penerima` (split, first Indonesian mobile). **Not yet:** the 1055 PIC / 1054 phone fallbacks (those tables aren't mirrored); a missing number is `unreachable` and the rep's CC says so.
+  - Exclusions (§7): related parties (`NOTIFY_EXCLUDE_CUSTOMERS`, whole-word match), direct-ship (`customer_final` ≠ `customer_name`, suppressed until OQ-3), muted overrides, stale events (> 24 h on the ERP clock), and anything before the activation watermark.
+  - Dispatcher: claim with `FOR UPDATE SKIP LOCKED` (a crashed claim is reclaimed after its lease); pre-send recheck from the mirror; MV1+MV3 merge in either order; opt-out; shared-number hold (≥ 3 customers in 90 days → `held`); daily cap per phone (overflow waits for tomorrow, no digest yet); sending window 07–20 WIB; staleness and gateway pauses; failed sends retried with backoff (3 attempts).
+  - `do.cancelled`: a pending step 3 is cancelled; if the customer was already told, the rep gets a notice and the customer is not re-messaged.
+  - Shadow mode sends **every** message only to the rep, prefixed "[SHADOW]", with the live verdict (would send to 0812-****-4455 / no number / opted out / held) and a BENAR/SALAH prompt.
+  - Flags: `NOTIFY_LIVE=off|shadow|on` (default off). Any mode change sets the activation watermark to now, starts planning after the newest event, and cancels the previous mode's pending rows.
+  - API: `GET/PUT /api/notify/sales-contacts` (rep phones, ahead of the WP-6 table); `/api/notify/config` reports the live mode, since when, and outbox counts; `/api/notify/ledger` filters by mode/status/SO.
+  - **Not yet:** anti-fingerprinting variants (NTF-R38), the end-of-day digest, the 180-day body redaction.
 - **WP-5. wa-gateway** (`apps/wa-gateway`, Go).
   - whatsmeow with the Postgres store, the §10.2 API, pacing queue, receipts and inbound callbacks, LID resolution.
   - A `/api/notify/wa-events` receiver in LeadScout.
@@ -537,15 +541,19 @@ API: `GET {base}/table/{t}?col=val&col__gte=…&fields=…&order_by=…&limit=�
 | `WA_GATEWAY_URL` / `WA_GATEWAY_SECRET` | — | Gateway endpoint and shared secret ✅ |
 | `NOTIFY_ADMIN_TOKEN` | — | Guards `/notify` writes; required for gateway mode ✅ |
 | `NOTIFY_TEST_SENDS_PER_10MIN` | 30 | Test-pipeline rate limit ✅ |
-| `NOTIFY_LIVE` | `off` | `off` / `shadow` / `on` (WP-4) |
-| `NOTIFY_DISPATCH_INTERVAL_MS` | 15000 | Dispatcher tick (WP-4) |
-| `NOTIFY_HOLD_MV1_MIN` / `_MV2_MIN` / `_MV3_MIN` | 10 / 0 / 0 | Holds (WP-4); 0 = send on detection |
+| `NOTIFY_LIVE` | `off` | `off` / `shadow` / `on` ✅ |
+| `NOTIFY_DISPATCH_INTERVAL_MS` | 15000 | Dispatcher tick ✅ |
+| `NOTIFY_HOLD_MV1_MIN` / `_MV2_MIN` / `_MV3_MIN` | 10 / 0 / 0 | Holds; 0 = send on detection ✅ |
+| `NOTIFY_SEND_FROM_HOUR` / `NOTIFY_SEND_UNTIL_HOUR` | 7 / 20 | Sending window, WIB ✅ |
+| `NOTIFY_MAX_EVENT_AGE_HOURS` | 24 | Older movements are skipped ✅ |
+| `NOTIFY_EXCLUDE_CUSTOMERS` | Anugerah Kencana Panelindo, KMI, Kencana SY Build | Never messaged ✅ |
+| `NOTIFY_SHARED_NUMBER_CUSTOMERS` | 3 | Shared-number hold threshold ✅ |
 | `ERP_FAST_POLL_MS` | 60000 | Order lane for 1202/1236/1082/1205; 0 disables it ✅ |
 | `ERP_ORDER_SLOW_EVERY_TICKS` | 30 | Rep master (1130) read every Nth tick ✅ |
 | `ERP_ORDER_BACKFILL_DAYS` | 60 | Where an empty order-lane cursor starts ✅ |
 | `ERP_ORDER_PAGE_SIZE` / `ERP_ORDER_MAX_PAGES_PER_TICK` | 500 / 20 | Order-lane paging ✅ |
 | `ERP_WEBHOOK_SECRET` | — | HMAC secret for Selaras webhooks; empty ⇒ webhook 503 ✅ |
-| `NOTIFY_DAILY_CAP_PER_PHONE` | 3 | Cap (WP-4) |
+| `NOTIFY_DAILY_CAP_PER_PHONE` | 3 | Cap ✅ |
 | `EVENTS_SWEEP_MS` | 300000 | Event catch-up sweep; 0 disables the timer ✅ |
 | `EVENTS_LATE_SWEEP_MINUTES` | 30 | `so.late` check cadence ✅ |
 | `EVENTS_HORIZON_DAYS` | 60 | Older SOs/DOs/requests produce no events ✅ |
