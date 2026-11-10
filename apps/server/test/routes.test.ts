@@ -70,6 +70,7 @@ import { config } from "../src/config.js";
 import { canonicalSkuKey, type SkuParts } from "../src/erp/sku.js";
 import { closeDatabase, getSql } from "../src/db/client.js";
 import { runErpStockMigrations } from "../src/db/migrateErpStock.js";
+import { runStockMigrations } from "../src/db/migrateStock.js";
 import { stockAtpRoutes } from "../src/routes/stock-atp.js";
 import { stockRoutes } from "../src/routes/stock.js";
 import type {
@@ -335,6 +336,16 @@ describe.skipIf(!hasDb)("Stock 2.0 HTTP surface (CONTRACTS §4 · ROLLOUT G8/X3)
   beforeAll(async () => {
     realDb = getSql();
     if (!realDb) throw new Error("DATABASE_URL is set but getSql() returned null");
+    // The archived 1.0 tables (ST-R14) come from runStockMigrations, which
+    // bootDatabase() runs before the ERP migrations. Without it a fresh database
+    // has no stock_uploads/stock_items/stock_bookings, and the archive-read test
+    // fails on its own seed insert. Same order as index.ts; only when missing.
+    const [a] = await realDb<{ n: number }[]>`
+      select count(*)::int as n from information_schema.tables
+      where table_schema = 'public'
+        and table_name in ('stock_uploads', 'stock_items', 'stock_bookings')
+    `;
+    if (!a || a.n < 3) await runStockMigrations(realDb);
     // Only migrate if the views are missing: three suites share this database and
     // concurrent `create or replace view` is a needless lock fight.
     // Count every view this suite depends on, not a subset: a new one (ST-R22's
