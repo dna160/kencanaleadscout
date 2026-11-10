@@ -456,6 +456,24 @@ export const config = {
     webhookSecret: str("ERP_WEBHOOK_SECRET"),
   },
 
+  // ── Kabar Pesanan order events (PRD §5.1, WP-3) ──────────────────────────
+  events: {
+    /**
+     * Catch-up sweep: re-derives from mirror rows written since the last sweep
+     * (by EITHER sync loop), so nothing depends on a listener having run. 0
+     * disables the timer; events from the order lane still derive per batch.
+     */
+    sweepMs: intOrZero("EVENTS_SWEEP_MS", 300_000),
+    /** How often the time-based so.late check runs. */
+    lateSweepMinutes: int("EVENTS_LATE_SWEEP_MINUTES", 30),
+    /**
+     * Facts about SOs / DOs / requests created longer ago than this are not
+     * recorded. Keeps the log about live orders: the WP-1 re-pull touches all
+     * 75k historic headers, and none of them is news.
+     */
+    horizonDays: int("EVENTS_HORIZON_DAYS", 60),
+  },
+
   // ── Kabar Pesanan / customer notifications (docs/customer-notifications) ──
   notify: {
     /**

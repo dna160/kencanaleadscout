@@ -83,7 +83,9 @@ export function hasTouched(t: OrderTouched): boolean {
 
 // ── Listeners (WP-3 subscribes here) ─────────────────────────────────────────
 
-export type OrderListener = (touched: OrderTouched, db: Sql) => Promise<void>;
+/** Where the rows came from: the poll, or a Selaras webhook. */
+export type OrderOrigin = "erp-mirror" | "erp-webhook";
+export type OrderListener = (touched: OrderTouched, db: Sql, origin: OrderOrigin) => Promise<void>;
 const listeners: OrderListener[] = [];
 
 /** Register a consumer of written rows. Returns an unsubscribe function. */
@@ -95,11 +97,16 @@ export function onOrderRows(fn: OrderListener): () => void {
   };
 }
 
-export async function emitOrderRows(touched: OrderTouched, db: Sql, log: LaneLogger = defaultLogger): Promise<void> {
+export async function emitOrderRows(
+  touched: OrderTouched,
+  db: Sql,
+  log: LaneLogger = defaultLogger,
+  origin: OrderOrigin = "erp-mirror",
+): Promise<void> {
   if (!hasTouched(touched)) return;
   for (const fn of [...listeners]) {
     try {
-      await fn(touched, db);
+      await fn(touched, db, origin);
     } catch (err) {
       // A consumer failing must never stop the mirror: the rows are written,
       // and the consumer can re-derive from the mirror on its next call.
@@ -371,7 +378,7 @@ export async function refreshOrderRow(
     touched[table] = [id];
     markedDeleted = true;
   }
-  await emitOrderRows(touched, deps.db, deps.log);
+  await emitOrderRows(touched, deps.db, deps.log, "erp-webhook");
   return { table, id, found: rows.length > 0, markedDeleted, touched };
 }
 

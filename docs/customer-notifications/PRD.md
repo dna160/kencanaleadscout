@@ -207,8 +207,9 @@ All additive; migrations run on boot. ✅ = built.
 - Sync state lives in `erp_order_sync_state` (one row per table and cursor field) and `erp_order_sync_lease`, apart from the stock sync's `erp_sync_state`.
 - Later: `erp_wo_output` ← `1190` (`request_id`, `status_automatic`, `production_date`); `erp_customer` ← `1054`; `erp_customer_pic` ← `1055`.
 
-**Events**
+**Events** ✅
 - `order_events`: `id`, `event_key` **unique**, `event_type`, `so_no`, `subject_ref` (no_sj / request id), `occurred_at` (ERP time), `detected_at`, `payload jsonb`, `source` ('erp-mirror' | 'erp-webhook' | 'manual').
+- `order_event_state` (single row): `swept_until` (catch-up watermark), `late_swept_at`.
 
 **Notifications**
 - ✅ `notify_settings` (single row): `system_number`. Extend with `live_enabled`, `activation_watermark`, `daily_cap`, `quiet_start` / `quiet_end`.
@@ -419,10 +420,14 @@ Each WP is independently testable. The order is the dependency order.
   - Cursor on `updated_at`, plus a `created_at` cursor for 1236.
   - Consumers subscribe with `onOrderRows()` and receive the ids written per run (WP-3 hooks in here).
   - **Not done:** contract fixtures from real rows (masked). This needs ERP access; the fixtures in `orderLane.test.ts` follow the verified field names.
-- **WP-3. Event deriver** (`src/events/derive.ts`, `migrateEvents.ts`).
-  - After each successful sync batch, derive `so.created`, `production.requested`, `do.created`, `do.cancelled` and `so.late` from the rows touched.
-  - `insert … on conflict (event_key) do nothing`.
+- **WP-3. Event deriver** ✅ (`events/derive.ts` pure core, `events/store.ts`, `events/runner.ts`, `db/migrateEvents.ts`, `routes/order-events.ts`; tests in `test/events.test.ts`)
+  - After each order-lane batch (poll or webhook), derive `so.created`, `production.requested`, `do.created`, `do.cancelled` from the rows touched; `source` records `erp-mirror` vs `erp-webhook`.
+  - `insert … on conflict (event_key) do nothing`. Keys: `so.created:{po_no}`, `production.requested:{so_no}:{wo_no}`, `do.created:{no_sj}`, `do.cancelled:{no_sj}`, `so.late:{po_no}:{earliest passed ETA}`.
   - Pure-function core with tests: replaying the same batch twice yields one event.
+  - **Added:** a catch-up sweep every 5 min over mirror rows whose `synced_at` moved, from either sync loop, so events don't depend on a listener having run (and still flow with the lane off). `so.late` runs every 30 min from `v_live_commitments` (ETA passed, balance owed, inside the liveness window).
+  - **Added:** rows created more than `EVENTS_HORIZON_DAYS` (60) ago produce no events, so the WP-1 re-pull of 75k historic SOs isn't recorded as news.
+  - Payloads carry business facts only, never phone numbers: WP-4 reads the recipient from the mirror at send time.
+  - Read-only: `GET /api/orders/events?so_no=&type=&limit=` and `GET /api/orders/sync-status`.
 - **WP-4. Rules + outbox + dispatcher** (`src/notify/rules.ts`, `dispatcher.ts`).
   - Event → outbox rows (customer + sales CC) with `due_at` = hold.
   - Recipient resolution (§9.1) and exclusions (§7).
@@ -541,6 +546,9 @@ API: `GET {base}/table/{t}?col=val&col__gte=…&fields=…&order_by=…&limit=�
 | `ERP_ORDER_PAGE_SIZE` / `ERP_ORDER_MAX_PAGES_PER_TICK` | 500 / 20 | Order-lane paging ✅ |
 | `ERP_WEBHOOK_SECRET` | — | HMAC secret for Selaras webhooks; empty ⇒ webhook 503 ✅ |
 | `NOTIFY_DAILY_CAP_PER_PHONE` | 3 | Cap (WP-4) |
+| `EVENTS_SWEEP_MS` | 300000 | Event catch-up sweep; 0 disables the timer ✅ |
+| `EVENTS_LATE_SWEEP_MINUTES` | 30 | `so.late` check cadence ✅ |
+| `EVENTS_HORIZON_DAYS` | 60 | Older SOs/DOs/requests produce no events ✅ |
 | `SELARAS_*` | existing | ERP access (shared with the stock sync) |
 
 ## Appendix D — Built API (`/api/notify`)

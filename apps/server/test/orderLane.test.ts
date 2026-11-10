@@ -24,6 +24,7 @@ const hook = await import("../src/routes/erp-webhook.js");
 const dbmod = await import("../src/db/client.js");
 const { runErpStockMigrations } = await import("../src/db/migrateErpStock.js");
 const { runOrderMigrations } = await import("../src/db/migrateOrders.js");
+const { runEventMigrations } = await import("../src/db/migrateEvents.js");
 
 const P = "wp2lane";
 
@@ -289,6 +290,9 @@ describe.skipIf(!hasDb)("order lane over the real schema", () => {
       await db`delete from ${db(t)} where id like ${`${P}%`}`;
     }
     await db`delete from erp_order_sync_state`;
+    // events.test.ts sweeps the whole mirror in parallel and may derive events
+    // from this suite's rows; they are this suite's to remove.
+    await db`delete from order_events where event_key like ${`%${P}%`} or so_no like ${`${P}%`}`;
     await db`update erp_order_sync_lease set owner = null, lease_until = null where id = 1`;
   }
 
@@ -298,6 +302,7 @@ describe.skipIf(!hasDb)("order lane over the real schema", () => {
     db = s;
     await runErpStockMigrations(db);
     await runOrderMigrations(db);
+    await runEventMigrations(db);
     previousDispatcher = getGlobalDispatcher();
     agent = new MockAgent();
     agent.disableNetConnect();

@@ -49,6 +49,9 @@ import { runStockMigrations } from "./db/migrateStock.js";
 import { runErpStockMigrations } from "./db/migrateErpStock.js";
 import { runNotifyMigrations } from "./db/migrateNotify.js";
 import { runOrderMigrations } from "./db/migrateOrders.js";
+import { runEventMigrations } from "./db/migrateEvents.js";
+import { startEventDeriver, stopEventDeriver } from "./events/runner.js";
+import { orderEventRoutes } from "./routes/order-events.js";
 import { startOrderSync, stopOrderSync } from "./erp/orderSync.js";
 import { erpWebhookRoutes } from "./routes/erp-webhook.js";
 import { notifyRoutes } from "./routes/notify.js";
@@ -68,6 +71,7 @@ async function bootDatabase(app: ReturnType<typeof Fastify>): Promise<void> {
     await runStockMigrations(db);
     await runErpStockMigrations(db);
     await runOrderMigrations(db);
+    await runEventMigrations(db);
     await runNotifyMigrations(db);
     const n = await seedLeads(db);
     app.log.info({ seeded: n }, "database ready (migrated + seeded)");
@@ -138,6 +142,8 @@ async function main(): Promise<void> {
   await app.register(notifyRoutes);
   // Kabar Pesanan WP-2: Selaras push receiver (503 until ERP_WEBHOOK_SECRET is set).
   await app.register(erpWebhookRoutes);
+  // Kabar Pesanan WP-3: read-only order events + order-lane status.
+  await app.register(orderEventRoutes);
 
   // [A] Scraper APIs.
   await app.register(enrichRoutes);
@@ -199,6 +205,8 @@ async function main(): Promise<void> {
   // Kabar Pesanan WP-2: 60 s order lane (1202/1236/1082/1205 + 1130). Same
   // self-guarding: without ERP credentials or a database it logs and stays off.
   startOrderSync();
+  // WP-3: derive order events from each lane batch, plus a catch-up sweep.
+  startEventDeriver();
 
   try {
     await app.listen({ host: config.host, port: config.port });
@@ -225,6 +233,7 @@ async function main(): Promise<void> {
     // operator to confirm with PPIC about an ERP that was perfectly healthy.
     // It never throws, and it releases only rows this process owns.
     await stopOrderSync();
+    await stopEventDeriver();
     const erp = await stopErpSync();
     app.log.info({ ...erp }, "erp sync stopped");
     await closeDatabase();
