@@ -430,6 +430,29 @@ export const config = {
      */
     diagnoseColumns: bool("STOCK_SYNC_DIAGNOSE_COLUMNS", true),
   },
+
+  // ── Kabar Pesanan / customer notifications (docs/customer-notifications) ──
+  notify: {
+    /**
+     * `stub` (default): nothing leaves the server; every message is recorded in
+     * `notify_ledger` and shown on /notify. `gateway`: POST to the whatsmeow
+     * sidecar at WA_GATEWAY_URL. Stub until the gateway is built and paired.
+     */
+    channel: oneOf("NOTIFY_CHANNEL", ["stub", "gateway"] as const, "stub"),
+    /** Internal URL of the wa-gateway sidecar (e.g. http://wa-gateway.railway.internal:8080). */
+    gatewayUrl: str("WA_GATEWAY_URL"),
+    /** Shared secret sent to the gateway as `x-gateway-secret`. SECRET. */
+    gatewaySecret: str("WA_GATEWAY_SECRET"),
+    /**
+     * When set, every write on /api/notify (config save, test sends) needs the
+     * header `x-notify-token` with this value. Leave blank only while the channel
+     * is `stub`: once messages really go out, the test pipeline can message any
+     * number, so it must not be open to anyone who has the URL. SECRET.
+     */
+    adminToken: str("NOTIFY_ADMIN_TOKEN"),
+    /** Test sends allowed per rolling 10 minutes (per server process). */
+    testSendsPer10Min: int("NOTIFY_TEST_SENDS_PER_10MIN", 30),
+  },
 } as const;
 
 export const hasDatabase = Boolean(config.databaseUrl);

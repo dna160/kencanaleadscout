@@ -47,6 +47,8 @@ import { stockRoutes } from "./routes/stock.js";
 import { stockAtpRoutes } from "./routes/stock-atp.js";
 import { runStockMigrations } from "./db/migrateStock.js";
 import { runErpStockMigrations } from "./db/migrateErpStock.js";
+import { runNotifyMigrations } from "./db/migrateNotify.js";
+import { notifyRoutes } from "./routes/notify.js";
 import { startErpSync, stopErpSync } from "./erp/syncWorker.js";
 
 const PUBLIC_DIR = fileURLToPath(new URL("../public", import.meta.url));
@@ -62,6 +64,7 @@ async function bootDatabase(app: ReturnType<typeof Fastify>): Promise<void> {
     await runMigrations(db);
     await runStockMigrations(db);
     await runErpStockMigrations(db);
+    await runNotifyMigrations(db);
     const n = await seedLeads(db);
     app.log.info({ seeded: n }, "database ready (migrated + seeded)");
   } catch (err) {
@@ -125,6 +128,10 @@ async function main(): Promise<void> {
   app.get("/sy-champion",  (_req, reply) => reply.header("Cache-Control", NC).sendFile("sy-champion.html"));
   app.get("/stock",      (_req, reply) => reply.header("Cache-Control", NC).sendFile("stock.html"));
   app.get("/stock-ppic", (_req, reply) => reply.header("Cache-Control", NC).sendFile("stock-ppic.html"));
+  app.get("/notify",     (_req, reply) => reply.header("Cache-Control", NC).sendFile("notify.html"));
+
+  // Kabar Pesanan: customer order notifications (config + test pipeline, stub channel by default).
+  await app.register(notifyRoutes);
 
   // [A] Scraper APIs.
   await app.register(enrichRoutes);

@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Kabar Pesanan</title>
+<style>
+  :root{
+    --bg:#f2f4f7; --card:#fff; --ink:#17233b; --ink-2:#475569; --muted:#6b7280; --line:#e5e7eb;
+    --accent:#157a46; --danger:#c03c2b; --gold:#bb9457; --red:#9b2226;
+    --ok-bg:#dcfce7; --ok-ink:#15803d; --warn-bg:#fef3c7; --warn-ink:#7a4f08; --warn-line:#fde68a;
+    --neg-bg:#fee2e2; --neg-ink:#b91c1c; --stub-bg:#e0e7ff; --stub-ink:#3730a3;
+    --wa-bg:#efeae2; --wa-out:#d9fdd3; --wa-cc:#ffffff;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --tap:44px; --focus:#1d4ed8;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{font-family:var(--sans);background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased;padding-bottom:48px}
+  header{position:sticky;top:0;z-index:20;background:var(--ink);color:#fff;padding:12px 16px;box-shadow:0 2px 10px rgba(0,0,0,.12)}
+  .hrow{display:flex;align-items:center;justify-content:space-between;gap:10px;max-width:980px;margin:0 auto}
+  header h1{font-size:18px;margin:0;font-weight:700}
+  header .sub{font-size:12px;color:#c7cfde;margin-top:2px}
+  header a{color:#ffd27a;text-decoration:none;font-size:13px;font-weight:600}
+  .wrap{max-width:980px;margin:0 auto;padding:14px 16px}
+  .tabs{display:flex;gap:6px;margin:4px 0 14px;border-bottom:1px solid var(--line)}
+  .tabs button{font:inherit;font-size:14px;font-weight:600;background:none;border:none;border-bottom:3px solid transparent;padding:10px 12px;color:var(--muted);cursor:pointer;min-height:var(--tap)}
+  .tabs button[aria-selected=true]{color:var(--ink);border-bottom-color:var(--red)}
+  .panel[hidden]{display:none}
+  .banner{border-radius:12px;padding:10px 14px;font-size:13px;line-height:1.45;margin-bottom:12px;border:1px solid}
+  .banner.stub{background:var(--stub-bg);color:var(--stub-ink);border-color:#c7d2fe}
+  .banner.live{background:var(--ok-bg);color:var(--ok-ink);border-color:#bbf7d0}
+  .banner.warn{background:var(--warn-bg);color:var(--warn-ink);border-color:var(--warn-line)}
+  .banner.err{background:var(--neg-bg);color:var(--neg-ink);border-color:#fecaca}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;margin-bottom:14px;overflow:hidden}
+  .card h2{font-size:14px;margin:0;padding:12px 14px;border-bottom:1px solid var(--line);background:#fafbfc}
+  .card .body{padding:14px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+  label.fld{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted);font-weight:600}
+  label.fld small{font-weight:400;color:var(--muted)}
+  input[type=text],input[type=tel],input[type=password]{font:inherit;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink);min-height:var(--tap);width:100%}
+  input:focus-visible,button:focus-visible,summary:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+  .chk{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-2);min-height:var(--tap);cursor:pointer}
+  .chk input{width:18px;height:18px}
+  .btn{font:inherit;font-weight:700;font-size:14px;border-radius:10px;border:1px solid transparent;padding:10px 16px;min-height:var(--tap);cursor:pointer}
+  .btn.primary{background:var(--red);color:#fff}
+  .btn.primary:disabled{opacity:.55;cursor:progress}
+  .btn.ghost{background:#fff;color:var(--ink);border-color:var(--line)}
+  .row{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}
+  .row > label.fld{flex:1;min-width:200px}
+  .muted{color:var(--muted);font-size:12px}
+  .so-sum{margin-top:10px;font-size:13px;line-height:1.5;background:#fafbfc;border:1px dashed var(--line);border-radius:10px;padding:10px 12px}
+  .so-sum b{color:var(--ink)}
+
+  /* Pipeline */
+  .pipe{position:relative;padding-left:26px}
+  .pipe::before{content:"";position:absolute;left:11px;top:18px;bottom:18px;width:2px;background:var(--line)}
+  .step{position:relative;margin-bottom:14px}
+  .dot{position:absolute;left:-26px;top:14px;width:24px;height:24px;border-radius:50%;background:#fff;border:2px solid var(--gold);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:var(--ink)}
+  .step.done .dot{background:var(--accent);border-color:var(--accent);color:#fff}
+  .step .head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;flex-wrap:wrap}
+  .step .title{font-weight:700;font-size:15px}
+  .step .title small{display:block;font-weight:500;color:var(--muted);font-size:12px;margin-top:2px}
+  details.trig{border-top:1px solid var(--line);font-size:12.5px;color:var(--ink-2)}
+  details.trig summary{cursor:pointer;padding:10px 14px;font-weight:600;color:var(--ink);min-height:var(--tap);display:flex;align-items:center}
+  details.trig dl{margin:0;padding:0 14px 12px;display:grid;grid-template-columns:110px 1fr;gap:6px 10px}
+  details.trig dt{font-weight:700;color:var(--muted)}
+  details.trig dd{margin:0;line-height:1.45}
+  .out{border-top:1px solid var(--line);background:var(--wa-bg);padding:12px 14px;display:flex;flex-direction:column;gap:10px}
+  .out[hidden]{display:none}
+  .bubblewrap{display:flex;flex-direction:column;gap:4px;max-width:520px}
+  .bubblewrap.cc{align-self:flex-start}
+  .bubblewrap.cust{align-self:flex-end}
+  .meta{font-size:11px;color:var(--ink-2);display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+  .bubble{background:var(--wa-out);border-radius:10px;padding:8px 10px 6px;font-size:14px;line-height:1.42;white-space:pre-wrap;word-wrap:break-word;box-shadow:0 1px 1px rgba(0,0,0,.08)}
+  .cc .bubble{background:var(--wa-cc)}
+  .chip{font-size:10.5px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;border-radius:999px;padding:2px 8px}
+  .chip.stubbed{background:var(--stub-bg);color:var(--stub-ink)}
+  .chip.sent,.chip.queued{background:var(--ok-bg);color:var(--ok-ink)}
+  .chip.failed{background:var(--neg-bg);color:var(--neg-ink)}
+  .chip.test{background:#f3f4f6;color:#4b5563}
+  .warnline{font-size:12.5px;background:var(--warn-bg);color:var(--warn-ink);border:1px solid var(--warn-line);border-radius:8px;padding:8px 10px}
+
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);background:#fafbfc}
+  td pre{margin:6px 0 0;white-space:pre-wrap;font:inherit;font-size:12.5px;color:var(--ink-2);background:#fafbfc;border-radius:8px;padding:8px}
+  .empty{padding:24px;text-align:center;color:var(--muted);font-size:13px}
+  .toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:50}
+  .toast.show{opacity:1}
+</style>
+</head>
+<body>
+<header>
+  <div class="hrow">
+    <div>
+      <h1>Kabar Pesanan</h1>
+      <div class="sub">Notifikasi status pesanan ke pelanggan via WhatsApp</div>
+    </div>
+    <a href="/">← Beranda</a>
+  </div>
+</header>
+
+<main class="wrap">
+  <div id="modeBanner" class="banner stub" role="status">Memuat konfigurasi…</div>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" aria-controls="p-pipe" id="t-pipe">Uji Pipeline</button>
+    <button role="tab" aria-selected="false" aria-controls="p-cfg" id="t-cfg">Konfigurasi</button>
+    <button role="tab" aria-selected="false" aria-controls="p-log" id="t-log">Riwayat</button>
+  </nav>
+
+  <!-- ── Test pipeline ─────────────────────────────────────────────── -->
+  <section id="p-pipe" class="panel" role="tabpanel" aria-labelledby="t-pipe">
+    <div class="card">
+      <h2>Penerima uji</h2>
+      <div class="body">
+        <div class="grid">
+          <label class="fld">Nomor pelanggan (uji) *
+            <input id="custNo" type="tel" inputmode="tel" placeholder="0812-xxxx-xxxx" autocomplete="off" />
+            <small>Pesan pelanggan dikirim ke nomor ini, bukan ke nomor di SO.</small>
+          </label>
+          <label class="fld">Nomor sales (CC)
+            <input id="salesNo" type="tel" inputmode="tel" placeholder="0813-xxxx-xxxx" autocomplete="off" />
+            <small>Menerima salinan setiap pesan.</small>
+          </label>
+          <label class="fld">Nama sales
+            <input id="salesName" type="text" placeholder="mis. Rahmanto" autocomplete="off" />
+            <small>Opsional. Muncul di pesan sebagai kontak.</small>
+          </label>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <label class="fld">No. SO dari Selaras (opsional)
+            <input id="soNo" type="text" placeholder="SO.26/12821" autocomplete="off" />
+            <small id="soHint">Kosongkan untuk memakai contoh pesanan.</small>
+          </label>
+          <button class="btn ghost" id="loadSo" type="button">Muat dari ERP</button>
+        </div>
+        <div id="soSummary" class="so-sum" hidden></div>
+        <label class="chk"><input id="introduce" type="checkbox" /> Sertakan pesan perkenalan (kontak pertama ke nomor ini)</label>
+      </div>
+    </div>
+
+    <div class="pipe" id="pipe"></div>
+  </section>
+
+  <!-- ── Config ────────────────────────────────────────────────────── -->
+  <section id="p-cfg" class="panel" role="tabpanel" aria-labelledby="t-cfg" hidden>
+    <div class="card">
+      <h2>Nomor sistem (pengirim)</h2>
+      <div class="body">
+        <div class="row">
+          <label class="fld">Nomor WhatsApp sistem
+            <input id="sysNo" type="tel" inputmode="tel" placeholder="0811-xxxx-xxxx" autocomplete="off" />
+            <small>Nomor khusus notifikasi. Jangan pakai nomor sales atau nomor utama.</small>
+          </label>
+          <button class="btn primary" id="saveSys" type="button">Simpan</button>
+        </div>
+        <p class="muted" id="sysMeta"></p>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Kanal pengiriman</h2>
+      <div class="body" id="chanBody"></div>
+    </div>
+    <div class="card" id="tokenCard" hidden>
+      <h2>Token admin</h2>
+      <div class="body">
+        <label class="fld">NOTIFY_ADMIN_TOKEN
+          <input id="adminToken" type="password" autocomplete="off" />
+          <small>Disimpan hanya di tab ini (sessionStorage).</small>
+        </label>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Ledger ────────────────────────────────────────────────────── -->
+  <section id="p-log" class="panel" role="tabpanel" aria-labelledby="t-log" hidden>
+    <div class="card">
+      <h2 style="display:flex;justify-content:space-between;align-items:center">Riwayat pesan <button class="btn ghost" id="reloadLog" type="button" style="min-height:32px;padding:4px 10px;font-size:12px">Muat ulang</button></h2>
+      <div id="logBody"><div class="empty">Memuat…</div></div>
+    </div>
+  </section>
+</main>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  /** WhatsApp-style preview: escape first, then *bold* and _italic_. */
+  const waFormat = (s) => esc(s).replace(/\*([^*\n]+)\*/g, "<b>$1</b>").replace(/(^|\s)_([^_\n]+)_(?=\s|$)/g, "$1<i>$2</i>");
+  const toast = (msg) => { const t = $("toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove("show"), 2600); };
+  const store = { get: (k) => { try { return sessionStorage.getItem(k) || ""; } catch { return ""; } }, set: (k, v) => { try { sessionStorage.setItem(k, v); } catch {} } };
+  const local = { get: (k) => { try { return localStorage.getItem(k) || ""; } catch { return ""; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
+
+  let CFG = null;
+
+  async function api(path, opts = {}) {
+    const headers = { ...(opts.body ? { "content-type": "application/json" } : {}) };
+    const tok = store.get("notifyToken");
+    if (tok) headers["x-notify-token"] = tok;
+    const res = await fetch(path, { ...opts, headers });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    return data;
+  }
+
+  // Tabs
+  const tabs = [["t-pipe", "p-pipe"], ["t-cfg", "p-cfg"], ["t-log", "p-log"]];
+  tabs.forEach(([t, p]) => $(t).addEventListener("click", () => {
+    tabs.forEach(([t2, p2]) => { $(t2).setAttribute("aria-selected", String(t2 === t)); $(p2).hidden = p2 !== p; });
+    if (p === "p-log") loadLog();
+  }));
+
+  // Remember tester's numbers on this device (not the system number).
+  ["custNo", "salesNo", "salesName"].forEach((id) => {
+    $(id).value = local.get("notify." + id);
+    $(id).addEventListener("change", () => local.set("notify." + id, $(id).value.trim()));
+  });
+
+  function renderBanner() {
+    const b = $("modeBanner");
+    if (!CFG) return;
+    const ch = CFG.channel;
+    if (ch.mode === "stub") {
+      b.className = "banner stub";
+      b.innerHTML = "<b>Mode STUB.</b> Pesan tidak benar-benar dikirim ke WhatsApp. Isi pesan dan penerimanya tampil di bawah dan dicatat di Riwayat. Pemicu live belum aktif: hanya tombol uji yang mengirim.";
+    } else {
+      b.className = ch.connected ? "banner live" : "banner warn";
+      b.innerHTML = `<b>Mode GATEWAY.</b> ${esc(ch.detail)}`;
+    }
+    if (!CFG.databaseAvailable) b.innerHTML += "<br>Database tidak tersedia: Riwayat dan nomor sistem tidak tersimpan.";
+  }
+
+  function renderConfig() {
+    $("sysNo").value = CFG.systemNumberDisplay || "";
+    $("sysMeta").textContent = CFG.systemNumber
+      ? `Tersimpan: ${CFG.systemNumberDisplay}${CFG.updatedAt ? " · diubah " + new Date(CFG.updatedAt).toLocaleString("id-ID") : ""}`
+      : "Belum ada nomor sistem.";
+    const ch = CFG.channel;
+    $("chanBody").innerHTML = `
+      <p style="margin:0 0 8px"><span class="chip ${ch.mode === "stub" ? "stubbed" : (ch.connected ? "sent" : "failed")}">${esc(ch.mode)}</span>
+      <span style="margin-left:6px">${esc(ch.detail)}</span></p>
+      <p class="muted" style="margin:0">${ch.mode === "stub"
+        ? "Menautkan nomor ke WhatsApp (whatsmeow, linked device) dilakukan di layanan wa-gateway. Setelah gateway siap, set NOTIFY_CHANNEL=gateway, WA_GATEWAY_URL dan NOTIFY_ADMIN_TOKEN di Railway."
+        : "Penautan nomor (QR / kode) dikelola oleh layanan wa-gateway."}</p>
+      <p class="muted" style="margin:8px 0 0">Muat SO dari ERP: ${CFG.erpLookupAvailable ? "tersedia" : "tidak tersedia (ERP belum dikonfigurasi)"}.</p>`;
+    $("tokenCard").hidden = !CFG.adminTokenRequired;
+    $("adminToken").value = store.get("notifyToken");
+    if (!CFG.erpLookupAvailable) { $("loadSo").disabled = true; $("soNo").disabled = true; $("soHint").textContent = "ERP belum terhubung: pesan memakai contoh pesanan."; }
+  }
+
+  function renderPipeline() {
+    $("pipe").innerHTML = CFG.milestones.map((m) => `
+      <div class="step" id="step-${m.key}">
+        <span class="dot">${m.step}</span>
+        <div class="card" style="margin:0">
+          <div class="head">
+            <div class="title">${esc(m.label)}<small>${esc(m.labelEn)}</small></div>
+            <button class="btn primary" type="button" data-send="${m.key}">Kirim uji</button>
+          </div>
+          <details class="trig">
+            <summary>Pemicu di sistem live</summary>
+            <dl>
+              <dt>Trigger</dt><dd>${esc(m.trigger)}</dd>
+              <dt>Hold</dt><dd>${esc(m.hold)}</dd>
+              <dt>Coverage</dt><dd>${esc(m.coverage)}</dd>
+              <dt>Notes</dt><dd>${esc(m.notes)}</dd>
+            </dl>
+          </details>
+          <div class="out" id="out-${m.key}" hidden></div>
+        </div>
+      </div>`).join("");
+    document.querySelectorAll("[data-send]").forEach((b) => b.addEventListener("click", () => sendTest(b.dataset.send, b)));
+  }
+
+  async function sendTest(milestone, btn) {
+    const customerNumber = $("custNo").value.trim();
+    if (!customerNumber) { $("custNo").focus(); toast("Isi nomor pelanggan (uji) dulu."); return; }
+    btn.disabled = true; const label = btn.textContent; btn.textContent = "Mengirim…";
+    const out = $("out-" + milestone);
+    try {
+      const r = await api("/api/notify/test", { method: "POST", body: JSON.stringify({
+        milestone, customerNumber,
+        salesNumber: $("salesNo").value.trim(),
+        salesName: $("salesName").value.trim(),
+        soNo: $("soNo").disabled ? "" : $("soNo").value.trim(),
+        introduce: $("introduce").checked,
+      }) });
+      const from = r.from ? `dari ${esc(r.from)}` : "dari (nomor sistem belum diisi)";
+      out.innerHTML = [
+        ...r.warnings.map((w) => `<div class="warnline">${esc(w)}</div>`),
+        `<div class="meta">SO <b>${esc(r.context.soNo)}</b> · ${esc(r.context.customerName)} · sumber: ${r.context.source === "erp" ? "Selaras" : "contoh"}${r.context.erpRecipientPhoneMasked ? ` · di mode live dikirim ke ${esc(r.context.erpRecipientPhoneMasked)}` : ""}</div>`,
+        ...r.messages.map((m) => `
+          <div class="bubblewrap ${m.role === "customer" ? "cust" : "cc"}">
+            <div class="meta"><span class="chip ${esc(m.status)}">${esc(m.status)}</span>
+              ${m.role === "customer" ? "Ke pelanggan" : "CC sales"} ${esc(m.toDisplay)} · ${from}${m.error ? ` · <span style="color:var(--neg-ink)">${esc(m.error)}</span>` : ""}</div>
+            <div class="bubble">${waFormat(m.text)}</div>
+          </div>`),
+      ].join("");
+      out.hidden = false;
+      $("step-" + milestone).classList.add("done");
+      toast(r.channel === "stub" ? "Tercatat (stub): tidak dikirim ke WhatsApp." : "Terkirim ke gateway.");
+    } catch (e) {
+      out.innerHTML = `<div class="warnline" style="background:var(--neg-bg);color:var(--neg-ink);border-color:#fecaca">${esc(e.message)}</div>`;
+      out.hidden = false;
+    } finally {
+      btn.disabled = false; btn.textContent = label;
+    }
+  }
+
+  $("loadSo").addEventListener("click", async () => {
+    const so = $("soNo").value.trim();
+    const box = $("soSummary");
+    if (!so) { box.hidden = true; toast("Isi nomor SO."); return; }
+    box.hidden = false; box.textContent = "Memuat dari Selaras…";
+    try {
+      const r = await api("/api/notify/order?so_no=" + encodeURIComponent(so));
+      const items = r.items.slice(0, 5).map((i) => `${esc(i.label)} × ${esc(i.qty)}`).join("<br>") || "(tidak ada baris)";
+      box.innerHTML = `<b>${esc(r.soNo)}</b> · ${esc(r.customerName)} · status ${esc(r.statusOrder || "-")} · ${esc(r.paymentTerm || "-")}<br>
+        Penerima: ${esc(r.recipientName || "-")} (${esc(r.erpRecipientPhoneMasked || "tanpa nomor")}) · Sales: ${esc(r.salesName || "-")}<br>
+        Produksi: ${r.production ? "ya, " + esc(r.production.woNo || "") : "tidak (dari stok)"} ·
+        DO: ${r.delivery ? esc(r.delivery.sjNo) + " · " + esc(r.delivery.sjDate) + (r.delivery.pickup ? " · diambil" : " · diantar") : "belum ada"}<br>
+        <span class="muted">${items}</span>`;
+    } catch (e) {
+      box.innerHTML = `<span style="color:var(--neg-ink)">${esc(e.message)}</span>`;
+    }
+  });
+
+  $("saveSys").addEventListener("click", async () => {
+    try {
+      const r = await api("/api/notify/config", { method: "PUT", body: JSON.stringify({ systemNumber: $("sysNo").value.trim() }) });
+      CFG.systemNumber = r.systemNumber; CFG.systemNumberDisplay = r.systemNumberDisplay; CFG.updatedAt = new Date().toISOString();
+      renderConfig(); toast("Nomor sistem disimpan.");
+    } catch (e) { toast(e.message); }
+  });
+  $("adminToken").addEventListener("change", () => { store.set("notifyToken", $("adminToken").value.trim()); toast("Token disimpan untuk tab ini."); });
+
+  async function loadLog() {
+    const body = $("logBody");
+    try {
+      const { rows } = await api("/api/notify/ledger?limit=100");
+      if (!rows.length) { body.innerHTML = '<div class="empty">Belum ada pesan.</div>'; return; }
+      body.innerHTML = `<table><thead><tr><th>Waktu</th><th>Langkah</th><th>Ke</th><th>Status</th></tr></thead><tbody>${rows.map((r) => {
+        const step = (CFG.milestones.find((m) => m.key === r.milestone) || {}).label || r.milestone;
+        return `<tr><td>${esc(new Date(r.created_at).toLocaleString("id-ID"))}<br><span class="chip test">${esc(r.mode)}</span></td>
+          <td>${esc(step)}<br><span class="muted">${esc(r.so_no || "")}</span></td>
+          <td>${r.recipient_role === "customer" ? "Pelanggan" : "CC sales"}<br><span class="muted">${esc(r.to_number)}</span></td>
+          <td><span class="chip ${esc(r.status)}">${esc(r.status)}</span>${r.error ? `<br><span class="muted">${esc(r.error)}</span>` : ""}
+            <details><summary class="muted" style="cursor:pointer">Isi pesan</summary><pre>${esc(r.body)}</pre></details></td></tr>`;
+      }).join("")}</tbody></table>`;
+    } catch (e) {
+      body.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+    }
+  }
+  $("reloadLog").addEventListener("click", loadLog);
+
+  (async () => {
+    try {
+      CFG = await api("/api/notify/config");
+      renderBanner(); renderConfig(); renderPipeline();
+    } catch (e) {
+      $("modeBanner").className = "banner err";
+      $("modeBanner").textContent = "Gagal memuat konfigurasi: " + e.message;
+    }
+  })();
+})();
+</script>
+</body>
+</html>
