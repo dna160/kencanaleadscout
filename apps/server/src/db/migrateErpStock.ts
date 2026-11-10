@@ -709,12 +709,13 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
    */
   let needsFullRepull = false;
   /**
-   * WP-1: set when `po_no` is first added to the SO mirror tables. Every SO row
-   * already mirrored has it NULL, and cursors only move forward, so without a
-   * reset those rows would never learn their SO number. Narrower than
-   * `needsFullRepull`: only the two SO tables, never live_fg / warna.
+   * The SO tables whose cursors must be reset once, because columns the sync
+   * fills were just added (WP-1 `po_no`, WP-2 recipient/terms on the header).
+   * Rows already mirrored hold NULL there, and cursors only move forward, so
+   * without a reset they would never be filled. Narrower than
+   * `needsFullRepull`: only the SO tables, never live_fg / warna.
    */
-  let needsSoRepull = false;
+  const soRepull = new Set<"so_header" | "so_line">();
   // ── erp_sku_key() — the SQL half of the canonical key (ST-R5.1) ─────────────
   // First, because everything that mirrors a row computes a sku_key with it.
   try {
@@ -900,7 +901,7 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
     // WP-1: the real line→header key. Added nullable; the one-time re-pull below
     // fills it for rows mirrored before this column existed.
     if (!(await hasColumn(db, "erp_so_line", "po_no"))) {
-      needsSoRepull = true;
+      soRepull.add("so_line");
       await db`alter table erp_so_line add column if not exists po_no text`;
     }
     await db`create index if not exists erp_so_line_po_idx   on erp_so_line (po_no)`;
@@ -926,10 +927,25 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
     // WP-1: `po_no` is the SO number upstream (tbl_1202.po_no) and the key the
     // lines, DOs and production requests point at. Indexed for the lateral join.
     if (!(await hasColumn(db, "erp_so_header", "po_no"))) {
-      needsSoRepull = true;
+      soRepull.add("so_header");
       await db`alter table erp_so_header add column if not exists po_no text`;
     }
     await db`create index if not exists erp_so_header_po_idx on erp_so_header (po_no)`;
+    // WP-2 (Kabar Pesanan): recipient, rep and terms. Additive and nullable; the
+    // first boot that adds them re-pulls the header table once to fill them.
+    if (!(await hasColumn(db, "erp_so_header", "kontak_penerima"))) soRepull.add("so_header");
+    await db`alter table erp_so_header add column if not exists customer_name_id  text`;
+    await db`alter table erp_so_header add column if not exists customer_final_id text`;
+    await db`alter table erp_so_header add column if not exists buyer_name_id     text`;
+    await db`alter table erp_so_header add column if not exists sales_name_id     text`;
+    await db`alter table erp_so_header add column if not exists penerima          text`;
+    await db`alter table erp_so_header add column if not exists kontak_penerima   text`;
+    await db`alter table erp_so_header add column if not exists alamat_kirim      text`;
+    await db`alter table erp_so_header add column if not exists top_limit         text`;
+    await db`alter table erp_so_header add column if not exists top_limit_value   numeric`;
+    await db`alter table erp_so_header add column if not exists approval_new      text`;
+    await db`alter table erp_so_header add column if not exists erp_created_at    timestamptz`;
+    await db`create index if not exists erp_so_header_created_idx on erp_so_header (erp_created_at)`;
   } catch (soHeaderErr) {
     console.error("[migrateErpStock] erp_so_header step failed (non-fatal):", soHeaderErr);
   }
@@ -1068,16 +1084,14 @@ export async function runErpStockMigrations(db: Sql = getSql()!): Promise<void> 
           "idempotent upsert, so this is safe).",
       );
       await db`update erp_sync_state set cursor_value = null`;
-    } else if (needsSoRepull) {
+    } else if (soRepull.size > 0) {
+      const tables = [...soRepull].sort();
       console.warn(
-        "[migrateErpStock] WP-1: erp_so_header / erp_so_line gained po_no (the real SO key, " +
-          "verified 2026-11-10) — resetting their sync cursors so the next sync re-pulls both " +
-          "tables in full and fills it. Upserts are idempotent; on-hand and warna are untouched.",
+        `[migrateErpStock] ${tables.join(" / ")} gained columns the sync must fill (WP-1 po_no, ` +
+          "WP-2 recipient/terms) — resetting those sync cursors so the next sync re-pulls them in " +
+          "full. Upserts are idempotent; on-hand and warna are untouched.",
       );
-      await db`
-        update erp_sync_state set cursor_value = null
-         where table_name in ('so_header', 'so_line')
-      `;
+      await db`update erp_sync_state set cursor_value = null where table_name = any(${tables})`;
     }
   } catch (syncStateErr) {
     console.error("[migrateErpStock] erp_sync_state step failed (non-fatal):", syncStateErr);

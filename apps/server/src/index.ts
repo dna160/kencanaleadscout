@@ -48,6 +48,9 @@ import { stockAtpRoutes } from "./routes/stock-atp.js";
 import { runStockMigrations } from "./db/migrateStock.js";
 import { runErpStockMigrations } from "./db/migrateErpStock.js";
 import { runNotifyMigrations } from "./db/migrateNotify.js";
+import { runOrderMigrations } from "./db/migrateOrders.js";
+import { startOrderSync, stopOrderSync } from "./erp/orderSync.js";
+import { erpWebhookRoutes } from "./routes/erp-webhook.js";
 import { notifyRoutes } from "./routes/notify.js";
 import { startErpSync, stopErpSync } from "./erp/syncWorker.js";
 
@@ -64,6 +67,7 @@ async function bootDatabase(app: ReturnType<typeof Fastify>): Promise<void> {
     await runMigrations(db);
     await runStockMigrations(db);
     await runErpStockMigrations(db);
+    await runOrderMigrations(db);
     await runNotifyMigrations(db);
     const n = await seedLeads(db);
     app.log.info({ seeded: n }, "database ready (migrated + seeded)");
@@ -132,6 +136,8 @@ async function main(): Promise<void> {
 
   // Kabar Pesanan: customer order notifications (config + test pipeline, stub channel by default).
   await app.register(notifyRoutes);
+  // Kabar Pesanan WP-2: Selaras push receiver (503 until ERP_WEBHOOK_SECRET is set).
+  await app.register(erpWebhookRoutes);
 
   // [A] Scraper APIs.
   await app.register(enrichRoutes);
@@ -190,6 +196,9 @@ async function main(): Promise<void> {
   // [STK 2.0] ERP mirror poll. Self-guards on hasErp/hasDatabase, so it is safe
   // unconditionally: with no ERP configured it logs once and does nothing.
   startErpSync();
+  // Kabar Pesanan WP-2: 60 s order lane (1202/1236/1082/1205 + 1130). Same
+  // self-guarding: without ERP credentials or a database it logs and stays off.
+  startOrderSync();
 
   try {
     await app.listen({ host: config.host, port: config.port });
@@ -215,6 +224,7 @@ async function main(): Promise<void> {
     // in which the replacement process declined every tick and /stock told the
     // operator to confirm with PPIC about an ERP that was perfectly healthy.
     // It never throws, and it releases only rows this process owns.
+    await stopOrderSync();
     const erp = await stopErpSync();
     app.log.info({ ...erp }, "erp sync stopped");
     await closeDatabase();

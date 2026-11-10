@@ -196,13 +196,15 @@ packages/core         pure IP (phone normalization → E.164, scraping)
 
 All additive; migrations run on boot. ✅ = built.
 
-**Mirror extensions (WP-1 / WP-2)**
-- `erp_so_header` + `po_no` (fixes the key ✅), `customer_name_id`, `customer_final`, `buyer_name`, `penerima`, `kontak_penerima`, `alamat_kirim`, `top_limit`, `top_limit_value`, `approval_new`, `created_at_erp`, `deleted_at`.
+**Mirror extensions (WP-1 / WP-2)** ✅
+- `erp_so_header` + `po_no` (fixes the key), `customer_name_id`, `customer_final_id`, `buyer_name_id`, `sales_name_id`, `penerima`, `kontak_penerima`, `alamat_kirim`, `top_limit`, `top_limit_value`, `approval_new`, `erp_created_at`. (A header deleted upstream is removed, as the stock sync always did.)
 - `erp_so_line` + `po_no` (the join key, replacing `so_id`) ✅.
-- `erp_do_header` ← `tbl_1082`: `id`, `so_no`, `no_sj`, `sj_date`, `do_created_at`, `cara_kirim`, `cancel_order`, `print_status`, `top`, `top_days`, `due_date`, `invoice_no`, `customer_name_id`, `total_lembar`, `total_m2`, `erp_updated_at`.
-- `erp_do_line` ← `tbl_1205`: `id`, `po_no`, `so_item_no`, `sj_id`, `sj_date`, `sn_fg`, `item_details`, `qty_delivered`, `erp_updated_at`.
-- `erp_request_produksi` ← `tbl_1236`: `id`, `so_no`, `so_ms`, `wo_no`, `no_request`, `tanggal_request`, SKU columns, `qty_lembar`, `erp_updated_at`.
-- `erp_sales` ← `tbl_1130`: `id`, `sales_name`, `department`, `active` (feeds the CC list; picks up a phone column automatically if Selaras adds one).
+- `erp_do_header` ← `tbl_1082`: `id`, `so_no`, `no_sj`, `sj_date`, `do_created_at`, `cara_kirim`, `cancel_order`, `print_status`, `top`, `top_days`, `due_date`, `invoice_no`, `customer_name_id`, `customer_name_text`, `total_lembar`, `total_m2`, `erp_created_at`, `erp_updated_at`, `deleted_at`.
+- `erp_do_line` ← `tbl_1205`: `id`, `po_no`, `so_item_no`, `sj_id` (Selaras `sj_no`, the 1082 row id), `do_text`, `sj_date`, `sn_fg`, `item_details`, `qty_delivered`, timestamps, `deleted_at`.
+- `erp_request_produksi` ← `tbl_1236`: `id`, `so_no`, `so_ms`, `wo_no`, `no_request`, `tanggal_request`, `brand`/`warna` (+ `_text`), `th_panel` (1236 `th_alu_skin`), `th_skin` (1236 `alu`), `qty_lembar`, timestamps, `deleted_at`.
+- `erp_sales` ← `tbl_1130`: `id`, `sales_name`, `department`, `active`, `phone` (NULL today; filled automatically if Selaras adds a phone column).
+- Order-table rows deleted upstream are **kept** with `deleted_at`, so WP-3 can derive `do.cancelled`.
+- Sync state lives in `erp_order_sync_state` (one row per table and cursor field) and `erp_order_sync_lease`, apart from the stock sync's `erp_sync_state`.
 - Later: `erp_wo_output` ← `1190` (`request_id`, `status_automatic`, `production_date`); `erp_customer` ← `1054`; `erp_customer_pic` ← `1055`.
 
 **Events**
@@ -408,13 +410,15 @@ Each WP is independently testable. The order is the dependency order.
   - One-time full re-pull of both tables.
   - Test: fixture rows with `po_no` populate both, and the line→header join is non-null.
   - Must not change ATP results (assert in `atp.test.ts`).
-- **WP-2. Mirror extensions + fast lane.**
-  - Add `do_header` (1082), `do_line` (1205), `request_produksi` (1236) and `sales` (1130) to `SYNC_TABLES` with adapters (field names from Appendix A).
-  - A 60 s fast lane for 1202, 1236 and 1082 (§5.0), separate from the 180 s stock sync.
-  - An `/api/erp/webhook` receiver (HMAC, re-reads the row by id), ready for when Selaras ships webhooks.
-  - Extend the 1202 header columns.
-  - Cursor on `updated_at`, plus `created_at` safety for 1236.
-  - Contract fixtures from real rows (masked).
+- **WP-2. Mirror extensions + fast lane.** ✅ (`erp/orderTables.ts`, `erp/orderSync.ts`, `db/migrateOrders.ts`, `routes/erp-webhook.ts`; tests in `test/orderLane.test.ts`)
+  - `do_header` (1082), `do_line` (1205), `request_produksi` (1236) and `sales` (1130) mirrored with adapters (field names from Appendix A). **Built as a separate order lane, not in `SYNC_TABLES`**: the stock sync's lock, freshness alarm and purge sweep are scoped to stock, and a DO-table outage must not raise stock alarms.
+  - 60 s lane for 1202, 1236, 1082 and 1205 (§5.0); 1130 every 30th tick. Own lease, so a second replica can't double-run it. Separate from the 180 s stock sync.
+  - An empty cursor starts `ERP_ORDER_BACKFILL_DAYS` (60) back instead of pulling all history (78k DOs, 143k DO lines).
+  - `POST /api/erp/webhook` (HMAC-SHA256 of the raw body in `x-selaras-signature`; payload `{table, id, action}` is only a pointer, and the row is re-read from the ERP). 503 until `ERP_WEBHOOK_SECRET` is set.
+  - 1202 header columns extended; the first boot re-pulls the header table once to fill them.
+  - Cursor on `updated_at`, plus a `created_at` cursor for 1236.
+  - Consumers subscribe with `onOrderRows()` and receive the ids written per run (WP-3 hooks in here).
+  - **Not done:** contract fixtures from real rows (masked). This needs ERP access; the fixtures in `orderLane.test.ts` follow the verified field names.
 - **WP-3. Event deriver** (`src/events/derive.ts`, `migrateEvents.ts`).
   - After each successful sync batch, derive `so.created`, `production.requested`, `do.created`, `do.cancelled` and `so.late` from the rows touched.
   - `insert … on conflict (event_key) do nothing`.
@@ -531,8 +535,11 @@ API: `GET {base}/table/{t}?col=val&col__gte=…&fields=…&order_by=…&limit=�
 | `NOTIFY_LIVE` | `off` | `off` / `shadow` / `on` (WP-4) |
 | `NOTIFY_DISPATCH_INTERVAL_MS` | 15000 | Dispatcher tick (WP-4) |
 | `NOTIFY_HOLD_MV1_MIN` / `_MV2_MIN` / `_MV3_MIN` | 10 / 0 / 0 | Holds (WP-4); 0 = send on detection |
-| `ERP_FAST_POLL_MS` | 60000 | Fast lane for 1202/1236/1082 (WP-2) |
-| `ERP_WEBHOOK_SECRET` | — | HMAC secret for Selaras webhooks (WP-2) |
+| `ERP_FAST_POLL_MS` | 60000 | Order lane for 1202/1236/1082/1205; 0 disables it ✅ |
+| `ERP_ORDER_SLOW_EVERY_TICKS` | 30 | Rep master (1130) read every Nth tick ✅ |
+| `ERP_ORDER_BACKFILL_DAYS` | 60 | Where an empty order-lane cursor starts ✅ |
+| `ERP_ORDER_PAGE_SIZE` / `ERP_ORDER_MAX_PAGES_PER_TICK` | 500 / 20 | Order-lane paging ✅ |
+| `ERP_WEBHOOK_SECRET` | — | HMAC secret for Selaras webhooks; empty ⇒ webhook 503 ✅ |
 | `NOTIFY_DAILY_CAP_PER_PHONE` | 3 | Cap (WP-4) |
 | `SELARAS_*` | existing | ERP access (shared with the stock sync) |
 

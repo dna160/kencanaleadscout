@@ -81,6 +81,31 @@ export const SELARAS_ENDPOINTS: Record<SelarasTable, string> = {
 };
 
 /**
+ * Kabar Pesanan (WP-2): the order-to-cash tables the ORDER lane mirrors. They
+ * are deliberately NOT in `SYNC_TABLES`: the stock sync's lock, freshness alarm
+ * and reconciliation sweep are scoped to the four stock tables, and an outage
+ * on a delivery-order table must not page anyone about stock (or vice versa).
+ * Field meanings: docs/ontology/SELARAS-ONTOLOGY.md (verified 2026-11-10).
+ */
+export const ORDER_TABLES = ["do_header", "do_line", "request_produksi", "sales"] as const;
+export type OrderTable = (typeof ORDER_TABLES)[number];
+
+export const ORDER_ENDPOINTS: Record<OrderTable, string> = {
+  do_header: "tbl_1082_SOLogisticPID",
+  do_line: "tbl_1205_SOSalesOrderDeliveryNID",
+  request_produksi: "tbl_1236_DBRequestProduksiID",
+  sales: "tbl_1130_CRMListSalesID",
+};
+
+/** Any table this client can read: the stock four plus the order tables. */
+export type ErpTable = SelarasTable | OrderTable;
+
+/** Logical name → ERP table name, for either family. */
+export function endpointOf(table: ErpTable): string {
+  return (SELARAS_ENDPOINTS as Record<string, string>)[table] ?? ORDER_ENDPOINTS[table as OrderTable];
+}
+
+/**
  * The path segment rows are read from. `GET <base>/table/{table}`, with
  * `<base>/tables` and `<base>/table/{table}/columns` as the two sibling
  * endpoints the sync does not use.
@@ -125,6 +150,26 @@ export interface SoHeaderRow extends MirrorRowBase {
   sales_name_text: string | null;
   po_date: string | null; // 'YYYY-MM-DD'; the column is `date`
   status_order: string | null;
+  // ── Kabar Pesanan (WP-2). Who receives the goods, who sold it, on what terms.
+  /** `customer_name` raw id (→ tbl_1054). */
+  customer_name_id: string | null;
+  /** `customer_final` raw id; differs from `customer_name` on ~0.1% of SOs (distributor direct-ship). */
+  customer_final_id: string | null;
+  /** `buyer_name` raw id (→ tbl_1055 PIC). */
+  buyer_name_id: string | null;
+  /** `sales_name` raw id (→ tbl_1130). The rep CC'd on customer messages (D9). */
+  sales_name_id: string | null;
+  /** Recipient name, used in the greeting. */
+  penerima: string | null;
+  /** Recipient phone(s) as typed ("Telepon"); may hold two numbers. PII. */
+  kontak_penerima: string | null;
+  alamat_kirim: string | null;
+  /** Payment term as of the SO ("Pembayaran"), e.g. "Cash before Delivery". */
+  top_limit: string | null;
+  top_limit_value: number | null;
+  /** The LIVE header approval {Approved, Waiting}. Header `approval` is dead. */
+  approval_new: string | null;
+  erp_created_at: Date | null;
   erp_updated_at: Date | null;
 }
 
@@ -424,7 +469,7 @@ export function resetShapeNotices(): void {
   noticedShapes.clear();
 }
 
-function noticeShape(table: SelarasTable, env: SelarasEnvelope): void {
+function noticeShape(table: ErpTable, env: SelarasEnvelope): void {
   if (env.matchedAssumption) return;
   const key = `${table}:${env.shape}`;
   if (noticedShapes.has(key)) return;
@@ -452,7 +497,7 @@ export function resetAuthNotices(): void {
   noticedAuthFailures.clear();
 }
 
-function noticeAuthFailure(table: SelarasTable, status: number): void {
+function noticeAuthFailure(table: ErpTable, status: number): void {
   const key = `${table}:${status}`;
   if (noticedAuthFailures.has(key)) return;
   noticedAuthFailures.add(key);
@@ -486,16 +531,16 @@ function failureKind(status: number): SelarasFailureKind {
   return "other";
 }
 
-function describeClientError(table: SelarasTable, status: number): string {
+function describeClientError(table: ErpTable, status: number): string {
   if (status === 401 || status === 403) {
     noticeAuthFailure(table, status);
     return `HTTP ${status} from ERP — credentials rejected (auth mode '${config.selarasAuthMode}'); see the [selaras] line above`;
   }
   if (status === 400) {
-    return `HTTP 400 from ERP — the request was refused, most likely an unknown filter or order_by column for '${SELARAS_ENDPOINTS[table]}' (GET <base>/table/${SELARAS_ENDPOINTS[table]}/columns lists them)`;
+    return `HTTP 400 from ERP — the request was refused, most likely an unknown filter or order_by column for '${endpointOf(table)}' (GET <base>/table/${endpointOf(table)}/columns lists them)`;
   }
   if (status === 404) {
-    return `HTTP 404 from ERP — no such endpoint. Rows come from <base>/table/${SELARAS_ENDPOINTS[table]}; check SELARAS_BASE_URL ends at /api`;
+    return `HTTP 404 from ERP — no such endpoint. Rows come from <base>/table/${endpointOf(table)}; check SELARAS_BASE_URL ends at /api`;
   }
   return `HTTP ${status} from ERP`;
 }
@@ -504,9 +549,9 @@ function describeClientError(table: SelarasTable, status: number): string {
  * The message a page that ran out of 429 retries carries. Says what was tried,
  * so the log distinguishes "we gave up after backing off" from "we never tried".
  */
-function describeRateLimit(table: SelarasTable, attempts: number, waitedMs: number): string {
+function describeRateLimit(table: ErpTable, attempts: number, waitedMs: number): string {
   return (
-    `HTTP 429 from ERP — rate limited on '${SELARAS_ENDPOINTS[table]}' and still limited after ` +
+    `HTTP 429 from ERP — rate limited on '${endpointOf(table)}' and still limited after ` +
     `${attempts} attempt(s) over ${Math.round(waitedMs / 100) / 10}s of backoff. Nothing is wrong with ` +
     `the request: this page is left for the next tick, which resumes from the last COMMITTED page. ` +
     `If this persists, lower STOCK_SYNC_PAGE_SIZE or raise STOCK_SYNC_PAGE_DELAY_MS`
@@ -518,10 +563,10 @@ function describeRateLimit(table: SelarasTable, attempts: number, waitedMs: numb
  * empty one: an empty page would advance the cursor past rows we never saw, and
  * the mirror would keep a stale commitment forever with nothing in the log.
  */
-function successFailure(table: SelarasTable, env: SelarasEnvelope): string {
+function successFailure(table: ErpTable, env: SelarasEnvelope): string {
   void env;
   return (
-    `ERP answered 200 with success=false for '${SELARAS_ENDPOINTS[table]}' — the ERP itself refused ` +
+    `ERP answered 200 with success=false for '${endpointOf(table)}' — the ERP itself refused ` +
     `the request, so the page fetched nothing, the cursor stays put and nothing was mirrored. This ` +
     `is an ERP-side error, NOT a client shape problem: check the ERP, not the envelope reader`
   );
@@ -1012,10 +1057,21 @@ export function adaptSoHeaderRow(raw: unknown): SoHeaderRow | null {
     id,
     po_no: poNo,
     so_number: poNo ?? asText(pick(row, "so_number", "soNumber", "no_so", "nomor_so", "no_order")),
-    customer_name_text: asText(pick(row, "customer_name_text", "customer_name", "customer", "nama_customer", "nama_pelanggan")),
-    sales_name_text: asText(pick(row, "sales_name_text", "sales_name", "sales", "nama_sales")),
+    customer_name_text: asText(pick(row, "customer_name_label", "customer_name_text", "customer_name", "customer", "nama_customer", "nama_pelanggan")),
+    sales_name_text: asText(pick(row, "sales_name_label", "sales_name_text", "sales_name", "sales", "nama_sales")),
     po_date: asDateOnly(pick(row, "po_date", "poDate", "tgl_po", "tanggal_po", "order_date")),
-    status_order: asText(pick(row, "status_order", "statusOrder", "status")),
+    status_order: asText(pick(row, "status_order_label", "status_order", "statusOrder", "status")),
+    customer_name_id: asText(pick(row, "customer_name")),
+    customer_final_id: asText(pick(row, "customer_final")),
+    buyer_name_id: asText(pick(row, "buyer_name")),
+    sales_name_id: asText(pick(row, "sales_name")),
+    penerima: asText(pick(row, "penerima")),
+    kontak_penerima: asText(pick(row, "kontak_penerima")),
+    alamat_kirim: asText(pick(row, "alamat_kirim")),
+    top_limit: asText(pick(row, "top_limit_label", "top_limit_text", "top_limit")),
+    top_limit_value: asNumber(pick(row, "top_limit_value")),
+    approval_new: asText(pick(row, "approval_new_label", "approval_new")),
+    erp_created_at: asTimestamp(pick(row, "created_at", "createdAt")),
     erp_updated_at: pickUpdatedAt(row),
     deleted_at: pickDeletedAt(row),
   };
@@ -1831,7 +1887,7 @@ type TransportResult =
  *
  * Resolves always; a transport error is a value, never an exception.
  */
-async function requestWithRetries(table: SelarasTable, url: string, opts: RetryOptions): Promise<TransportResult> {
+async function requestWithRetries(table: ErpTable, url: string, opts: RetryOptions): Promise<TransportResult> {
   const policy = ratePolicy(opts.rateLimit);
   const retryDelayMs = opts.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
   /** Attempts spent against a 429, and the total time they waited. */
@@ -2002,6 +2058,94 @@ export async function fetchPage<K extends SelarasTable>(
       rateLimited: res.rateLimited,
     },
   };
+}
+
+// ── Raw pages, for the order lane and the webhook (Kabar Pesanan WP-2) ───────
+
+export interface RawPageOptions {
+  /**
+   * Query parameters other than `limit` / `page`: filters (`col=val`,
+   * `col__gte=…`) and ordering. Auth is applied here, never by the caller.
+   */
+  params: Record<string, string>;
+  page: number;
+  limit: number;
+  dispatcher?: Dispatcher;
+  retryDelayMs?: number;
+  rateLimit?: Partial<RateLimitPolicy>;
+}
+
+export type RawPageResult =
+  | { ok: true; rows: Record<string, unknown>[]; totalPages: number | null; rateLimited: boolean }
+  | { ok: false; error: string; status: number | null; kind: SelarasFailureKind; retryable: boolean };
+
+/**
+ * One page of any ERP table, NOT adapted: the order lane owns its adapters
+ * (src/erp/orderTables.ts). Same transport, retry policy, envelope reader and
+ * `success:false` handling as `fetchPage()`, so the two can never drift apart
+ * on what counts as a failed page.
+ */
+export async function fetchRawPage(table: ErpTable, opts: RawPageOptions): Promise<RawPageResult> {
+  const base = config.selarasBaseUrl.replace(/\/+$/, "");
+  const url = new URL(`${base}/${TABLE_PATH}/${endpointOf(table)}`);
+  for (const [k, v] of Object.entries(opts.params)) url.searchParams.set(k, v);
+  url.searchParams.set("limit", String(opts.limit));
+  url.searchParams.set("page", String(opts.page));
+  applyQueryAuth(url);
+
+  const res = await requestWithRetries(table, url.toString(), opts);
+  if (!res.ok) {
+    const { ok: _ok, rateLimited: _rateLimited, ...failure } = res;
+    return { ok: false, ...failure };
+  }
+  let env: SelarasEnvelope;
+  try {
+    env = readEnvelope(res.body, opts.limit);
+  } catch (err) {
+    return { ok: false, error: redactSecrets(err), status: res.status, kind: "shape", retryable: false };
+  }
+  if (env.success === false) {
+    return { ok: false, error: successFailure(table, env), status: res.status, kind: "erp_error", retryable: false };
+  }
+  noticeShape(table, env);
+  return {
+    ok: true,
+    rows: env.rows.filter(isRecord),
+    totalPages: env.totalPages,
+    rateLimited: res.rateLimited,
+  };
+}
+
+/**
+ * The tolerant value readers every adapter uses, exported for the order-lane
+ * adapters so there is ONE rule for numbers, dates and blank strings.
+ */
+export const erpValue = {
+  foldKeys,
+  pick,
+  asText,
+  asNumber,
+  asNumberOr,
+  asDateOnly,
+  asTimestamp,
+  pickUpdatedAt,
+  pickDeletedAt,
+  isRecord,
+};
+
+/**
+ * `YYYY-MM-DD HH:mm:ss` from a mirrored timestamp, WITHOUT a zone shift.
+ *
+ * The adapters read the ERP's naive (WIB wall-clock) datetimes as if they were
+ * UTC (A18), so a stored `erp_updated_at` already holds the ERP's own wall-clock
+ * digits. Sending those digits back is the exact inverse; callers still
+ * subtract a lookback so a misread zone cannot skip rows.
+ */
+export function formatMirroredDatetime(instant: Date): string {
+  return (
+    `${instant.getUTCFullYear()}-${pad(instant.getUTCMonth() + 1)}-${pad(instant.getUTCDate())} ` +
+    `${pad(instant.getUTCHours())}:${pad(instant.getUTCMinutes())}:${pad(instant.getUTCSeconds())}`
+  );
 }
 
 // ── Key listing, for the reconciliation sweep ────────────────────────────────

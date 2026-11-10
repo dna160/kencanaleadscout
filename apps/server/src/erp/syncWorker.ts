@@ -405,7 +405,26 @@ function dedupeByKey<T>(rows: readonly T[], key: (row: T) => string): T[] {
  * It is sync bookkeeping, not mirrored content — the idempotency guarantee is
  * over the mirrored business columns and over ATP, neither of which reads it.
  */
-async function upsertSoHeaders(tx: AnySql, rows: readonly SoHeaderRow[]): Promise<number> {
+/** The Kabar Pesanan header columns (WP-2), written by both the stock sync and the order lane. */
+const SO_HEADER_ORDER_COLUMNS = [
+  "customer_name_id",
+  "customer_final_id",
+  "buyer_name_id",
+  "sales_name_id",
+  "penerima",
+  "kontak_penerima",
+  "alamat_kirim",
+  "top_limit",
+  "top_limit_value",
+  "approval_new",
+  "erp_created_at",
+] as const;
+
+/**
+ * Exported for the order lane (src/erp/orderSync.ts), which re-reads tbl_1202
+ * every 60 s: ONE upsert for the header, whichever loop fetched the row.
+ */
+export async function upsertSoHeaders(tx: AnySql, rows: readonly SoHeaderRow[]): Promise<number> {
   const batch = dedupeByKey(rows, (r) => r.id);
   if (batch.length === 0) return 0;
   await tx`
@@ -418,6 +437,7 @@ async function upsertSoHeaders(tx: AnySql, rows: readonly SoHeaderRow[]): Promis
       "sales_name_text",
       "po_date",
       "status_order",
+      ...SO_HEADER_ORDER_COLUMNS,
       "erp_updated_at",
     )}
     on conflict (id) do update set
@@ -427,6 +447,17 @@ async function upsertSoHeaders(tx: AnySql, rows: readonly SoHeaderRow[]): Promis
       sales_name_text    = excluded.sales_name_text,
       po_date            = excluded.po_date,
       status_order       = excluded.status_order,
+      customer_name_id   = excluded.customer_name_id,
+      customer_final_id  = excluded.customer_final_id,
+      buyer_name_id      = excluded.buyer_name_id,
+      sales_name_id      = excluded.sales_name_id,
+      penerima           = excluded.penerima,
+      kontak_penerima    = excluded.kontak_penerima,
+      alamat_kirim       = excluded.alamat_kirim,
+      top_limit          = excluded.top_limit,
+      top_limit_value    = excluded.top_limit_value,
+      approval_new       = excluded.approval_new,
+      erp_created_at     = excluded.erp_created_at,
       erp_updated_at     = excluded.erp_updated_at,
       synced_at          = now()
   `;

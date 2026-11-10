@@ -431,6 +431,31 @@ export const config = {
     diagnoseColumns: bool("STOCK_SYNC_DIAGNOSE_COLUMNS", true),
   },
 
+  // ── Kabar Pesanan order lane (PRD §5.0, WP-2) ────────────────────────────
+  // A separate, small sync for the order-to-cash tables (1202, 1236, 1082,
+  // 1205, 1130) so an order movement reaches LeadScout within ~1 minute. Kept
+  // apart from the 180 s stock sync: its own lease, cursors and errors.
+  orders: {
+    /** Fast-lane tick. 0 disables the lane entirely (the webhook still works). */
+    fastPollMs: intOrZero("ERP_FAST_POLL_MS", 60_000),
+    /** The rep master (1130, ~86 rows) is read every N ticks, not every tick. */
+    slowEveryTicks: int("ERP_ORDER_SLOW_EVERY_TICKS", 30),
+    /**
+     * Where an EMPTY cursor starts: this many days back, not the beginning of
+     * time. The lane needs live orders, not 78k historic DOs; and rules only fire
+     * after the activation watermark anyway (PRD §5.1).
+     */
+    backfillDays: int("ERP_ORDER_BACKFILL_DAYS", 60),
+    pageSize: int("ERP_ORDER_PAGE_SIZE", 500),
+    /** Bound on pages per table per tick; the cursor resumes from the last row read. */
+    maxPagesPerTick: int("ERP_ORDER_MAX_PAGES_PER_TICK", 20),
+    /**
+     * HMAC-SHA256 secret for POST /api/erp/webhook (header x-selaras-signature,
+     * hex of the raw body). Empty ⇒ the webhook answers 503. SECRET.
+     */
+    webhookSecret: str("ERP_WEBHOOK_SECRET"),
+  },
+
   // ── Kabar Pesanan / customer notifications (docs/customer-notifications) ──
   notify: {
     /**
