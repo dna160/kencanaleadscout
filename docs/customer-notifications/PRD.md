@@ -626,7 +626,9 @@ DATABASE_URL=postgres://$USER@localhost:55432/leadscout_test npx vitest run
 - Suites that change `notify_settings` hold `test/helpers/settingsLock.ts` for their whole run.
 - `events.test.ts` sweeps the whole mirror, so other suites' orders become events. Dispatcher tests use a large batch so that doesn't push their own rows to a second tick.
 
-Last full run on this branch: 593 passed (Postgres 16) and 13 gateway tests.
+- Before merging, run the suite once against a **freshly created** database as well as a long-lived one. Row order and first-time migrations differ. The dispatcher's processing-order bug (fixed in `6d7d707`) failed only on a fresh database.
+
+Last full run (merged `main`): 593 passed on three fresh databases and on a long-lived one (Postgres 16); 243 passed without a database; 13 gateway tests passed with the race detector.
 
 ### 19.6 Manual checks
 
