@@ -125,6 +125,60 @@
   .qr .code svg{width:100%;height:100%}
   .big{font-size:28px;font-weight:800}
   .gate-ok{color:var(--ok-ink)} .gate-no{color:var(--neg-ink)}
+
+  /* "Pesan" tab — WhatsApp-Web-style conversations */
+  .tabs .badge{display:inline-block;min-width:18px;padding:0 5px;margin-left:6px;border-radius:999px;background:#25d366;color:#fff;font-size:11px;font-weight:800;line-height:18px;text-align:center}
+  .chat{display:grid;grid-template-columns:330px 1fr;grid-template-rows:minmax(0,1fr);height:calc(100vh - 230px);min-height:460px;background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  .chat-list{display:flex;flex-direction:column;border-right:1px solid var(--line);min-width:0;min-height:0}
+  .chat-search{padding:10px;border-bottom:1px solid var(--line);background:#f6f7f9}
+  .chat-search input{border-radius:999px;min-height:38px;padding:8px 14px}
+  .chat-items{overflow-y:auto;flex:1;min-height:0}
+  .chat-item{display:flex;gap:10px;align-items:center;width:100%;text-align:left;font:inherit;background:none;border:none;border-bottom:1px solid #f0f2f5;padding:10px 12px;cursor:pointer;min-height:64px;color:var(--ink)}
+  .chat-item:hover{background:#f5f6f6}
+  .chat-item[aria-current=true]{background:#e9edef}
+  .avatar{flex:none;width:42px;height:42px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:15px;color:#fff;background:#8696a0}
+  .avatar.rep{background:#157a46} .avatar.cust{background:#9b2226}
+  .ci-main{flex:1;min-width:0}
+  .ci-top{display:flex;justify-content:space-between;gap:6px;align-items:baseline}
+  .ci-name{font-weight:600;font-size:14.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ci-time{font-size:11.5px;color:var(--muted);flex:none}
+  .ci-time.unread{color:#1fa855;font-weight:700}
+  .ci-bottom{display:flex;justify-content:space-between;gap:6px;align-items:center;margin-top:2px}
+  .ci-prev{font-size:13px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ci-unread{flex:none;min-width:20px;height:20px;border-radius:999px;background:#25d366;color:#fff;font-size:11.5px;font-weight:800;display:flex;align-items:center;justify-content:center;padding:0 6px}
+  .chat-pane{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden;background:var(--wa-bg)}
+  .chat-head{display:flex;align-items:center;gap:10px;padding:8px 12px;background:#f0f2f5;border-bottom:1px solid var(--line);min-height:58px}
+  .chat-head .back{display:none;font:inherit;font-size:20px;background:none;border:none;cursor:pointer;min-width:var(--tap);min-height:var(--tap)}
+  .chat-head .who{flex:1;min-width:0}
+  .chat-head .who b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .chat-head .who span{font-size:12px;color:var(--muted)}
+  .chat-thread{flex:1;min-height:0;overflow-y:auto;padding:14px 6%;display:flex;flex-direction:column;gap:3px}
+  .day{align-self:center;background:#fff;color:#54656f;font-size:12px;padding:4px 10px;border-radius:8px;margin:10px 0 6px;box-shadow:0 1px 1px rgba(0,0,0,.06)}
+  .msg{max-width:min(560px,82%);padding:6px 8px 4px;border-radius:8px;font-size:14px;line-height:1.4;box-shadow:0 1px 1px rgba(0,0,0,.08);white-space:pre-wrap;word-wrap:break-word;position:relative}
+  .msg.m-in{align-self:flex-start;background:#fff;border-top-left-radius:0}
+  .msg.m-out{align-self:flex-end;background:var(--wa-out);border-top-right-radius:0}
+  .msg.m-out.sys{background:#fff7d6}
+  .msg.m-out.bad{background:#fde8e8}
+  .msg .tag{display:block;font-size:11px;font-weight:700;color:#027eb5;margin-bottom:2px;white-space:normal}
+  .msg .foot{display:flex;justify-content:flex-end;gap:4px;align-items:center;font-size:11px;color:#667781;margin-top:2px;white-space:nowrap}
+  .tick{font-weight:700;letter-spacing:-2px}
+  .tick.read{color:#53bdeb}
+  .chat-compose{display:flex;gap:8px;align-items:flex-end;padding:8px 12px;background:#f0f2f5;border-top:1px solid var(--line)}
+  .chat-compose textarea{flex:1;font:inherit;font-size:14px;border:none;border-radius:10px;padding:10px 12px;resize:none;max-height:140px;min-height:42px;background:#fff;color:var(--ink)}
+  .chat-compose textarea:focus-visible{outline:3px solid var(--focus);outline-offset:1px}
+  .chat-compose .send{flex:none;width:46px;height:46px;border-radius:50%;border:none;background:#00a884;color:#fff;font-size:18px;cursor:pointer}
+  .chat-compose .send:disabled{background:#b5c3c0;cursor:not-allowed}
+  .chat-blocked{padding:10px 14px;background:#f0f2f5;border-top:1px solid var(--line);font-size:13px;color:var(--ink-2);text-align:center}
+  .chat-empty{flex:1;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;color:var(--muted);text-align:center;padding:24px}
+  @media (max-width: 760px){
+    .chat{grid-template-columns:1fr;height:calc(100vh - 210px)}
+    .chat.open .chat-list{display:none}
+    /* An open conversation takes the whole screen, as on WhatsApp mobile. */
+    .chat.open{position:fixed;inset:0;z-index:40;height:auto;min-height:0;border:none;border-radius:0}
+    .chat:not(.open) .chat-pane{display:none}
+    .chat-head .back{display:block}
+    .chat-thread{padding:12px 10px}
+  }
 </style>
 </head>
 <body>
@@ -143,6 +197,7 @@
 
   <nav class="tabs" role="tablist">
     <button role="tab" aria-selected="true" aria-controls="p-live" id="t-live">Live</button>
+    <button role="tab" aria-selected="false" aria-controls="p-chat" id="t-chat">Pesan<span class="badge" id="chatBadge" hidden></span></button>
     <button role="tab" aria-selected="false" aria-controls="p-queue" id="t-queue">Antrian</button>
     <button role="tab" aria-selected="false" aria-controls="p-shadow" id="t-shadow">Shadow</button>
     <button role="tab" aria-selected="false" aria-controls="p-sales" id="t-sales">Sales CC</button>
@@ -171,6 +226,19 @@
     <div class="card">
       <h2>Sinkron ERP (jalur pesanan)</h2>
       <div class="tblwrap" id="laneBody"><div class="empty">Memuat…</div></div>
+    </div>
+  </section>
+
+  <!-- ── Pesan: WhatsApp-style conversations ───────────────────────── -->
+  <section id="p-chat" class="panel" role="tabpanel" aria-labelledby="t-chat" hidden>
+    <div class="chat" id="chatRoot">
+      <div class="chat-list">
+        <div class="chat-search"><input id="chatQ" type="search" autocomplete="off" placeholder="Cari nama, nomor, SO…" aria-label="Cari percakapan" /></div>
+        <div class="chat-items" id="chatItems" role="list"><div class="empty">Memuat…</div></div>
+      </div>
+      <div class="chat-pane" id="chatPane">
+        <div class="chat-empty"><b>Kabar Pesanan</b>Pilih percakapan untuk melihat pesan.</div>
+      </div>
     </div>
   </section>
 
@@ -344,9 +412,9 @@
   }
 
   // Tabs
-  const tabs = [["t-live", "p-live"], ["t-queue", "p-queue"], ["t-shadow", "p-shadow"], ["t-sales", "p-sales"],
+  const tabs = [["t-live", "p-live"], ["t-chat", "p-chat"], ["t-queue", "p-queue"], ["t-shadow", "p-shadow"], ["t-sales", "p-sales"],
     ["t-cust", "p-cust"], ["t-pipe", "p-pipe"], ["t-cfg", "p-cfg"], ["t-log", "p-log"]];
-  const loaders = { "p-live": () => loadLive(), "p-queue": () => loadQueue(), "p-shadow": () => loadShadow(),
+  const loaders = { "p-live": () => loadLive(), "p-chat": () => loadChats(), "p-queue": () => loadQueue(), "p-shadow": () => loadShadow(),
     "p-sales": () => loadSales(), "p-cust": () => loadOverrides(), "p-log": () => loadLog() };
   tabs.forEach(([t, p]) => $(t).addEventListener("click", () => {
     tabs.forEach(([t2, p2]) => { $(t2).setAttribute("aria-selected", String(t2 === t)); $(p2).hidden = p2 !== p; });
@@ -502,7 +570,7 @@
   const fmtTime = (v) => v ? new Date(v).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" }) : "–";
   const STEP = { so_received: "Pesanan diterima", production_started: "Mulai produksi", delivery_scheduled: "Pengiriman dijadwalkan",
     do_cancelled_notice: "DO dibatalkan (ke sales)", stop_ack: "Konfirmasi STOP", start_ack: "Konfirmasi MULAI",
-    reply_forward: "Teruskan balasan", auto_reply: "Balasan otomatis" };
+    reply_forward: "Teruskan balasan", auto_reply: "Balasan otomatis", manual_reply: "Balasan admin" };
   const MODE_TEXT = { off: "MATI — tidak ada pesan", shadow: "SHADOW — hanya ke sales", on: "LIVE — ke pelanggan + CC sales" };
   const tokenHint = () => CFG && CFG.adminTokenRequired && !store.get("notifyToken") ? " Isi token admin di tab Konfigurasi untuk mengubah." : "";
   let LIVE = null;
@@ -568,6 +636,154 @@
       renderPair._t = setTimeout(() => { if (!$("p-live").hidden) loadLive(); }, Math.max(10, (r.expiresIn || 20)) * 1000);
     } catch (e) { box.innerHTML = `<p style="margin:0;color:var(--neg-ink)">${esc(e.message)}${esc(tokenHint())}</p>`; }
   }
+
+  // ── Pesan: WhatsApp-style conversations ──────────────────────────────────
+  let CHATS = [];
+  let ACTIVE = null;      // E.164 of the open conversation
+  let THREAD_SIG = "";    // to avoid re-rendering (and losing scroll) when nothing changed
+  const localNo = (e164) => { const l = String(e164 || "").replace(/^\+62/, "0"); return l.length >= 10 ? `${l.slice(0, 4)}-${l.slice(4, 8)}-${l.slice(8)}` : l; };
+  const initials = (s) => String(s || "?").replace(/^(PT|CV|UD|TOKO|BP\.?|IBU)\s+/i, "").split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "#";
+  const sameDay = (a, b) => a.toDateString() === b.toDateString();
+  const chatTime = (v) => {
+    const d = new Date(v), now = new Date();
+    if (sameDay(d, now)) return d.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
+    const y = new Date(now); y.setDate(now.getDate() - 1);
+    if (sameDay(d, y)) return "Kemarin";
+    return d.toLocaleDateString("id-ID", { day: "2-digit", month: "2-digit", year: "2-digit" });
+  };
+  const dayLabel = (d) => {
+    const now = new Date(), y = new Date(now); y.setDate(now.getDate() - 1);
+    if (sameDay(d, now)) return "Hari ini";
+    if (sameDay(d, y)) return "Kemarin";
+    return d.toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  };
+  const chatName = (c) => c.rep_name ? `${c.rep_name} (sales)` : (c.customer || localNo(c.phone));
+  const tagFor = (m) => {
+    const step = STEP[m.milestone] || m.milestone;
+    if (m.milestone === "manual_reply") return `Balasan admin${m.by ? " · " + m.by : ""}`;
+    const parts = [step];
+    if (m.mode === "shadow") parts.unshift("SHADOW");
+    if (m.mode === "test") parts.unshift("UJI");
+    if (m.recipient_role === "sales_cc" && !/^(reply_forward|do_cancelled_notice)$/.test(m.milestone)) parts.push("salinan sales");
+    if (m.so_no) parts.push(m.so_no);
+    return parts.join(" · ");
+  };
+  const ticks = (m) => {
+    if (m.status === "failed") return '<span title="Gagal">⚠️</span>';
+    if (m.status === "held") return '<span title="Ditahan">⏸</span>';
+    if (m.status === "stubbed") return '<span title="Mode stub: tidak benar-benar dikirim">⌁</span>';
+    if (m.read_at) return '<span class="tick read" title="Dibaca">✓✓</span>';
+    if (m.delivered_at) return '<span class="tick" title="Terkirim ke perangkat">✓✓</span>';
+    if (m.status === "queued") return '<span title="Antre di gateway">🕓</span>';
+    return '<span class="tick" title="Terkirim">✓</span>';
+  };
+
+  async function loadChats() {
+    try {
+      const q = $("chatQ").value.trim();
+      const r = await api("/api/notify/chats" + (q ? "?q=" + encodeURIComponent(q) : ""));
+      CHATS = r.rows;
+      setChatBadge(r.unreadTotal);
+      renderChatList();
+      if (ACTIVE) loadThread(ACTIVE, false);
+    } catch (e) { $("chatItems").innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+  }
+  function setChatBadge(n) { const b = $("chatBadge"); b.hidden = !n; b.textContent = n > 99 ? "99+" : String(n || ""); }
+  function renderChatList() {
+    $("chatItems").innerHTML = !CHATS.length ? '<div class="empty">Belum ada percakapan.</div>' : CHATS.map((c) => `
+      <button type="button" class="chat-item" role="listitem" data-chat="${esc(c.phone)}" aria-current="${c.phone === ACTIVE}">
+        <span class="avatar ${c.rep_name ? "rep" : "cust"}" aria-hidden="true">${esc(initials(c.rep_name || c.customer))}</span>
+        <span class="ci-main">
+          <span class="ci-top"><span class="ci-name">${esc(chatName(c))}</span><span class="ci-time ${c.unread ? "unread" : ""}">${esc(chatTime(c.at))}</span></span>
+          <span class="ci-bottom"><span class="ci-prev">${c.dir === "out" ? "✓ " : ""}${c.consent === "opted_out" ? "🚫 " : ""}${esc(String(c.text || "").replace(/\s+/g, " ").slice(0, 90))}</span>
+          ${c.unread ? `<span class="ci-unread" aria-label="${c.unread} belum dibaca">${c.unread}</span>` : ""}</span>
+        </span>
+      </button>`).join("");
+    document.querySelectorAll("[data-chat]").forEach((b) => b.addEventListener("click", () => openChat(b.dataset.chat)));
+  }
+  async function openChat(phone) {
+    ACTIVE = phone; THREAD_SIG = "";
+    $("chatRoot").classList.add("open");
+    document.querySelectorAll("[data-chat]").forEach((b) => b.setAttribute("aria-current", String(b.dataset.chat === phone)));
+    await loadThread(phone, true);
+    try { await api(`/api/notify/chats/${encodeURIComponent(phone)}/read`, { method: "POST", body: "{}" }); } catch {}
+    const c = CHATS.find((x) => x.phone === phone);
+    if (c && c.unread) { c.unread = 0; renderChatList(); loadChats(); }
+  }
+  async function loadThread(phone, scrollToEnd) {
+    let t;
+    try { t = await api(`/api/notify/chats/${encodeURIComponent(phone)}`); }
+    catch (e) { $("chatPane").innerHTML = `<div class="chat-empty">${esc(e.message)}</div>`; return; }
+    if (phone !== ACTIVE) return;
+    const sig = JSON.stringify([t.messages.map((m) => [m.dir, m.id, m.status, m.delivered_at, m.read_at]), t.canReply]);
+    if (sig === THREAD_SIG) return;
+    THREAD_SIG = sig;
+    const c = CHATS.find((x) => x.phone === phone) || {};
+    const prevThread = document.getElementById("chatThread");
+    const atBottom = !prevThread || prevThread.scrollHeight - prevThread.scrollTop - prevThread.clientHeight < 40;
+    const draft = document.getElementById("chatText") ? document.getElementById("chatText").value : "";
+    let lastDay = null;
+    const body = t.messages.map((m) => {
+      const d = new Date(m.at);
+      const sep = !lastDay || !sameDay(d, lastDay) ? `<div class="day">${esc(dayLabel(d))}</div>` : "";
+      lastDay = d;
+      const time = d.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
+      if (m.dir === "in") {
+        const note = m.action && m.action !== "unmatched" ? `<span class="tag" style="color:#54656f">${esc({ opted_out: "STOP — berhenti", opted_in: "MULAI — aktif lagi", shadow_grade: "Penilaian shadow", forwarded: "Diteruskan ke sales", unresolved: "Nomor tidak dikenal" }[m.action] || m.action)}${m.so_no ? " · " + esc(m.so_no) : ""}</span>` : "";
+        return sep + `<div class="msg m-in">${note}${esc(m.text)}<div class="foot">${time}</div></div>`;
+      }
+      const sys = /^(stop_ack|start_ack|auto_reply|reply_forward|do_cancelled_notice)$/.test(m.milestone) || m.recipient_role === "sales_cc";
+      const bad = m.status === "failed" || m.status === "held";
+      const why = bad && (m.error || m.cancel_reason) ? `\n— ${m.error || m.cancel_reason}` : "";
+      return sep + `<div class="msg m-out ${sys ? "sys" : ""} ${bad ? "bad" : ""}"><span class="tag">${esc(tagFor(m))}</span>${waFormat(m.text)}${esc(why)}<div class="foot">${time} ${ticks(m)}</div></div>`;
+    }).join("");
+    const tags = [c.rep_name ? "Sales" : "Pelanggan", t.optedOut ? "berhenti (STOP)" : null, c.so_no ? "SO " + c.so_no : null].filter(Boolean).join(" · ");
+    $("chatPane").innerHTML = `
+      <div class="chat-head">
+        <button type="button" class="back" id="chatBack" aria-label="Kembali ke daftar">←</button>
+        <span class="avatar ${c.rep_name ? "rep" : "cust"}" aria-hidden="true">${esc(initials(c.rep_name || c.customer))}</span>
+        <div class="who"><b>${esc(c.phone ? chatName(c) : localNo(phone))}</b><span>${esc(localNo(phone))}${tags ? " · " + esc(tags) : ""}</span></div>
+      </div>
+      <div class="chat-thread" id="chatThread">${body || '<div class="chat-empty">Belum ada pesan.</div>'}</div>
+      ${t.canReply ? `
+      <form class="chat-compose" id="chatForm">
+        <textarea id="chatText" rows="1" maxlength="2000" placeholder="Ketik balasan…" aria-label="Balasan"></textarea>
+        <button class="send" type="submit" aria-label="Kirim">➤</button>
+      </form>` : `<div class="chat-blocked">${esc(t.replyBlockedReason || "")}</div>`}`;
+    $("chatBack").addEventListener("click", () => { $("chatRoot").classList.remove("open"); ACTIVE = null; renderChatList(); });
+    const th = $("chatThread");
+    if (scrollToEnd || atBottom) th.scrollTop = th.scrollHeight;
+    const form = document.getElementById("chatForm");
+    if (form) {
+      const ta = $("chatText");
+      ta.value = draft;
+      const grow = () => { ta.style.height = "auto"; ta.style.height = Math.min(140, ta.scrollHeight) + "px"; };
+      ta.addEventListener("input", grow); grow();
+      ta.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); } });
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const text = ta.value.trim();
+        if (!text) return;
+        const btn = form.querySelector(".send"); btn.disabled = true;
+        try {
+          await api(`/api/notify/chats/${encodeURIComponent(phone)}/reply`, { method: "POST", body: JSON.stringify({ text }) });
+          ta.value = ""; THREAD_SIG = ""; await loadThread(phone, true); loadChats();
+        } catch (err) { toast(err.message + tokenHint()); btn.disabled = false; }
+      });
+      // preventScroll: focusing inside the overflow:hidden grid would otherwise scroll
+      // the grid itself, pushing the chat header and the list out of view.
+      if (scrollToEnd) ta.focus({ preventScroll: true });
+      $("chatRoot").scrollTop = 0;
+    }
+  }
+  let chatSearchT;
+  $("chatQ").addEventListener("input", () => { clearTimeout(chatSearchT); chatSearchT = setTimeout(loadChats, 250); });
+  // Keep it live: refresh while the tab is open; keep the unread badge current otherwise.
+  setInterval(() => {
+    if (document.hidden) return;
+    if (!$("p-chat").hidden) loadChats();
+    else api("/api/notify/chats?limit=1").then((r) => setChatBadge(r.unreadTotal)).catch(() => {});
+  }, 10000);
 
   // ── WP-6: Antrian ──────────────────────────────────────────────────────
   let VIEW = "pending";
@@ -732,6 +948,7 @@
     try {
       CFG = await api("/api/notify/config");
       renderBanner(); renderConfig(); renderPipeline(); loadLive();
+      api("/api/notify/chats?limit=1").then((r) => setChatBadge(r.unreadTotal)).catch(() => {});
     } catch (e) {
       $("modeBanner").className = "banner err";
       $("modeBanner").textContent = "Gagal memuat konfigurasi: " + e.message;

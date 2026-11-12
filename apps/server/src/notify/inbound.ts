@@ -48,8 +48,8 @@ export const START_ACK = "Notifikasi pesanan PT Kencana Panelindo telah diaktifk
 export function autoReplyText(repName: string | null, repWa: string | null): string {
   const who = repName ? `sales Anda, ${repName}${repWa ? ` (${repWa})` : ""}` : "sales Anda";
   return (
-    "Terima kasih atas pesan Anda. Nomor ini khusus untuk notifikasi pesanan dan tidak dipantau. " +
-    `Pesan Anda sudah kami teruskan ke ${who}.`
+    "Terima kasih atas pesan Anda. Nomor ini adalah nomor notifikasi pesanan PT Kencana Panelindo. " +
+    `Pesan Anda sudah kami terima dan kami teruskan ke ${who}; tim kami akan membalas bila diperlukan.`
   );
 }
 

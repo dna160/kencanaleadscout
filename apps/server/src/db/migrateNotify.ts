@@ -126,6 +126,16 @@ export async function runNotifyMigrations(db: Sql): Promise<void> {
   await db`alter table notify_settings add column if not exists gateway_detail   text`;
   await db`alter table notify_settings add column if not exists gateway_state_at timestamptz`;
 
+  // ── "Pesan" tab: when each conversation was last read on /notify ────────
+  await db`
+    create table if not exists notify_chat_reads (
+      phone_e164   text primary key,
+      last_read_at timestamptz not null default now(),
+      read_by      text
+    )
+  `;
+  await db`create index if not exists notify_inbound_unread_idx on notify_inbound (from_pn, received_at)`;
+
   // ── Rep phones for the sales CC (PRD §9.4, D9) ──────────────────────────
   // Keyed by the Selaras rep id (tbl_1130), vertical-agnostic. Falls away once
   // Selaras carries the phone itself (erp_sales.phone).

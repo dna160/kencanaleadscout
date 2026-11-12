@@ -14,7 +14,9 @@ const { GatewayAdmin } = await import("../src/notify/channel.js");
 describe("reply texts and the gateway admin client (pure)", () => {
   it("the auto-reply names the rep when known", () => {
     expect(autoReplyText("Free Antony", "0813-5600-0001")).toContain("sales Anda, Free Antony (0813-5600-0001)");
-    expect(autoReplyText(null, null)).toContain("ke sales Anda.");
+    expect(autoReplyText(null, null)).toContain("kami teruskan ke sales Anda;");
+    // Admins can now answer from the Pesan tab: the number must not claim to be unmonitored.
+    expect(autoReplyText("Free Antony", null)).not.toMatch(/tidak dipantau/);
     expect(forwardText("FITRAH JAYA", "+6281355000001", "SO.1", "sudah sampai mana?")).toBe(
       "💬 *Balasan pelanggan* — FITRAH JAYA (0813-5500-0001) · SO SO.1\n\nsudah sampai mana?",
     );

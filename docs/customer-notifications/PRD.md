@@ -339,7 +339,8 @@ Before the first send to a number, the gateway's `/check` runs (WhatsApp `IsOnWh
 
 ### 10.5 Inbound replies
 - STOP → opt-out.
-- Anything else → forwarded to the SO's rep (WA + LeadScout feed), with a polite auto-reply that names the rep and says this number isn't a CS inbox.
+- Anything else → forwarded to the SO's rep (WA + LeadScout feed), with at most one auto-reply per 24 h. The auto-reply names the rep and says the message was received and passed on.
+- **Admins can answer** from the `/notify` → Pesan tab (2026-11-12, owner decision; see §11). The auto-reply no longer says the number is unmonitored.
 - **Future:** an AI reply agent answering "pesanan saya sudah sampai mana?" from `order_events`. It is read-only and hands off to the rep.
 
 ---
@@ -356,6 +357,17 @@ Before the first send to a number, the gateway's `/check` runs (WhatsApp `IsOnWh
 - **Riwayat:** ledger with message bodies.
 
 **Built in WP-6 ✅** — tabs Live, Antrian, Shadow, Sales CC, Pelanggan (see §14 WP-6).
+
+**Pesan tab ✅ (2026-11-12)** — a WhatsApp-Web-style view of the notification number (`routes/notify-chat.ts`):
+- **Conversations:** one per phone number, newest first, searchable by name, number, SO or rep. It shows unread counts (and a badge on the tab), refreshes every 10 s, and marks a conversation read when opened.
+- **Thread:** everything sent to that number (notifications, rep copies, [SHADOW], test sends, system and admin replies) and everything received, in time order. Ticks come from the gateway receipts (✓ sent, ✓✓ delivered, blue ✓✓ read).
+- **Admin reply,** with guards:
+  - admin token required;
+  - **only to a number that has written in**, so it is an answer, not a way to message arbitrary numbers;
+  - never to an opted-out number;
+  - not while the kill switch is on.
+  - Every reply is logged in `notify_ledger` as `manual_reply`, with who sent it.
+- **Phone layout:** on a phone, an open conversation fills the screen.
 
 **Access.**
 - Today: `NOTIFY_ADMIN_TOKEN` on writes.
@@ -618,6 +630,7 @@ DATABASE_URL=postgres://$USER@localhost:55432/leadscout_test npx vitest run
 | `dispatcher.test.ts` | On / shadow / off; merge; DO cancelled before and after sending; unreachable; opt-out; shared number; exclusions; window; daily cap; stale events; mode change; retries; pause; kill switch; step off; release |
 | `waEvents.test.ts` | Receipts; STOP/MULAI; LID learning; shadow grading; reply forwarding; gateway state; pairing proxy |
 | `notifyAdmin.test.ts` | Switches; outbox actions; overrides; shadow summary; pairing QR |
+| `notifyChat.test.ts` | Pesan tab: list, unread/read, search, thread order, reply and its guards (token, never wrote in, opted out, kill switch) |
 | `atp.test.ts` | Includes an assertion that the WP-1 re-keying leaves ATP unchanged |
 | `apps/wa-gateway` | API auth and validation; idempotency; pacing; caps; retries; `not_on_whatsapp`; inbound filtering; callbacks; Postgres outbox |
 
@@ -628,7 +641,7 @@ DATABASE_URL=postgres://$USER@localhost:55432/leadscout_test npx vitest run
 
 - Before merging, run the suite once against a **freshly created** database as well as a long-lived one. Row order and first-time migrations differ. The dispatcher's processing-order bug (fixed in `6d7d707`) failed only on a fresh database.
 
-Last full run (merged `main`): 593 passed on three fresh databases and on a long-lived one (Postgres 16); 243 passed without a database; 13 gateway tests passed with the race detector.
+Last full run: 599 passed on fresh and long-lived databases (Postgres 16); 243 passed without a database; 13 gateway tests passed with the race detector.
 
 ### 19.6 Manual checks
 
@@ -708,6 +721,7 @@ Moved to §19.1–19.3, so there is one table to keep current.
 | Live and outbox (WP-6) | `GET/PUT /api/notify/live` [PUT: token], `GET /api/notify/outbox?view=pending\|held\|problems\|recent`, `POST /api/notify/outbox/:id/action` (`send_now`, `release`, `cancel`, `grade`) [token] |
 | People | `GET/PUT /api/notify/sales-contacts[/:id]`, `GET/PUT /api/notify/overrides[/:customerId]`, `GET /api/notify/customers?q=` [PUT: token] |
 | Shadow, replies | `GET /api/notify/shadow?days=`, `GET /api/notify/inbound` |
+| Pesan tab | `GET /api/notify/chats?q=`, `GET /api/notify/chats/:phone`, `POST /api/notify/chats/:phone/read`, `POST /api/notify/chats/:phone/reply` [token] |
 | Gateway | `POST /api/notify/wa-events` (gateway secret); `GET /api/notify/gateway/pair`, `GET /api/notify/gateway/pair-svg`, `POST /api/notify/gateway/pair-phone` [token] |
 | Order backbone | `GET /api/orders/events?so_no=&type=`, `GET /api/orders/sync-status`, `POST /api/erp/webhook` (HMAC) |
 | wa-gateway | `POST /send`, `POST /check`, `GET /health`, `GET /pair`, `POST /pair/phone`, `GET /healthz` — see `apps/wa-gateway/README.md` |
@@ -724,3 +738,4 @@ Moved to §19.1–19.3, so there is one table to keep current.
 | 2026-11-10 | Event backbone + outbox architecture (§5) | Spec |
 | 2026-11-10 | ERP verified by full sweep; auto-ontology not run (no NVIDIA key) | Spec |
 | 2026-11-10 | Selaras is the single source of truth: send on ERP movement (webhook when available, 60 s poll until then); rep = Selaras sales on the SO, vertical-agnostic | Owner |
+| 2026-11-12 | Pesan tab on /notify: WhatsApp-style conversations; admins may reply, only to numbers that wrote in | Owner |
