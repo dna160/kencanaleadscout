@@ -110,6 +110,8 @@ describe.skipIf(!hasDb)("planner + dispatcher over the real schema", async () =>
   const { runOrderMigrations } = await import("../src/db/migrateOrders.js");
   const { runEventMigrations } = await import("../src/db/migrateEvents.js");
   const { runNotifyMigrations } = await import("../src/db/migrateNotify.js");
+  const { lockNotifySettings } = await import("./helpers/settingsLock.js");
+  let unlock: () => Promise<void> = async () => undefined;
 
   let db: NonNullable<ReturnType<typeof dbmod.getSql>>;
   let ch: RecordingChannel;
@@ -150,7 +152,7 @@ describe.skipIf(!hasDb)("planner + dispatcher over the real schema", async () =>
     await db`delete from notify_sales_contacts where erp_sales_id like ${`${P}%`}`;
     await db`delete from notify_customer_overrides where customer_name_id like ${`${P}%`}`;
     await db`delete from notify_contacts where phone_e164 like '+62812%' or phone_e164 like '+62813777%'`;
-    await db`update notify_settings set live_mode = null where id = 1`;
+    await db`update notify_settings set live_mode = null, kill_switch = false, milestones_enabled = '{}'::jsonb where id = 1`;
   }
 
   /** An SO in the mirror, with the rep's phone registered. Returns its SO number. */
@@ -199,11 +201,12 @@ describe.skipIf(!hasDb)("planner + dispatcher over the real schema", async () =>
     const s = dbmod.getSql();
     if (!s) throw new Error("DATABASE_URL is set but getSql() returned null");
     db = s;
+    unlock = await lockNotifySettings();
     await runErpStockMigrations(db);
     await runOrderMigrations(db);
     await runEventMigrations(db);
     await runNotifyMigrations(db);
-  }, 60_000);
+  }, 120_000);
   beforeEach(async () => {
     await cleanup();
     ch = new RecordingChannel();
@@ -212,6 +215,7 @@ describe.skipIf(!hasDb)("planner + dispatcher over the real schema", async () =>
   });
   afterAll(async () => {
     await cleanup();
+    await unlock();
     await dbmod.closeDatabase();
   });
 
@@ -402,6 +406,42 @@ describe.skipIf(!hasDb)("planner + dispatcher over the real schema", async () =>
     const p = await disp.dispatchOnce(deps({ pauseReason: async () => "mirror_stale" }));
     expect(p).toMatchObject({ paused: "mirror_stale", processed: 0 });
     expect(ch.sent.length).toBe(before);
+  });
+
+  it("the kill switch pauses sending (rows wait); a step switched off is recorded as skipped", async () => {
+    await disp.syncMode(db, "on", new Date());
+    await db`update notify_settings set kill_switch = true, milestones_enabled = '{"production_started": false}'::jsonb where id = 1`;
+    const so = await seedSo("ks1", { kontak: "0812-9100-0009" });
+    await derive(["ks1"]);
+    const r = await disp.dispatchOnce(deps());
+    expect(r.paused).toBe("kill_switch");
+    expect(sentTo("+6281291000009")).toEqual([]);
+    expect((await ledger(so)).every((l) => l.status === "pending")).toBe(true);
+
+    await db`
+      insert into order_events (event_key, event_type, so_no, subject_ref, occurred_at, payload)
+      values (${`production.requested:${so}:WO-X`}, 'production.requested', ${so}, 'r1', now() + interval '7 hours', '{}'::jsonb)`;
+    await disp.planEvents(deps());
+    const prod = (await ledger(so)).filter((l) => l.milestone === "production_started");
+    expect(prod.map((l) => [l.status, l.cancel_reason])).toEqual([["skipped", "milestone_off"]]);
+
+    await db`update notify_settings set kill_switch = false where id = 1`;
+    await disp.dispatchOnce(deps());
+    expect(sentTo("+6281291000009")).toHaveLength(1);
+  });
+
+  it("a held shared-number message released by an admin is sent despite the guard", async () => {
+    await disp.syncMode(db, "on", new Date());
+    for (const t of ["rl-a", "rl-b", "rl-c"]) await seedSo(t, { kontak: "0812-9100-0010" });
+    await derive(["rl-a"]);
+    await disp.dispatchOnce(deps());
+    const [held] = await db<{ id: string }[]>`
+      select id::text from notify_ledger where so_no = ${`${P}/rl-a`} and recipient_role = 'customer' and status = 'held'`;
+    expect(held).toBeDefined();
+    await db`update notify_ledger set status = 'pending', due_at = now(), meta = meta || '{"released": true}'::jsonb where id = ${held!.id}`;
+    await db`update notify_ledger set status = 'pending', due_at = now() where so_no = ${`${P}/rl-a`} and recipient_role = 'sales_cc'`;
+    await disp.dispatchOnce(deps());
+    expect(sentTo("+6281291000010")).toHaveLength(1);
   });
 
   it("OFF plans and sends nothing", async () => {

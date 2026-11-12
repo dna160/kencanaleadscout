@@ -54,6 +54,7 @@ import { startEventDeriver, stopEventDeriver } from "./events/runner.js";
 import { orderEventRoutes } from "./routes/order-events.js";
 import { startNotifyDispatcher, stopNotifyDispatcher } from "./notify/dispatcher.js";
 import { waEventRoutes } from "./routes/wa-events.js";
+import { notifyAdminRoutes } from "./routes/notify-admin.js";
 import { startOrderSync, stopOrderSync } from "./erp/orderSync.js";
 import { erpWebhookRoutes } from "./routes/erp-webhook.js";
 import { notifyRoutes } from "./routes/notify.js";
@@ -148,6 +149,8 @@ async function main(): Promise<void> {
   await app.register(orderEventRoutes);
   // WP-5: wa-gateway callbacks (receipts, replies, STOP) and the pairing proxy.
   await app.register(waEventRoutes);
+  // WP-6: the /notify admin tabs (switches, outbox, overrides, shadow grades, pairing).
+  await app.register(notifyAdminRoutes);
 
   // [A] Scraper APIs.
   await app.register(enrichRoutes);

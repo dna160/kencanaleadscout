@@ -355,14 +355,7 @@ Before the first send to a number, the gateway's `/check` runs (WhatsApp `IsOnWh
 - **Konfigurasi:** system number (normalized to E.164), channel mode and health, admin-token field.
 - **Riwayat:** ledger with message bodies.
 
-**Next**
-- Live switch per milestone, plus a global kill switch.
-- Pending holds queue (send now / cancel).
-- Shared-number review.
-- Sales CC mapping table.
-- Customer overrides and mutes.
-- Gateway pairing (QR) and health.
-- Shadow-grading feed for reps ("benar / salah").
+**Built in WP-6 ✅** — tabs Live, Antrian, Shadow, Sales CC, Pelanggan (see §14 WP-6).
 
 **Access.**
 - Today: `NOTIFY_ADMIN_TOKEN` on writes.
@@ -445,8 +438,14 @@ Each WP is independently testable. The order is the dependency order.
   - LeadScout: `POST /api/notify/wa-events` (receipts → ledger `sent`/`delivered_at`/`read_at`/`failed`; STOP/BERHENTI → opt-out + one confirmation, MULAI → back in; a rep's BENAR/SALAH grades their latest [SHADOW] message; other customer replies → forwarded to the SO's rep + at most one auto-reply per 24 h; logged_out / temporary_ban / disconnected recorded and shown on `/api/notify/config`). Pairing proxy: `GET /api/notify/gateway/pair`, `POST /api/notify/gateway/pair-phone` (admin token).
   - Railway: its own service, Root Directory `apps/wa-gateway`, exactly one replica, private networking only.
   - Verified here: builds, 13 Go tests (race detector, Postgres outbox), and a live boot that reached WhatsApp and produced a pairing QR. **Not verified:** the Docker image build (no Docker daemon here) and an actual paired send (needs the dedicated number, OQ-1).
-- **WP-6. `/notify` additions.**
-  - Live switches, holds queue, sales CC list (Selaras reps by ID, one phone field each), shared-number review, pairing QR, health, shadow grading.
+- **WP-6. `/notify` additions.** ✅ (`public/notify.html` tabs; API in `routes/notify-admin.ts`; tests in `test/notifyAdmin.test.ts` + dispatcher switch tests)
+  - **Live:** mode, sending state, channel, gateway state, 7-day counts; a global kill switch (pauses sending, nothing dropped) and per-step on/off (a step that is off is recorded `skipped: milestone_off`); the order lane's cursors and errors. The **mode itself stays the `NOTIFY_LIVE` env var**: switching customers on is a deploy decision, not a click. The switches can only make things safer.
+  - **Pairing:** QR rendered server-side as SVG (`qrcode`, no external scripts), auto-refreshing; or an 8-character code by phone number.
+  - **Antrian:** pending (send now / cancel), held shared numbers (reviewed → release, sent despite the guard, or cancel), failed / no number, recent; plus incoming replies.
+  - **Shadow:** % "benar" against the 99% gate over 14 days, SALAH first; admins can grade too.
+  - **Sales CC:** Selaras reps by ID with one phone field each and a CC toggle; "CC belum aktif" count.
+  - **Pelanggan:** search customers from SOs, set a replacement number and/or mute, with a reason.
+  - Every admin action records who acted (`x-notify-actor`, the name typed on Konfigurasi).
 
 ---
 

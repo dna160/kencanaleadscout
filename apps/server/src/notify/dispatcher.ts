@@ -155,6 +155,9 @@ export async function planEvents(deps: DispatchDeps, limit = 500): Promise<numbe
   const lmode = ledgerMode(mode);
   const [s] = await db<{ planned_event_id: string }[]>`select planned_event_id::text from notify_settings where id = 1`;
   const after = Number(s?.planned_event_id ?? 0);
+  const [sw] = await db<{ milestones_enabled: Record<string, boolean> }[]>`
+    select milestones_enabled from notify_settings where id = 1`;
+  const enabled = (m: string) => sw?.milestones_enabled?.[m] !== false;
   const events = await db<EventRow[]>`
     select id::text, event_type, so_no, subject_ref, occurred_at, payload
       from order_events where id > ${after} order by id limit ${limit}
@@ -175,14 +178,16 @@ export async function planEvents(deps: DispatchDeps, limit = 500): Promise<numbe
     if (!subject) continue;
 
     const age = erpAgeHours(e.occurred_at, now);
-    const stale = age !== null && age > deps.maxEventAgeHours;
+    // A step switched off on /notify is recorded as skipped (audit), never sent.
+    const off = !enabled(milestone);
+    const stale = off || (age !== null && age > deps.maxEventAgeHours);
     const due = new Date(now.getTime() + holdFor(milestone, deps.holds) * 60_000);
     const base = { milestone, so_no: e.so_no, event_id: eid, subject_ref: milestone === "delivery_scheduled" ? subject : null };
     rows.push({
       ...base,
       recipient_role: "customer",
       status: stale ? "skipped" : "pending",
-      cancel_reason: stale ? "stale_event" : null,
+      cancel_reason: off ? "milestone_off" : stale ? "stale_event" : null,
       idempotency_key: outboxKey(mode, milestone, subject, "customer"),
       due_at: due,
     });
@@ -439,7 +444,8 @@ async function processCustomer(deps: DispatchDeps, row: LedgerRow): Promise<void
   } else {
     const [c] = await db<{ consent_state: string; first_contacted_at: Date | null }[]>`
       select consent_state, first_contacted_at from notify_contacts where phone_e164 = ${phone}`;
-    const shared = (await customersOnNumber(db, phone)) >= deps.sharedNumberCustomers;
+    // An admin who reviewed a held shared number and released it (WP-6) has decided.
+    const shared = row.meta["released"] !== true && (await customersOnNumber(db, phone)) >= deps.sharedNumberCustomers;
     if (c?.consent_state === "opted_out") {
       verdict = { ok: false, reason: "opted_out", text: `Di mode live: TIDAK terkirim — ${maskE164(phone)} sudah berhenti berlangganan (STOP).` };
     } else if (shared) {
@@ -552,7 +558,8 @@ export async function dispatchOnce(deps: DispatchDeps): Promise<DispatchResult> 
   if (deps.mode === "off") return { paused: "off", planned: 0, processed: 0 };
   await syncMode(deps.db, deps.mode, deps.now());
   const planned = await planEvents(deps);
-  const paused = await deps.pauseReason(deps.db, deps.channel);
+  const [ks] = await deps.db<{ kill_switch: boolean }[]>`select kill_switch from notify_settings where id = 1`;
+  const paused = ks?.kill_switch ? "kill_switch" : await deps.pauseReason(deps.db, deps.channel);
   if (paused) return { paused, planned, processed: 0 };
   const rows = await claim(deps);
   for (const row of rows) await processRow(deps, row);

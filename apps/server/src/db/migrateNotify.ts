@@ -116,6 +116,11 @@ export async function runNotifyMigrations(db: Sql): Promise<void> {
     )
   `;
   await db`create index if not exists notify_inbound_from_idx on notify_inbound (from_pn, received_at desc)`;
+  // WP-6 admin switches: a global kill switch (pauses sending; planning goes
+  // on, nothing is dropped) and per-step on/off (missing key = on).
+  await db`alter table notify_settings add column if not exists kill_switch        boolean not null default false`;
+  await db`alter table notify_settings add column if not exists milestones_enabled jsonb not null default '{}'::jsonb`;
+  await db`alter table notify_settings add column if not exists switches_set_by    text`;
   // Last connection state the gateway reported (logged_out / temporary_ban / …).
   await db`alter table notify_settings add column if not exists gateway_state    text`;
   await db`alter table notify_settings add column if not exists gateway_detail   text`;
