@@ -607,7 +607,11 @@ Railway: Root Directory `apps/wa-gateway`, **exactly one replica**, no public do
    - Set `NOTIFY_ADMIN_TOKEN`.
 2. **Check that orders are flowing.** `GET /api/orders/sync-status` should show the order-lane tables with a recent `last_ok_at`. Event counts should grow within minutes of new SOs/DOs, as shown by `GET /api/orders/events?limit=20`.
 3. **Deploy wa-gateway** (§19.2), then set the channel variables on LeadScout.
-4. **Pair** from `/notify` → Live with the dedicated phone (OQ-1). The card should turn to "Nomor tertaut dan terhubung".
+4. **Link the number** in `/notify` → **Konfigurasi**:
+   - Enter the admin token and your name.
+   - Save the dedicated number as **Nomor sistem**, then press **Minta kode tautan**.
+   - On that phone: WhatsApp → Linked devices → Link a device → *Link with phone number instead*, then type the code. **Pakai kode QR** is the alternative.
+   - The card turns to ✅ when linked. Linking works as soon as `WA_GATEWAY_URL` / `WA_GATEWAY_SECRET` are set, independent of `NOTIFY_CHANNEL`.
 5. **Fill rep numbers** on Sales CC, at least for the reps on the most active SOs.
 6. **Set `NOTIFY_LIVE=shadow`.** From that moment, new movements reach reps as [SHADOW] messages.
 

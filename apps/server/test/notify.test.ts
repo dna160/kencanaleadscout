@@ -132,6 +132,8 @@ describe("routes (stub channel, no database)", () => {
     expect(body.channel.mode).toBe("stub");
     expect(body.milestones.map((m: { key: string }) => m.key)).toEqual([...MILESTONES]);
     expect(body.milestones[2].trigger).toContain("tbl_1082");
+    // Linking is offered once the gateway is configured; here it is not.
+    expect(body.gateway).toEqual({ configured: false, linked: false, detail: "Gateway belum terpasang." });
   });
 
   it("sends to the customer and CCs sales, all stubbed", async () => {

@@ -355,6 +355,7 @@
           <button class="btn primary" id="saveSys" type="button">Simpan</button>
         </div>
         <p class="muted" id="sysMeta"></p>
+        <div id="linkBox" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line)"></div>
       </div>
     </div>
     <div class="card">
@@ -457,9 +458,10 @@
       <p style="margin:0 0 8px"><span class="chip ${ch.mode === "stub" ? "stubbed" : (ch.connected ? "sent" : "failed")}">${esc(ch.mode)}</span>
       <span style="margin-left:6px">${esc(ch.detail)}</span></p>
       <p class="muted" style="margin:0">${ch.mode === "stub"
-        ? "Menautkan nomor ke WhatsApp (whatsmeow, linked device) dilakukan di layanan wa-gateway. Setelah gateway siap, set NOTIFY_CHANNEL=gateway, WA_GATEWAY_URL dan NOTIFY_ADMIN_TOKEN di Railway."
-        : "Penautan nomor (QR / kode) dikelola oleh layanan wa-gateway."}</p>
+        ? "Mode stub: pesan hanya dicatat. Kanal gateway diaktifkan oleh admin teknis (NOTIFY_CHANNEL=gateway)."
+        : "Pesan dikirim lewat gateway WhatsApp. Penautan nomor ada di kartu Nomor sistem di atas."}</p>
       <p class="muted" style="margin:8px 0 0">Muat SO dari ERP: ${CFG.erpLookupAvailable ? "tersedia" : "tidak tersedia (ERP belum dikonfigurasi)"}.</p>`;
+    renderLink();
     $("tokenCard").hidden = !CFG.adminTokenRequired;
     $("adminToken").value = store.get("notifyToken");
     if (!CFG.erpLookupAvailable) { $("loadSo").disabled = true; $("soNo").disabled = true; $("soHint").textContent = "ERP belum terhubung: pesan memakai contoh pesanan."; }
@@ -615,30 +617,87 @@
       : `<table><thead><tr><th>Tabel</th><th>Kursor</th><th>Terakhir OK</th><th>Galat</th></tr></thead><tbody>${lane.tables.map((t) => `
           <tr><td>${esc(t.table_name)}<br><span class="muted">${esc(t.cursor_field)}</span></td><td>${fmtTime(t.cursor_value)}</td>
           <td>${fmtTime(t.last_ok_at)}</td><td>${t.last_error ? `<span class="chip failed">galat</span> <span class="muted">${esc(t.last_error)}</span>` : "–"}</td></tr>`).join("")}</tbody></table>`;
-    const showPair = LIVE.channel.mode === "gateway";
-    $("pairCard").hidden = !showPair;
-    if (showPair) renderPair();
+    // Linking lives in Konfigurasi; Live only points there while unlinked.
+    const g = CFG && CFG.gateway;
+    $("pairCard").hidden = !(g && g.configured && !g.linked);
+    $("pairBody").innerHTML = '<p style="margin:0">Nomor notifikasi belum tertaut. <button class="btn ghost sm" type="button" id="goLink">Tautkan di Konfigurasi</button></p>';
+    const go = document.getElementById("goLink");
+    if (go) go.addEventListener("click", () => $("t-cfg").click());
   }
 
-  async function renderPair() {
-    const box = $("pairBody");
-    if (LIVE.channel.connected) { box.innerHTML = '<p style="margin:0">✅ Nomor tertaut dan terhubung.</p>'; return; }
-    box.innerHTML = '<p class="muted" style="margin:0">Memuat kode QR…</p>';
+  // ── Konfigurasi: link the system number to WhatsApp ─────────────────────
+  function renderLink() {
+    const box = $("linkBox");
+    const g = CFG.gateway || { configured: false, linked: false };
+    if (!g.configured) {
+      box.innerHTML = `<p style="margin:0"><b>Tautkan ke WhatsApp</b></p>
+        <p class="muted" style="margin:4px 0 0">Layanan gateway WhatsApp belum terpasang di server, jadi kode tautan belum bisa dibuat. Ini pemasangan sekali oleh admin teknis (lihat PRD §19.4).</p>`;
+      return;
+    }
+    if (g.linked) {
+      box.innerHTML = `<p style="margin:0"><b>Tautkan ke WhatsApp</b></p><p style="margin:4px 0 0">✅ Nomor tertaut dan terhubung.</p>`;
+      return;
+    }
+    const sys = CFG.systemNumberDisplay;
+    box.innerHTML = `<p style="margin:0"><b>Tautkan ke WhatsApp</b></p>
+      <p class="muted" style="margin:4px 0 10px">${sys ? `Nomor yang akan ditautkan: <b>${esc(sys)}</b>.` : "Isi dan simpan nomor sistem di atas dulu."}</p>
+      <div class="row">
+        <button class="btn primary" type="button" id="linkCodeBtn" ${sys ? "" : "disabled"}>Minta kode tautan</button>
+        <button class="btn ghost" type="button" id="linkQrBtn">Pakai kode QR</button>
+      </div>
+      <div id="linkOut" style="margin-top:12px"></div>`;
+    $("linkCodeBtn").addEventListener("click", requestLinkCode);
+    $("linkQrBtn").addEventListener("click", showLinkQr);
+  }
+
+  async function requestLinkCode() {
+    const out = $("linkOut");
+    const btn = $("linkCodeBtn");
+    btn.disabled = true; out.innerHTML = '<p class="muted" style="margin:0">Meminta kode…</p>';
+    try {
+      const c = await api("/api/notify/gateway/pair-phone", { method: "POST", body: JSON.stringify({ phone: CFG.systemNumber }) });
+      out.innerHTML = `<p class="big" style="margin:0;letter-spacing:2px">${esc(c.code)}</p>
+        <ol style="margin:8px 0 0;padding-left:20px;line-height:1.6;font-size:14px">
+          <li>Di ponsel nomor <b>${esc(CFG.systemNumberDisplay)}</b>, buka WhatsApp → <b>Perangkat tertaut</b> → <b>Tautkan perangkat</b>.</li>
+          <li>Pilih <b>Tautkan dengan nomor telepon</b>, lalu ketik kode di atas.</li>
+          <li>Halaman ini akan menampilkan ✅ setelah tertaut.</li>
+        </ol>
+        <p class="muted" style="margin:8px 0 0">Kode kedaluwarsa dalam beberapa menit. Jika ditolak, minta kode baru.</p>`;
+      pollLinked();
+    } catch (e) {
+      out.innerHTML = `<p style="margin:0;color:var(--neg-ink)">${esc(e.message)}${esc(tokenHint())}</p>`;
+    } finally { btn.disabled = false; }
+  }
+
+  async function showLinkQr() {
+    const out = $("linkOut");
+    out.innerHTML = '<p class="muted" style="margin:0">Memuat kode QR…</p>';
     try {
       const r = await api("/api/notify/gateway/pair-svg");
-      if (r.paired) { box.innerHTML = `<p style="margin:0">Tertaut sebagai ${esc(r.jid || "")}, tetapi belum terhubung. Periksa ponsel utama (harus menyala dan online).</p>`; return; }
-      box.innerHTML = `<div class="qr"><div class="code" role="img" aria-label="Kode QR penautan">${r.svg || ""}</div>
-        <div><p style="margin:0 0 6px"><b>Pindai dari ponsel nomor notifikasi:</b><br>WhatsApp → Perangkat tertaut → Tautkan perangkat.</p>
-        <p class="muted" style="margin:0 0 10px">Kode berganti otomatis${r.expiresIn ? ` (±${esc(r.expiresIn)} detik)` : ""}.</p>
-        <div class="row"><label class="fld">Atau tautkan dengan nomor<input id="pairPhone" type="tel" inputmode="tel" placeholder="0811-…" /></label>
-        <button class="btn ghost" type="button" id="pairPhoneBtn">Minta kode</button></div><p id="pairCode" class="big"></p></div></div>`;
-      $("pairPhoneBtn").addEventListener("click", async () => {
-        try { const c = await api("/api/notify/gateway/pair-phone", { method: "POST", body: JSON.stringify({ phone: $("pairPhone").value.trim() }) });
-          $("pairCode").textContent = c.code; } catch (e) { toast(e.message); }
-      });
-      clearTimeout(renderPair._t);
-      renderPair._t = setTimeout(() => { if (!$("p-live").hidden) loadLive(); }, Math.max(10, (r.expiresIn || 20)) * 1000);
-    } catch (e) { box.innerHTML = `<p style="margin:0;color:var(--neg-ink)">${esc(e.message)}${esc(tokenHint())}</p>`; }
+      if (r.paired) { out.innerHTML = '<p style="margin:0">Sudah tertaut. Periksa ponsel utama (harus menyala dan online).</p>'; return; }
+      out.innerHTML = `<div class="qr"><div class="code" role="img" aria-label="Kode QR penautan">${r.svg || ""}</div>
+        <div><p style="margin:0 0 6px">Di ponsel nomor notifikasi: WhatsApp → <b>Perangkat tertaut</b> → <b>Tautkan perangkat</b>, lalu pindai.</p>
+        <p class="muted" style="margin:0">Kode QR berganti otomatis${r.expiresIn ? ` (±${esc(r.expiresIn)} detik)` : ""}.</p></div></div>`;
+      clearTimeout(showLinkQr._t);
+      showLinkQr._t = setTimeout(() => { if (!$("p-cfg").hidden && $("linkOut").querySelector(".qr")) showLinkQr(); }, Math.max(10, (r.expiresIn || 20)) * 1000);
+      pollLinked();
+    } catch (e) { out.innerHTML = `<p style="margin:0;color:var(--neg-ink)">${esc(e.message)}${esc(tokenHint())}</p>`; }
+  }
+
+  // After a code or QR is shown, watch for the link to complete (up to 5 minutes).
+  function pollLinked() {
+    clearInterval(pollLinked._t);
+    const until = Date.now() + 5 * 60_000;
+    pollLinked._t = setInterval(async () => {
+      if (Date.now() > until) { clearInterval(pollLinked._t); return; }
+      try {
+        const c = await api("/api/notify/config");
+        if (c.gateway && c.gateway.linked) {
+          clearInterval(pollLinked._t); clearTimeout(showLinkQr._t);
+          CFG = c; renderBanner(); renderConfig(); toast("Nomor WhatsApp tertaut.");
+        }
+      } catch {}
+    }, 4000);
   }
 
   // ── Pesan: WhatsApp-style conversations ──────────────────────────────────

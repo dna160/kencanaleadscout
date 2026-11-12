@@ -154,8 +154,25 @@ export class GatewayAdmin {
   }
 }
 
+/** The gateway's address and secret are set: it can be linked and checked. */
+export function gatewayConfigured(): boolean {
+  return Boolean(config.notify.gatewayUrl && config.notify.gatewaySecret);
+}
+
+/**
+ * Linking the number works as soon as the gateway is configured, whatever the
+ * send channel: an admin links the device first (Konfigurasi), and the channel
+ * decides separately whether messages go through it.
+ */
 export function getGatewayAdmin(): GatewayAdmin | null {
-  return config.notify.channel === "gateway" ? new GatewayAdmin(config.notify.gatewayUrl, config.notify.gatewaySecret) : null;
+  return gatewayConfigured() ? new GatewayAdmin(config.notify.gatewayUrl, config.notify.gatewaySecret) : null;
+}
+
+/** The gateway's own link status, independent of the send channel. */
+export async function gatewayLinkStatus(): Promise<{ configured: boolean; linked: boolean; detail: string }> {
+  if (!gatewayConfigured()) return { configured: false, linked: false, detail: "Gateway belum terpasang." };
+  const h = await new GatewayChannel(config.notify.gatewayUrl, config.notify.gatewaySecret).health();
+  return { configured: true, linked: h.connected, detail: h.detail };
 }
 
 let cached: Channel | null = null;

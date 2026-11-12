@@ -19,7 +19,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { normalizeNumber } from "@kencana/core";
 import { config } from "../config.js";
 import { getSql } from "../db/client.js";
-import { getChannel } from "../notify/channel.js";
+import { gatewayLinkStatus, getChannel } from "../notify/channel.js";
 import { ErpLookupError, erpLookupAvailable, lookupOrder, type LookupResult } from "../notify/erpLookup.js";
 import {
   MILESTONE_INFO,
@@ -119,12 +119,17 @@ const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
 export async function notifyRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/notify/config", async () => {
     const channel = getChannel();
-    const [{ systemNumber, updatedAt }, health] = await Promise.all([readSystemNumber(), channel.health()]);
+    const [{ systemNumber, updatedAt }, health, gateway] = await Promise.all([
+      readSystemNumber(),
+      channel.health(),
+      gatewayLinkStatus(),
+    ]);
     return {
       systemNumber,
       systemNumberDisplay: systemNumber ? toLocalDisplay(systemNumber) : null,
       updatedAt,
       channel: { mode: channel.mode, ...health },
+      gateway,
       adminTokenRequired: Boolean(config.notify.adminToken),
       erpLookupAvailable: erpLookupAvailable(),
       databaseAvailable: Boolean(getSql()),
