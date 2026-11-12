@@ -13,6 +13,7 @@ package main
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -44,11 +45,19 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func readJSON(r *http.Request, v any) error {
+func readJSON(r *http.Request, v any) error { return readJSONLimit(r, v, 64<<10) }
+
+func readJSONLimit(r *http.Request, v any, limit int64) error {
 	defer r.Body.Close()
-	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 64<<10))
+	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, limit))
 	return dec.Decode(v)
 }
+
+// MaxOutboundImageBytes caps an image sent through /send (decoded size).
+const MaxOutboundImageBytes = 15 << 20
+
+// imageMimes are the only media types /send accepts, checked against the bytes.
+var imageMimes = map[string]bool{"image/jpeg": true, "image/png": true, "image/webp": true}
 
 func (a *API) Routes() *http.ServeMux {
 	mux := http.NewServeMux()
@@ -67,11 +76,14 @@ type sendReq struct {
 	ToPN           string `json:"to_pn"`
 	Text           string `json:"text"`
 	IdempotencyKey string `json:"idempotency_key"`
+	// Optional image: base64 bytes + declared type. Text becomes its caption.
+	ImageB64 string `json:"image_b64,omitempty"`
+	Mime     string `json:"mime,omitempty"`
 }
 
 func (a *API) send(w http.ResponseWriter, r *http.Request) {
 	var req sendReq
-	if err := readJSON(r, &req); err != nil {
+	if err := readJSONLimit(r, &req, 24<<20); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "body is not JSON"})
 		return
 	}
@@ -80,8 +92,23 @@ func (a *API) send(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "to_pn must be E.164, e.g. +6281234567890"})
 		return
 	}
-	if req.Text == "" || len(req.Text) > 4000 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "text must be 1–4000 characters"})
+	var media []byte
+	if req.ImageB64 != "" {
+		b, err := base64.StdEncoding.DecodeString(req.ImageB64)
+		if err != nil || len(b) == 0 || len(b) > MaxOutboundImageBytes {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "image_b64 must be base64, at most 15 MB"})
+			return
+		}
+		// Trust the bytes, not the label.
+		sniffed := http.DetectContentType(b)
+		if !imageMimes[sniffed] {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "image must be JPEG, PNG or WebP"})
+			return
+		}
+		media, req.Mime = b, sniffed
+	}
+	if (media == nil && req.Text == "") || len(req.Text) > 4000 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "text must be 1–4000 characters (or send an image)"})
 		return
 	}
 	if req.IdempotencyKey == "" || len(req.IdempotencyKey) > 300 {
@@ -90,6 +117,7 @@ func (a *API) send(w http.ResponseWriter, r *http.Request) {
 	}
 	it, created, err := a.Store.Enqueue(r.Context(), OutboxItem{
 		Key: req.IdempotencyKey, MessageID: a.WA.NewMessageID(), ToPN: req.ToPN, Body: req.Text,
+		MediaMime: req.Mime, Media: media,
 	})
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "outbox unavailable"})

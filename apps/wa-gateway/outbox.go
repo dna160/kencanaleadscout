@@ -17,6 +17,8 @@ type OutboxItem struct {
 	MessageID string
 	ToPN      string
 	Body      string
+	MediaMime string // set when the item is an image; Body is then its caption
+	Media     []byte
 	Status    string // queued | sending | sent | failed
 	Attempts  int
 	Error     string
@@ -60,6 +62,8 @@ func NewPGStore(ctx context.Context, db *sql.DB) (*PGStore, error) {
 			created_at      timestamptz not null default now(),
 			sent_at         timestamptz
 		);
+		alter table wa_outbox add column if not exists media_mime text;
+		alter table wa_outbox add column if not exists media bytea;
 		create index if not exists wa_outbox_queue_idx on wa_outbox (created_at) where status in ('queued', 'sending');
 		create index if not exists wa_outbox_sent_idx on wa_outbox (sent_at);
 	`)
@@ -71,12 +75,13 @@ func NewPGStore(ctx context.Context, db *sql.DB) (*PGStore, error) {
 
 func scanItem(row interface{ Scan(...any) error }) (*OutboxItem, error) {
 	var it OutboxItem
-	var errMsg sql.NullString
+	var errMsg, mime sql.NullString
 	var sent sql.NullTime
-	if err := row.Scan(&it.Key, &it.MessageID, &it.ToPN, &it.Body, &it.Status, &it.Attempts, &errMsg, &it.CreatedAt, &sent); err != nil {
+	if err := row.Scan(&it.Key, &it.MessageID, &it.ToPN, &it.Body, &it.Status, &it.Attempts, &errMsg, &it.CreatedAt, &sent, &mime, &it.Media); err != nil {
 		return nil, err
 	}
 	it.Error = errMsg.String
+	it.MediaMime = mime.String
 	if sent.Valid {
 		t := sent.Time
 		it.SentAt = &t
@@ -84,14 +89,14 @@ func scanItem(row interface{ Scan(...any) error }) (*OutboxItem, error) {
 	return &it, nil
 }
 
-const itemCols = `idempotency_key, message_id, to_pn, body, status, attempts, error, created_at, sent_at`
+const itemCols = `idempotency_key, message_id, to_pn, body, status, attempts, error, created_at, sent_at, media_mime, media`
 
 func (s *PGStore) Enqueue(ctx context.Context, it OutboxItem) (OutboxItem, bool, error) {
 	row := s.db.QueryRowContext(ctx, `
-		insert into wa_outbox (idempotency_key, message_id, to_pn, body)
-		values ($1, $2, $3, $4)
+		insert into wa_outbox (idempotency_key, message_id, to_pn, body, media_mime, media)
+		values ($1, $2, $3, $4, nullif($5, ''), $6)
 		on conflict (idempotency_key) do nothing
-		returning `+itemCols, it.Key, it.MessageID, it.ToPN, it.Body)
+		returning `+itemCols, it.Key, it.MessageID, it.ToPN, it.Body, it.MediaMime, it.Media)
 	got, err := scanItem(row)
 	if err == nil {
 		return *got, true, nil

@@ -31,6 +31,7 @@ describe.skipIf(!hasDb)("Pesan tab API", async () => {
 
   async function cleanup(): Promise<void> {
     await db`delete from notify_ledger where to_number in (${CUST}, ${QUIET}, ${REP})`;
+    await db`delete from notify_media where id like 'aaaaaaaa-%'`;
     await db`delete from notify_inbound where message_id like ${`${P}%`}`;
     await db`delete from notify_chat_reads where phone_e164 in (${CUST}, ${QUIET}, ${REP})`;
     await db`delete from notify_contacts where phone_e164 in (${CUST}, ${QUIET}, ${REP})`;
@@ -163,6 +164,28 @@ describe.skipIf(!hasDb)("Pesan tab API", async () => {
     await db`update notify_settings set kill_switch = false where id = 1`;
     expect((await replyTo(CUST, "Halo")).statusCode).toBe(200);
     expect(sent).toHaveLength(1);
+  });
+
+  it("photos appear in the list and thread, and are served as inert images", async () => {
+    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+    const mid = "aaaaaaaa-0000-4000-8000-000000000001";
+    await db`insert into notify_media (id, mime, size, sha256, bytes, caption) values (${mid}, 'image/png', ${png.length}, 'x', ${png}, 'rusak')`;
+    await db`
+      insert into notify_inbound (message_id, from_pn, text, kind, media_id, received_at)
+      values (${`${P}-img`}, ${CUST}, 'rusak', 'image', ${mid}, now())`;
+    const row = (await list("?q=" + enc("0813-5700-0001"))).rows.find((c: { phone: string }) => c.phone === CUST);
+    expect(row).toMatchObject({ kind: "image", text: "rusak" });
+    expect((await thread(CUST)).messages.at(-1)).toMatchObject({ dir: "in", kind: "image", media_id: mid, text: "rusak" });
+
+    const img = await app.inject({ method: "GET", url: `/api/notify/media/${mid}` });
+    expect(img.statusCode).toBe(200);
+    expect(img.headers["content-type"]).toBe("image/png");
+    expect(img.headers["x-content-type-options"]).toBe("nosniff");
+    expect(img.headers["content-security-policy"]).toContain("sandbox");
+    expect(img.rawPayload.equals(png)).toBe(true);
+    expect((await app.inject({ method: "GET", url: "/api/notify/media/../../etc" })).statusCode).toBe(404);
+    expect((await app.inject({ method: "GET", url: "/api/notify/media/not-a-uuid" })).statusCode).toBe(400);
+    expect((await app.inject({ method: "GET", url: "/api/notify/media/aaaaaaaa-0000-4000-8000-00000000ffff" })).statusCode).toBe(404);
   });
 
   it("rejects an invalid number in the path", async () => {

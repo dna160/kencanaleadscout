@@ -40,7 +40,7 @@ All routes need `x-gateway-secret`, except `/healthz`.
 
 | Route | Body → answer |
 |---|---|
-| `POST /send` | `{to_pn, text, idempotency_key}` → `{message_id, queued, status, duplicate}` |
+| `POST /send` | `{to_pn, text, idempotency_key, image_b64?, mime?}` → `{message_id, queued, status, duplicate}`. With an image, `text` is the caption (optional). The type is sniffed from the bytes: JPEG, PNG or WebP, at most 15 MB. |
 | `POST /check` | `{pns: [...]}` → `[{pn, on_whatsapp, jid, lid?}]` |
 | `GET /health` | → `{connected, logged_in, jid, queue_depth, sent_today, phone_last_seen}` |
 | `GET /pair` | → `{paired, jid?, qr?, expires_in?, error?}`. `qr` is the string to render as a QR code. |
@@ -50,7 +50,7 @@ All routes need `x-gateway-secret`, except `/healthz`.
 - **`/send` stores the message before answering**, in table `wa_store.wa_outbox`, so a restart never loses one. A repeated `idempotency_key` within 7 days returns the original `message_id` and sends nothing.
 - **Callbacks** go to `LEADSCOUT_EVENTS_URL` as `POST {type, ...}` with the same secret:
   - `receipt` (`server_ack` / `delivered` / `read` / `failed`)
-  - `inbound` (`from_pn` and/or `from_lid`, `text`)
+  - `inbound` (`from_pn` and/or `from_lid`, `text`; a photo adds `media: {mime, data_b64, size}`, or `media_error` = `too_large` / `download_failed`). Photos come only from 1:1 chats, up to 15 MB; view-once photos are skipped.
   - `logged_out`, `temporary_ban`, `disconnected`, `connected`
 
 ## Operating safely (PRD §10.4)

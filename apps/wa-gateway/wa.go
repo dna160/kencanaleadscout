@@ -46,6 +46,9 @@ type WA interface {
 	// Typing shows "typing…" in the chat before a send (PRD §10.4).
 	Typing(ctx context.Context, toPN string, on bool) error
 	Send(ctx context.Context, toPN, text, messageID string) error
+	// SendImage uploads the image to WhatsApp's media servers and sends it with
+	// an optional caption.
+	SendImage(ctx context.Context, toPN, caption, mime string, data []byte, messageID string) error
 	Check(ctx context.Context, pns []string) ([]CheckResult, error)
 	Pair(ctx context.Context) PairState
 	PairPhone(ctx context.Context, phone string) (string, error)
@@ -191,6 +194,37 @@ func (w *MeowWA) Send(ctx context.Context, toPN, text, messageID string) error {
 	return err
 }
 
+func (w *MeowWA) SendImage(ctx context.Context, toPN, caption, mime string, data []byte, messageID string) error {
+	jid, err := pnJID(toPN)
+	if err != nil {
+		return err
+	}
+	up, err := w.client.Upload(ctx, data, whatsmeow.MediaImage)
+	if err != nil {
+		return fmt.Errorf("upload image: %w", err)
+	}
+	msg := &waE2E.Message{ImageMessage: &waE2E.ImageMessage{
+		Caption:       proto.String(caption),
+		Mimetype:      proto.String(mime),
+		URL:           proto.String(up.URL),
+		DirectPath:    proto.String(up.DirectPath),
+		MediaKey:      up.MediaKey,
+		FileEncSHA256: up.FileEncSHA256,
+		FileSHA256:    up.FileSHA256,
+		FileLength:    proto.Uint64(up.FileLength),
+	}}
+	_, err = w.client.SendMessage(ctx, jid, msg, whatsmeow.SendRequestExtra{ID: types.MessageID(messageID)})
+	if errors.Is(err, whatsmeow.ErrRecipientNotOnWhatsApp) {
+		return ErrNotOnWhatsApp
+	}
+	return err
+}
+
+// DownloadImage fetches and decrypts an inbound image.
+func (w *MeowWA) DownloadImage(ctx context.Context, img *waE2E.ImageMessage) ([]byte, error) {
+	return w.client.Download(ctx, img)
+}
+
 func (w *MeowWA) Check(ctx context.Context, pns []string) ([]CheckResult, error) {
 	q := make([]string, 0, len(pns))
 	for _, p := range pns {
@@ -278,17 +312,33 @@ func (w *MeowWA) ResolvePN(ctx context.Context, sender, alt types.JID) (pn strin
 	return sender.User, lid
 }
 
+// isDirect is true for a 1:1 message from someone else (not own messages,
+// groups, broadcasts or status updates).
+func isDirect(evt *events.Message) bool {
+	return evt != nil && !evt.Info.IsFromMe && !evt.Info.IsGroup && !evt.Info.Chat.IsBroadcastList() &&
+		evt.Info.Chat.Server != types.BroadcastServer && evt.Message != nil
+}
+
+// MaxInboundImageBytes caps what is downloaded and forwarded to LeadScout.
+const MaxInboundImageBytes = 15 << 20
+
+// InboundImage returns the photo in a 1:1 message, if any. View-once photos
+// are not forwarded: the sender chose for them not to be kept.
+func InboundImage(evt *events.Message) (*waE2E.ImageMessage, bool) {
+	if !isDirect(evt) || evt.IsViewOnce {
+		return nil, false
+	}
+	img := evt.Message.GetImageMessage()
+	return img, img != nil
+}
+
 // Inbound extracts the plain text of a 1:1 message, or ok=false for anything
-// the gateway does not forward (own messages, groups, broadcasts, media).
+// the gateway does not forward as text (own messages, groups, broadcasts, media).
 func Inbound(evt *events.Message) (text string, ok bool) {
-	if evt == nil || evt.Info.IsFromMe || evt.Info.IsGroup || evt.Info.Chat.IsBroadcastList() ||
-		evt.Info.Chat.Server == types.BroadcastServer {
+	if !isDirect(evt) {
 		return "", false
 	}
 	m := evt.Message
-	if m == nil {
-		return "", false
-	}
 	if t := m.GetConversation(); t != "" {
 		return t, true
 	}

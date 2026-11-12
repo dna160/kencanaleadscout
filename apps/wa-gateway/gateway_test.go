@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -49,6 +51,15 @@ func (f *fakeWA) Send(_ context.Context, to, text, id string) error {
 		return f.sendErr
 	}
 	f.sent = append(f.sent, to+"|"+text+"|"+id)
+	return nil
+}
+func (f *fakeWA) SendImage(_ context.Context, to, caption, mime string, data []byte, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.sendErr != nil {
+		return f.sendErr
+	}
+	f.sent = append(f.sent, fmt.Sprintf("IMG %s|%s|%s|%d|%s", to, caption, mime, len(data), id))
 	return nil
 }
 func (f *fakeWA) Check(_ context.Context, pns []string) ([]CheckResult, error) {
@@ -362,9 +373,16 @@ func TestPGStore(t *testing.T) {
 		t.Fatal("a claimed item must not be handed out twice")
 	}
 	_ = st.Recover(ctx) // crash mid-send → back in the queue
+	time.Sleep(2 * time.Millisecond) // created_at after k1, so k1 is still first in line
+	_, _, _ = st.Enqueue(ctx, OutboxItem{Key: "k2", MessageID: "m3", ToPN: "+6281234567890", Body: "", MediaMime: "image/png", Media: tinyPNG})
 	it, _ = st.Next(ctx)
 	_ = st.MarkSent(ctx, it.Key, time.Now())
-	if n, _ := st.SentSince(ctx, time.Now().Add(-time.Minute)); n != 1 {
+	img, _ := st.Next(ctx)
+	if img == nil || img.Key != "k2" || img.MediaMime != "image/png" || !bytes.Equal(img.Media, tinyPNG) {
+		t.Fatalf("image round trip: %+v", img)
+	}
+	_ = st.MarkSent(ctx, img.Key, time.Now())
+	if n, _ := st.SentSince(ctx, time.Now().Add(-time.Minute)); n != 2 {
 		t.Fatalf("sent since: %d", n)
 	}
 	if d, _ := st.QueueDepth(ctx); d != 0 {
@@ -378,4 +396,74 @@ func mustPath(t *testing.T, dsn string) string {
 		t.Fatal(err)
 	}
 	return p
+}
+
+// ── Images ───────────────────────────────────────────────────────────────────
+
+// A real 1×1 PNG, so content sniffing sees genuine image bytes.
+var tinyPNG, _ = base64.StdEncoding.DecodeString(
+	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+
+func TestSendAcceptsAnImageAndSniffsIt(t *testing.T) {
+	st := NewMemStore()
+	srv := newAPI(&fakeWA{}, st)
+	defer srv.Close()
+	ok := map[string]string{"to_pn": "+6281234567890", "text": "Foto barang", "idempotency_key": "img1",
+		"image_b64": base64.StdEncoding.EncodeToString(tinyPNG), "mime": "image/jpeg"}
+	if code, out := post(t, srv, "/send", ok, true); code != 200 || out["queued"] != true {
+		t.Fatalf("image send: %d %v", code, out)
+	}
+	if it := st.Get("img1"); it.MediaMime != "image/png" || len(it.Media) != len(tinyPNG) || it.Body != "Foto barang" {
+		t.Fatalf("stored with the SNIFFED type and bytes: %+v", it.MediaMime)
+	}
+	noCaption := map[string]string{"to_pn": "+6281234567890", "idempotency_key": "img2",
+		"image_b64": base64.StdEncoding.EncodeToString(tinyPNG)}
+	if code, _ := post(t, srv, "/send", noCaption, true); code != 200 {
+		t.Fatalf("an image needs no caption, got %d", code)
+	}
+	for _, bad := range []map[string]string{
+		{"to_pn": "+6281234567890", "idempotency_key": "b1", "image_b64": "%%%not-base64"},
+		{"to_pn": "+6281234567890", "idempotency_key": "b2", "image_b64": base64.StdEncoding.EncodeToString([]byte("%PDF-1.4 not an image"))},
+	} {
+		if code, _ := post(t, srv, "/send", bad, true); code != http.StatusBadRequest {
+			t.Fatalf("%v: want 400, got %d", bad["idempotency_key"], code)
+		}
+	}
+}
+
+func TestSenderSendsImagesAsImages(t *testing.T) {
+	st := NewMemStore()
+	wa := &fakeWA{connected: true, loggedIn: true}
+	_, _, _ = st.Enqueue(context.Background(), OutboxItem{Key: "k", MessageID: "m1", ToPN: "+6281234567890",
+		Body: "Foto", MediaMime: "image/png", Media: tinyPNG})
+	newSender(wa, st, &recNotifier{}, SenderConfig{Idle: time.Second, MaxAttempts: 3}).Step(context.Background())
+	want := fmt.Sprintf("IMG +6281234567890|Foto|image/png|%d|m1", len(tinyPNG))
+	if len(wa.sent) != 1 || wa.sent[0] != want {
+		t.Fatalf("sent %v, want %s", wa.sent, want)
+	}
+}
+
+func TestInboundImageOnlyInDirectChats(t *testing.T) {
+	dm := types.NewJID("6281234567890", types.DefaultUserServer)
+	img := &waE2E.Message{ImageMessage: &waE2E.ImageMessage{Caption: proto.String("barang rusak"), Mimetype: proto.String("image/jpeg")}}
+	mk := func(group, viewOnce bool) *events.Message {
+		chat := dm
+		if group {
+			chat = types.NewJID("123", types.GroupServer)
+		}
+		return &events.Message{Info: types.MessageInfo{MessageSource: types.MessageSource{Chat: chat, Sender: dm, IsGroup: group}},
+			Message: img, IsViewOnce: viewOnce}
+	}
+	if got, ok := InboundImage(mk(false, false)); !ok || got.GetCaption() != "barang rusak" {
+		t.Fatal("a photo in a DM must be picked up with its caption")
+	}
+	if _, ok := InboundImage(mk(true, false)); ok {
+		t.Fatal("group photos are not inbound")
+	}
+	if _, ok := InboundImage(mk(false, true)); ok {
+		t.Fatal("view-once photos are not kept")
+	}
+	if _, ok := Inbound(mk(false, false)); ok {
+		t.Fatal("a photo is not a text message")
+	}
 }

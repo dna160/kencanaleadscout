@@ -36,7 +36,9 @@ function adminOk(req: FastifyRequest, reply: FastifyReply): boolean {
 const STATE_EVENTS = new Set(["logged_out", "temporary_ban", "disconnected", "connected"]);
 
 export async function waEventRoutes(app: FastifyInstance): Promise<void> {
-  app.post("/api/notify/wa-events", async (req, reply) => {
+  // An inbound photo arrives base64-encoded in the callback: up to 15 MB of
+  // image is ~20 MB of JSON, well past Fastify's 1 MB default.
+  app.post("/api/notify/wa-events", { bodyLimit: 25 * 1024 * 1024 }, async (req, reply) => {
     if (!config.notify.gatewaySecret) return reply.code(503).send({ error: "WA_GATEWAY_SECRET not set" });
     if (!secretOk(req.headers["x-gateway-secret"])) return reply.code(401).send({ error: "unauthorized" });
     const db = getSql();

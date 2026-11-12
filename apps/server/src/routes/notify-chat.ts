@@ -58,18 +58,18 @@ export async function notifyChatRoutes(app: FastifyInstance): Promise<void> {
     const rows = await db`
       with msgs as (
         select to_number as phone, coalesce(sent_at, created_at) as at, body as text, 'out'::text as dir,
-               so_no, mode
+               so_no, mode, case when media_id is not null then 'image' else 'text' end as kind
           from notify_ledger
          where to_number is not null and body is not null and status = any(${OUT_STATUSES})
         union all
-        select from_pn, received_at, text, 'in', so_no, null
+        select from_pn, received_at, text, 'in', so_no, null, kind
           from notify_inbound where from_pn is not null
       ),
       last as (
-        select distinct on (phone) phone, at, text, dir, mode from msgs order by phone, at desc
+        select distinct on (phone) phone, at, text, dir, mode, kind from msgs order by phone, at desc
       ),
       enriched as (
-        select l.phone, l.at, l.text, l.dir, l.mode,
+        select l.phone, l.at, l.text, l.dir, l.mode, l.kind,
                (select m.so_no from msgs m where m.phone = l.phone and m.so_no is not null order by m.at desc limit 1) as so_no,
                (select count(*)::int from notify_inbound i
                  where i.from_pn = l.phone and i.received_at > coalesce(r.last_read_at, 'epoch'::timestamptz)) as unread,
@@ -109,12 +109,12 @@ export async function notifyChatRoutes(app: FastifyInstance): Promise<void> {
     const [out, inn, [contact], [ks]] = await Promise.all([
       db`
         select id::text, mode, milestone, so_no, recipient_role, body as text, status, cancel_reason, error,
-               coalesce(sent_at, created_at) as at, delivered_at, read_at, meta->>'by' as by
+               coalesce(sent_at, created_at) as at, delivered_at, read_at, meta->>'by' as by, media_id
           from notify_ledger
          where to_number = ${phone} and body is not null and status = any(${OUT_STATUSES})
          order by coalesce(sent_at, created_at) desc, id desc limit 300`,
       db`
-        select id::text, text, action, so_no, received_at as at
+        select id::text, text, action, so_no, received_at as at, kind, media_id, media_error
           from notify_inbound where from_pn = ${phone} order by received_at desc, id desc limit 300`,
       db<{ consent_state: string; opted_out_at: Date | null }[]>`
         select consent_state, opted_out_at from notify_contacts where phone_e164 = ${phone}`,
@@ -140,6 +140,31 @@ export async function notifyChatRoutes(app: FastifyInstance): Promise<void> {
             : null,
       messages,
     };
+  });
+
+  /**
+   * GET /api/notify/media/:id — a stored image, for <img> tags on /notify.
+   *
+   * Same audience as the rest of /notify's reads (no auth on main yet; the
+   * LeadScout 2.0 roles cover it later). The id is a random UUID, so URLs
+   * cannot be enumerated. Only sniffed image types are ever stored, and the
+   * response is served as an inert image (nosniff + a sandboxing CSP).
+   */
+  app.get("/api/notify/media/:id", async (req, reply) => {
+    const db = getSql();
+    if (!db) return reply.code(503).send({ error: "Database tidak tersedia." });
+    const id = String((req.params as { id?: unknown }).id ?? "");
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id)) {
+      return reply.code(400).send({ error: "ID tidak valid." });
+    }
+    const [m] = await db<{ mime: string; bytes: Buffer }[]>`select mime, bytes from notify_media where id = ${id}`;
+    if (!m || !/^image\/(jpeg|png|webp)$/.test(m.mime)) return reply.code(404).send({ error: "Tidak ditemukan." });
+    return reply
+      .header("content-type", m.mime)
+      .header("cache-control", "private, max-age=86400, immutable")
+      .header("x-content-type-options", "nosniff")
+      .header("content-security-policy", "default-src 'none'; sandbox")
+      .send(m.bytes);
   });
 
   app.post("/api/notify/chats/:phone/read", async (req, reply) => {

@@ -126,6 +126,26 @@ export async function runNotifyMigrations(db: Sql): Promise<void> {
   await db`alter table notify_settings add column if not exists gateway_detail   text`;
   await db`alter table notify_settings add column if not exists gateway_state_at timestamptz`;
 
+  // ── Images received on (and forwarded from) the notification number ─────
+  // Stored in Postgres: volumes are small (customer photos of goods, receipts)
+  // and it keeps backups/restore in one place. Ids are random UUIDs, so a
+  // media URL cannot be guessed by counting.
+  await db`
+    create table if not exists notify_media (
+      id         text primary key,
+      mime       text not null,
+      size       int not null,
+      sha256     text not null,
+      bytes      bytea not null,
+      caption    text,
+      created_at timestamptz not null default now()
+    )
+  `;
+  await db`alter table notify_inbound add column if not exists kind        text not null default 'text'`;
+  await db`alter table notify_inbound add column if not exists media_id    text`;
+  await db`alter table notify_inbound add column if not exists media_error text`;
+  await db`alter table notify_ledger  add column if not exists media_id    text`;
+
   // ── "Pesan" tab: when each conversation was last read on /notify ────────
   await db`
     create table if not exists notify_chat_reads (

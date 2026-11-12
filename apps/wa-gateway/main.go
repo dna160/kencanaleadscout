@@ -19,6 +19,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log"
@@ -32,6 +33,7 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
+	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
@@ -100,7 +102,7 @@ func main() {
 	notifier := &HTTPNotifier{
 		URL:    os.Getenv("LEADSCOUT_EVENTS_URL"),
 		Secret: secret,
-		Client: &http.Client{Timeout: 10 * time.Second},
+		Client: &http.Client{Timeout: 30 * time.Second}, // photos make callbacks larger
 	}
 	if notifier.URL == "" {
 		log.Print("LEADSCOUT_EVENTS_URL not set: receipts and replies will not reach LeadScout")
@@ -155,6 +157,29 @@ func main() {
 	}
 }
 
+// fetchImage downloads an inbound photo for the callback. A failure is
+// reported, not fatal: LeadScout still records that a photo arrived.
+func fetchImage(ctx context.Context, wa *MeowWA, img *waE2E.ImageMessage) (*EventMedia, string) {
+	if img.GetFileLength() > MaxInboundImageBytes {
+		return nil, "too_large"
+	}
+	dctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	data, err := wa.DownloadImage(dctx, img)
+	if err != nil {
+		log.Printf("image download failed: %v", err)
+		return nil, "download_failed"
+	}
+	if len(data) > MaxInboundImageBytes {
+		return nil, "too_large"
+	}
+	mime := img.GetMimetype()
+	if mime == "" {
+		mime = http.DetectContentType(data)
+	}
+	return &EventMedia{Mime: mime, DataB64: base64.StdEncoding.EncodeToString(data), Size: len(data)}, ""
+}
+
 // handleEvent forwards what LeadScout needs (PRD §10.2 callbacks).
 func handleEvent(ctx context.Context, wa *MeowWA, n Notifier, evt any) {
 	switch e := evt.(type) {
@@ -176,12 +201,20 @@ func handleEvent(ctx context.Context, wa *MeowWA, n Notifier, evt any) {
 			n.Notify(Event{Type: "receipt", MessageID: string(id), Status: status})
 		}
 	case *events.Message:
-		text, ok := Inbound(e)
-		if !ok || wa == nil {
+		if wa == nil {
+			return
+		}
+		var ev Event
+		if img, ok := InboundImage(e); ok {
+			ev = Event{Type: "inbound", MessageID: string(e.Info.ID), Text: img.GetCaption()}
+			ev.Media, ev.MediaError = fetchImage(ctx, wa, img)
+		} else if text, ok := Inbound(e); ok {
+			ev = Event{Type: "inbound", MessageID: string(e.Info.ID), Text: text}
+		} else {
 			return
 		}
 		pn, lid := wa.ResolvePN(ctx, e.Info.Sender, e.Info.SenderAlt)
-		ev := Event{Type: "inbound", MessageID: string(e.Info.ID), Text: text, FromLID: lid}
+		ev.FromLID = lid
 		if pn != "" {
 			ev.FromPN = "+" + pn
 		}

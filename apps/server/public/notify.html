@@ -127,6 +127,7 @@
   .gate-ok{color:var(--ok-ink)} .gate-no{color:var(--neg-ink)}
 
   /* "Pesan" tab — WhatsApp-Web-style conversations */
+  .tabs .badge[hidden]{display:none}
   .tabs .badge{display:inline-block;min-width:18px;padding:0 5px;margin-left:6px;border-radius:999px;background:#25d366;color:#fff;font-size:11px;font-weight:800;line-height:18px;text-align:center}
   .chat{display:grid;grid-template-columns:330px 1fr;grid-template-rows:minmax(0,1fr);height:calc(100vh - 230px);min-height:460px;background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden}
   .chat-list{display:flex;flex-direction:column;border-right:1px solid var(--line);min-width:0;min-height:0}
@@ -160,6 +161,9 @@
   .msg.m-out.sys{background:#fff7d6}
   .msg.m-out.bad{background:#fde8e8}
   .msg .tag{display:block;font-size:11px;font-weight:700;color:#027eb5;margin-bottom:2px;white-space:normal}
+  .msg .photo{display:block;margin:-2px -4px 4px;border-radius:6px;overflow:hidden;background:#d1d7db;max-width:330px}
+  .msg .photo img{display:block;width:100%;height:auto;max-height:360px;object-fit:cover}
+  .msg .nophoto{display:block;padding:10px 12px;margin-bottom:4px;border-radius:6px;background:#f0f2f5;color:#54656f;font-size:13px}
   .msg .foot{display:flex;justify-content:flex-end;gap:4px;align-items:center;font-size:11px;color:#667781;margin-top:2px;white-space:nowrap}
   .tick{font-weight:700;letter-spacing:-2px}
   .tick.read{color:#53bdeb}
@@ -678,6 +682,18 @@
     return '<span class="tick" title="Terkirim">✓</span>';
   };
 
+  // An image in a bubble: the photo (click = full size), or why it is missing.
+  const MEDIA_ERR = { too_large: "terlalu besar (maks. 15 MB)", download_failed: "gagal diunduh dari WhatsApp",
+    not_an_image: "bukan file gambar", no_data: "kosong" };
+  const photo = (m) => {
+    if (m.media_id) {
+      const src = "/api/notify/media/" + encodeURIComponent(m.media_id);
+      return `<a class="photo" href="${src}" target="_blank" rel="noopener" aria-label="Buka foto ukuran penuh"><img src="${src}" alt="Foto${m.text ? ": " + esc(m.text) : ""}" loading="lazy" /></a>`;
+    }
+    if (m.kind === "image") return `<span class="nophoto">📷 Foto tidak dapat ditampilkan — ${esc(MEDIA_ERR[m.media_error] || m.media_error || "tidak diketahui")}</span>`;
+    return "";
+  };
+
   async function loadChats() {
     try {
       const q = $("chatQ").value.trim();
@@ -695,7 +711,7 @@
         <span class="avatar ${c.rep_name ? "rep" : "cust"}" aria-hidden="true">${esc(initials(c.rep_name || c.customer))}</span>
         <span class="ci-main">
           <span class="ci-top"><span class="ci-name">${esc(chatName(c))}</span><span class="ci-time ${c.unread ? "unread" : ""}">${esc(chatTime(c.at))}</span></span>
-          <span class="ci-bottom"><span class="ci-prev">${c.dir === "out" ? "✓ " : ""}${c.consent === "opted_out" ? "🚫 " : ""}${esc(String(c.text || "").replace(/\s+/g, " ").slice(0, 90))}</span>
+          <span class="ci-bottom"><span class="ci-prev">${c.dir === "out" ? "✓ " : ""}${c.consent === "opted_out" ? "🚫 " : ""}${c.kind === "image" ? "📷 " + (c.text ? "" : "Foto") : ""}${esc(String(c.text || "").replace(/[*_~]/g, "").replace(/\s+/g, " ").slice(0, 90))}</span>
           ${c.unread ? `<span class="ci-unread" aria-label="${c.unread} belum dibaca">${c.unread}</span>` : ""}</span>
         </span>
       </button>`).join("");
@@ -730,12 +746,12 @@
       const time = d.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
       if (m.dir === "in") {
         const note = m.action && m.action !== "unmatched" ? `<span class="tag" style="color:#54656f">${esc({ opted_out: "STOP — berhenti", opted_in: "MULAI — aktif lagi", shadow_grade: "Penilaian shadow", forwarded: "Diteruskan ke sales", unresolved: "Nomor tidak dikenal" }[m.action] || m.action)}${m.so_no ? " · " + esc(m.so_no) : ""}</span>` : "";
-        return sep + `<div class="msg m-in">${note}${esc(m.text)}<div class="foot">${time}</div></div>`;
+        return sep + `<div class="msg m-in">${note}${photo(m)}${esc(m.text)}<div class="foot">${time}</div></div>`;
       }
       const sys = /^(stop_ack|start_ack|auto_reply|reply_forward|do_cancelled_notice)$/.test(m.milestone) || m.recipient_role === "sales_cc";
       const bad = m.status === "failed" || m.status === "held";
       const why = bad && (m.error || m.cancel_reason) ? `\n— ${m.error || m.cancel_reason}` : "";
-      return sep + `<div class="msg m-out ${sys ? "sys" : ""} ${bad ? "bad" : ""}"><span class="tag">${esc(tagFor(m))}</span>${waFormat(m.text)}${esc(why)}<div class="foot">${time} ${ticks(m)}</div></div>`;
+      return sep + `<div class="msg m-out ${sys ? "sys" : ""} ${bad ? "bad" : ""}"><span class="tag">${esc(tagFor(m))}</span>${photo(m)}${waFormat(m.text)}${esc(why)}<div class="foot">${time} ${ticks(m)}</div></div>`;
     }).join("");
     const tags = [c.rep_name ? "Sales" : "Pelanggan", t.optedOut ? "berhenti (STOP)" : null, c.so_no ? "SO " + c.so_no : null].filter(Boolean).join(" · ");
     $("chatPane").innerHTML = `
@@ -752,7 +768,11 @@
       </form>` : `<div class="chat-blocked">${esc(t.replyBlockedReason || "")}</div>`}`;
     $("chatBack").addEventListener("click", () => { $("chatRoot").classList.remove("open"); ACTIVE = null; renderChatList(); });
     const th = $("chatThread");
-    if (scrollToEnd || atBottom) th.scrollTop = th.scrollHeight;
+    if (scrollToEnd || atBottom) {
+      th.scrollTop = th.scrollHeight;
+      // Photos load after the first layout and push the thread down: stay at the end.
+      th.querySelectorAll("img").forEach((img) => img.addEventListener("load", () => { th.scrollTop = th.scrollHeight; }, { once: true }));
+    }
     const form = document.getElementById("chatForm");
     if (form) {
       const ta = $("chatText");

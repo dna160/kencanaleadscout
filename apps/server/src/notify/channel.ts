@@ -20,6 +20,8 @@ export interface OutboundMessage {
   text: string;
   /** Repeated sends with the same key must not produce a second WhatsApp message. */
   idempotencyKey: string;
+  /** Optional image; `text` is then its caption. */
+  media?: { mime: string; dataB64: string };
 }
 
 export type SendStatus = "stubbed" | "queued" | "sent" | "failed";
@@ -77,7 +79,12 @@ export class GatewayChannel implements Channel {
       const res = await this.fetchImpl(this.url("/send"), {
         method: "POST",
         headers: { "content-type": "application/json", "x-gateway-secret": this.secret },
-        body: JSON.stringify({ to_pn: msg.to, text: msg.text, idempotency_key: msg.idempotencyKey }),
+        body: JSON.stringify({
+          to_pn: msg.to,
+          text: msg.text,
+          idempotency_key: msg.idempotencyKey,
+          ...(msg.media ? { image_b64: msg.media.dataB64, mime: msg.media.mime } : {}),
+        }),
         signal: AbortSignal.timeout(this.timeoutMs),
       });
       const body = (await res.json().catch(() => ({}))) as { message_id?: string; error?: string; queued?: boolean };

@@ -13,7 +13,7 @@
  *
  * Every message LeadScout sends from here is recorded in notify_ledger too.
  */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { normalizeNumber } from "@kencana/core";
 import type { Sql } from "../db/client.js";
 import type { Channel } from "./channel.js";
@@ -34,6 +34,50 @@ export interface GatewayEvent {
   code?: number;
   expires_seconds?: number;
   ts?: string;
+  /** An inbound photo (base64); `text` then holds its caption. */
+  media?: { mime?: string; data_b64?: string; size?: number };
+  /** Why a photo could not be forwarded by the gateway (too_large, download_failed). */
+  media_error?: string;
+}
+
+/** Largest image accepted from the gateway (matches its own cap). */
+export const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
+
+/** The image type from its first bytes. The label the sender gave is not trusted. */
+export function sniffImage(b: Uint8Array): "image/jpeg" | "image/png" | "image/webp" | null {
+  if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return "image/jpeg";
+  if (b.length >= 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return "image/png";
+  if (b.length >= 12 && String.fromCharCode(...b.slice(0, 4)) === "RIFF" && String.fromCharCode(...b.slice(8, 12)) === "WEBP") {
+    return "image/webp";
+  }
+  return null;
+}
+
+export interface StoredMedia {
+  id: string;
+  mime: string;
+  dataB64: string;
+}
+
+/** Validate and store an inbound image. Returns null (with a reason) when it is not one. */
+export async function storeImage(
+  db: AnySql,
+  media: GatewayEvent["media"],
+  caption: string | null,
+): Promise<{ stored: StoredMedia | null; error: string | null }> {
+  if (!media?.data_b64) return { stored: null, error: "no_data" };
+  const bytes = Buffer.from(media.data_b64, "base64");
+  if (!bytes.length) return { stored: null, error: "no_data" };
+  if (bytes.length > MAX_IMAGE_BYTES) return { stored: null, error: "too_large" };
+  const mime = sniffImage(bytes);
+  if (!mime) return { stored: null, error: "not_an_image" };
+  const id = randomUUID();
+  const sha = createHash("sha256").update(bytes).digest("hex");
+  await db`
+    insert into notify_media (id, mime, size, sha256, bytes, caption)
+    values (${id}, ${mime}, ${bytes.length}, ${sha}, ${bytes}, ${caption})
+  `;
+  return { stored: { id, mime, dataB64: bytes.toString("base64") }, error: null };
 }
 
 const STOP_RE = /^\s*(stop|berhenti|unsubscribe)\b/i;
@@ -60,16 +104,22 @@ export function forwardText(customer: string, phone: string, soNo: string, text:
 async function recordSend(
   db: AnySql,
   ch: Channel,
-  o: { milestone: string; soNo: string | null; role: "customer" | "sales_cc"; to: string; body: string },
+  o: { milestone: string; soNo: string | null; role: "customer" | "sales_cc"; to: string; body: string; media?: StoredMedia | null },
 ): Promise<void> {
   const key = `system:${o.milestone}:${o.to}:${randomUUID()}`;
-  const r = await ch.send({ to: o.to, text: o.body, idempotencyKey: key });
+  const r = await ch.send({
+    to: o.to,
+    text: o.body,
+    idempotencyKey: key,
+    ...(o.media ? { media: { mime: o.media.mime, dataB64: o.media.dataB64 } } : {}),
+  });
   await db`
     insert into notify_ledger (mode, milestone, so_no, recipient_role, to_number, body, channel, status,
-                               provider_message_id, error, context_source, idempotency_key, template_version, sent_at)
+                               provider_message_id, error, context_source, idempotency_key, template_version, sent_at,
+                               media_id)
     values ('live', ${o.milestone}, ${o.soNo}, ${o.role}, ${o.to}, ${o.body}, ${ch.mode}, ${r.status},
             ${r.providerMessageId}, ${r.error}, 'inbound', ${key}, ${TEMPLATE_VERSION},
-            ${["sent", "queued", "stubbed"].includes(r.status) ? new Date() : null})
+            ${["sent", "queued", "stubbed"].includes(r.status) ? new Date() : null}, ${o.media?.id ?? null})
   `;
 }
 
@@ -153,9 +203,25 @@ export async function handleInbound(db: AnySql, ch: Channel, e: GatewayEvent, no
     `;
   }
 
+  // A photo (with or without a caption). Dedupe first, so a retried callback
+  // never stores the same image twice.
+  const isImage = Boolean(e.media || e.media_error);
+  if (isImage && e.message_id) {
+    const [seen] = await db<{ n: number }[]>`select count(*)::int as n from notify_inbound where message_id = ${e.message_id}`;
+    if ((seen?.n ?? 0) > 0) return { action: "duplicate", phone };
+  }
+  let media: StoredMedia | null = null;
+  let mediaError: string | null = e.media_error ?? null;
+  if (e.media) {
+    const r = await storeImage(db, e.media, text || null);
+    media = r.stored;
+    mediaError = r.error;
+  }
+
   const inserted = await db<{ id: string }[]>`
-    insert into notify_inbound (message_id, from_pn, from_lid, text, received_at)
-    values (${e.message_id ?? null}, ${phone}, ${e.from_lid ?? null}, ${text}, ${now})
+    insert into notify_inbound (message_id, from_pn, from_lid, text, received_at, kind, media_id, media_error)
+    values (${e.message_id ?? null}, ${phone}, ${e.from_lid ?? null}, ${text}, ${now},
+            ${isImage ? "image" : "text"}, ${media?.id ?? null}, ${mediaError})
     on conflict (message_id) do nothing
     returning id::text
   `;
@@ -168,7 +234,8 @@ export async function handleInbound(db: AnySql, ch: Channel, e: GatewayEvent, no
 
   if (!phone) return done("unresolved"); // LID with no known number: kept, nothing sent
 
-  if (STOP_RE.test(text)) {
+  // Keywords are typed messages. A photo captioned "stop" or "benar" is a photo.
+  if (!isImage && STOP_RE.test(text)) {
     await db`
       insert into notify_contacts (phone_e164, consent_state, consent_source, opted_out_at)
       values (${phone}, 'opted_out', 'reply:STOP', ${now})
@@ -178,7 +245,7 @@ export async function handleInbound(db: AnySql, ch: Channel, e: GatewayEvent, no
     await recordSend(db, ch, { milestone: "stop_ack", soNo: null, role: "customer", to: phone, body: STOP_ACK });
     return done("opted_out");
   }
-  if (START_RE.test(text)) {
+  if (!isImage && START_RE.test(text)) {
     await db`
       insert into notify_contacts (phone_e164, consent_state, consent_source)
       values (${phone}, 'explicit', 'reply:MULAI')
@@ -189,7 +256,7 @@ export async function handleInbound(db: AnySql, ch: Channel, e: GatewayEvent, no
     return done("opted_in");
   }
 
-  const grade = GRADE_RE.exec(text);
+  const grade = isImage ? null : GRADE_RE.exec(text);
   if (grade && (await repPhones(db)).has(phone)) {
     const [row] = await db<{ id: string; so_no: string }[]>`
       select id::text, so_no from notify_ledger
@@ -221,7 +288,16 @@ export async function handleInbound(db: AnySql, ch: Channel, e: GatewayEvent, no
       soNo: last.so_no,
       role: "sales_cc",
       to: rep.phone,
-      body: forwardText(header?.customer_name_text ?? "Pelanggan", phone, last.so_no, text),
+      body: forwardText(
+        header?.customer_name_text ?? "Pelanggan",
+        phone,
+        last.so_no,
+        isImage
+          ? [media ? "📷 Foto dari pelanggan" : `📷 Pelanggan mengirim foto, tetapi tidak dapat diteruskan (${mediaError ?? "?"}). Lihat di LeadScout → Kabar Pesanan → Pesan.`, text]
+              .filter(Boolean).join("\n")
+          : text,
+      ),
+      media,
     });
   }
   const [recent] = await db<{ n: number }[]>`

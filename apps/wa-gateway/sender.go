@@ -19,6 +19,13 @@ import (
 
 // ── Callbacks to LeadScout ───────────────────────────────────────────────────
 
+// EventMedia is an inbound photo, base64-encoded for the JSON callback.
+type EventMedia struct {
+	Mime    string `json:"mime"`
+	DataB64 string `json:"data_b64"`
+	Size    int    `json:"size"`
+}
+
 type Event struct {
 	Type      string `json:"type"` // receipt | inbound | logged_out | temporary_ban | disconnected | connected
 	MessageID string `json:"message_id,omitempty"`
@@ -27,9 +34,13 @@ type Event struct {
 	FromPN    string `json:"from_pn,omitempty"`
 	FromLID   string `json:"from_lid,omitempty"`
 	Text      string `json:"text,omitempty"`
-	Code      int    `json:"code,omitempty"`
-	ExpiresS  int    `json:"expires_seconds,omitempty"`
-	TS        string `json:"ts"`
+	// Media is set on an inbound photo (Text then holds its caption, if any).
+	Media *EventMedia `json:"media,omitempty"`
+	// MediaError says why a photo could not be forwarded (too large, download failed).
+	MediaError string `json:"media_error,omitempty"`
+	Code       int    `json:"code,omitempty"`
+	ExpiresS   int    `json:"expires_seconds,omitempty"`
+	TS         string `json:"ts"`
 }
 
 type Notifier interface{ Notify(Event) }
@@ -181,7 +192,11 @@ func (s *Sender) Step(ctx context.Context) (time.Duration, bool) {
 		_ = s.store.MarkRetry(context.Background(), it.Key, "interrupted")
 		return 0, false
 	}
-	err = s.wa.Send(ctx, it.ToPN, it.Body, it.MessageID)
+	if len(it.Media) > 0 {
+		err = s.wa.SendImage(ctx, it.ToPN, it.Body, it.MediaMime, it.Media, it.MessageID)
+	} else {
+		err = s.wa.Send(ctx, it.ToPN, it.Body, it.MessageID)
+	}
 	_ = s.wa.Typing(ctx, it.ToPN, false)
 
 	switch {

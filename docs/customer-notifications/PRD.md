@@ -216,6 +216,7 @@ All additive; migrations run on boot. ✅ = built.
 - ✅ `notify_ledger` (= outbox). Has `mode`, `milestone`, `so_no`, `recipient_role` (customer | sales_cc), `to_number`, `from_number`, `body`, `channel`, `status`, `provider_message_id`, `error`, `context_source`, `idempotency_key` **unique**, `created_at`. Extend with `event_id`, `due_at`, `attempts`, `leased_until`, `template_version`, `lid`, `delivered_at`, `read_at`, `cancel_reason`.
 - `notify_contacts`: `phone_e164` **pk**, `lid`, `consent_state` (implied | explicit | opted_out), `consent_source`, `opted_out_at`, `shared_flag` (≥ 3 customers in 90 days), `first_contacted_at`, `notes`.
 - `notify_customer_overrides`: `customer_name_id`, `phone_e164` | null, `muted`, `digest_mode`, `set_by`, `reason`.
+- `notify_media` ✅: `id` (random UUID) **pk**, `mime`, `size`, `sha256`, `bytes` (bytea), `caption`. Received photos; `notify_inbound.kind/media_id/media_error` and `notify_ledger.media_id` point at it. Retention: to be included in the 180-day redaction.
 - `notify_sales_contacts`: `erp_sales_id` (→ 1130) **pk**, `sales_name`, `active` (mirrored from 1130), `phone_e164`, `cc_enabled`, `source` ('manual' now, 'selaras' once 1130 carries a phone). Vertical-agnostic; editable on `/notify`.
 
 **Retention.** Message bodies are redacted after 180 days; metadata is kept. Raw phone numbers live only in `notify_contacts`, the ledger and the mirror.
@@ -309,13 +310,13 @@ Before the first send to a number, the gateway's `/check` runs (WhatsApp `IsOnWh
 - Pairing by QR or phone-number code, from an admin page that the gateway serves through LeadScout `/notify`.
 
 ### 10.2 API (contract fixed now; `GatewayChannel` is built against it)
-- `POST /send {to_pn, text, idempotency_key}` → `{message_id, queued}`
+- `POST /send {to_pn, text, idempotency_key, image_b64?, mime?}` → `{message_id, queued}`. With an image, `text` is its caption; the type is sniffed from the bytes (JPEG/PNG/WebP, ≤ 15 MB).
 - `POST /check {pns[]}` → `[{pn, on_whatsapp, jid, lid?}]`
 - `GET /health` → `{connected, logged_in, phone_last_seen, queue_depth}`
 - `GET /pair` → QR or pairing code (admin)
 - Callbacks to `POST {LEADSCOUT}/api/notify/wa-events`:
   - `receipt {message_id, status: server_ack|delivered|read}`
-  - `inbound {from_pn|from_lid, text, ts}`
+  - `inbound {from_pn|from_lid, text, ts, media?: {mime, data_b64, size}, media_error?}`. Photos in 1:1 chats are downloaded (≤ 15 MB; view-once photos are not kept), and the caption arrives as `text`.
   - `logged_out`, `temporary_ban {expires}`, `disconnected`
 - Auth: `x-gateway-secret` both ways.
 - The gateway de-duplicates on `idempotency_key` for 7 days.
@@ -341,6 +342,11 @@ Before the first send to a number, the gateway's `/check` runs (WhatsApp `IsOnWh
 - STOP → opt-out.
 - Anything else → forwarded to the SO's rep (WA + LeadScout feed), with at most one auto-reply per 24 h. The auto-reply names the rep and says the message was received and passed on.
 - **Admins can answer** from the `/notify` → Pesan tab (2026-11-12, owner decision; see §11). The auto-reply no longer says the number is unmonitored.
+- **Photos** (2026-11-12):
+  - **Storage:** a customer's photo is stored (`notify_media`, random UUID ids) and shown in the Pesan thread.
+  - **Forwarding:** it goes to the SO's rep **as a photo**, with the caption.
+  - **Captions aren't keywords:** a photo captioned "STOP" or "BENAR" is a photo, never an opt-out or a grade.
+  - **Unreadable photos:** a photo that isn't a real image, is too large, or failed to download is still recorded, and the rep is told it couldn't be forwarded.
 - **Future:** an AI reply agent answering "pesanan saya sudah sampai mana?" from `order_events`. It is read-only and hands off to the rep.
 
 ---
@@ -367,6 +373,7 @@ Before the first send to a number, the gateway's `/check` runs (WhatsApp `IsOnWh
   - never to an opted-out number;
   - not while the kill switch is on.
   - Every reply is logged in `notify_ledger` as `manual_reply`, with who sent it.
+- **Photos:** received photos show in the thread (click to open full size) and as "📷 Foto" in the list. They're served from `GET /api/notify/media/:id` as inert images (`nosniff`, sandboxing CSP).
 - **Phone layout:** on a phone, an open conversation fills the screen.
 
 **Access.**
@@ -628,11 +635,11 @@ DATABASE_URL=postgres://$USER@localhost:55432/leadscout_test npx vitest run
 | `orderLane.test.ts` | Order lane: cursors, paging, failure isolation, lease, deleted rows; webhook (HMAC, re-read) |
 | `events.test.ts` | Each event rule, replay-safety, horizon, sweep, `so.late`, poll vs. webhook source |
 | `dispatcher.test.ts` | On / shadow / off; merge; DO cancelled before and after sending; unreachable; opt-out; shared number; exclusions; window; daily cap; stale events; mode change; retries; pause; kill switch; step off; release |
-| `waEvents.test.ts` | Receipts; STOP/MULAI; LID learning; shadow grading; reply forwarding; gateway state; pairing proxy |
+| `waEvents.test.ts` | Receipts; STOP/MULAI; LID learning; shadow grading; reply forwarding; gateway state; pairing proxy; inbound photos (stored with the sniffed type, forwarded to the rep as a photo, dedupe on retry, "STOP" caption ignored, fake images refused) |
 | `notifyAdmin.test.ts` | Switches; outbox actions; overrides; shadow summary; pairing QR |
-| `notifyChat.test.ts` | Pesan tab: list, unread/read, search, thread order, reply and its guards (token, never wrote in, opted out, kill switch) |
+| `notifyChat.test.ts` | Pesan tab: list, unread/read, search, thread order, reply and its guards (token, never wrote in, opted out, kill switch); photos in list/thread; media route (type, headers, bad/unknown ids) |
 | `atp.test.ts` | Includes an assertion that the WP-1 re-keying leaves ATP unchanged |
-| `apps/wa-gateway` | API auth and validation; idempotency; pacing; caps; retries; `not_on_whatsapp`; inbound filtering; callbacks; Postgres outbox |
+| `apps/wa-gateway` | API auth and validation; idempotency; pacing; caps; retries; `not_on_whatsapp`; inbound filtering (text and photos); image sends; callbacks; Postgres outbox incl. images |
 
 **Isolation rules, for anyone adding tests:**
 - Database suites run in parallel on one database, so every suite prefixes its rows (`wp4disp`, `wp5in`, …) and deletes only its own.
@@ -641,7 +648,7 @@ DATABASE_URL=postgres://$USER@localhost:55432/leadscout_test npx vitest run
 
 - Before merging, run the suite once against a **freshly created** database as well as a long-lived one. Row order and first-time migrations differ. The dispatcher's processing-order bug (fixed in `6d7d707`) failed only on a fresh database.
 
-Last full run: 599 passed on fresh and long-lived databases (Postgres 16); 243 passed without a database; 13 gateway tests passed with the race detector.
+Last full run: 604 passed on fresh and long-lived databases (Postgres 16); 245 passed without a database; 16 gateway tests passed with the race detector.
 
 ### 19.6 Manual checks
 
@@ -677,6 +684,7 @@ Last full run: 599 passed on fresh and long-lived databases (Postgres 16); 243 p
 | Row `held: shared_number` | Number used by ≥ 3 customers | Antrian → Ditahan: release after checking, or cancel |
 | Row `skipped: stale_event` | The movement is more than 24 h old when detected | Expected after an outage |
 | Receipt `failed: not_on_whatsapp` | The number has no WhatsApp | Override with a WhatsApp number |
+| "📷 Foto tidak dapat ditampilkan" in Pesan | The photo was over 15 MB, failed to download from WhatsApp, or wasn't a real image | Ask the customer to resend; the rep was told |
 | Nothing planned after switching mode | By design: a new mode starts from now | Wait for the next ERP movement |
 
 ---
@@ -721,7 +729,7 @@ Moved to §19.1–19.3, so there is one table to keep current.
 | Live and outbox (WP-6) | `GET/PUT /api/notify/live` [PUT: token], `GET /api/notify/outbox?view=pending\|held\|problems\|recent`, `POST /api/notify/outbox/:id/action` (`send_now`, `release`, `cancel`, `grade`) [token] |
 | People | `GET/PUT /api/notify/sales-contacts[/:id]`, `GET/PUT /api/notify/overrides[/:customerId]`, `GET /api/notify/customers?q=` [PUT: token] |
 | Shadow, replies | `GET /api/notify/shadow?days=`, `GET /api/notify/inbound` |
-| Pesan tab | `GET /api/notify/chats?q=`, `GET /api/notify/chats/:phone`, `POST /api/notify/chats/:phone/read`, `POST /api/notify/chats/:phone/reply` [token] |
+| Pesan tab | `GET /api/notify/chats?q=`, `GET /api/notify/chats/:phone`, `POST /api/notify/chats/:phone/read`, `POST /api/notify/chats/:phone/reply` [token], `GET /api/notify/media/:id` |
 | Gateway | `POST /api/notify/wa-events` (gateway secret); `GET /api/notify/gateway/pair`, `GET /api/notify/gateway/pair-svg`, `POST /api/notify/gateway/pair-phone` [token] |
 | Order backbone | `GET /api/orders/events?so_no=&type=`, `GET /api/orders/sync-status`, `POST /api/erp/webhook` (HMAC) |
 | wa-gateway | `POST /send`, `POST /check`, `GET /health`, `GET /pair`, `POST /pair/phone`, `GET /healthz` — see `apps/wa-gateway/README.md` |
@@ -739,3 +747,4 @@ Moved to §19.1–19.3, so there is one table to keep current.
 | 2026-11-10 | ERP verified by full sweep; auto-ontology not run (no NVIDIA key) | Spec |
 | 2026-11-10 | Selaras is the single source of truth: send on ERP movement (webhook when available, 60 s poll until then); rep = Selaras sales on the SO, vertical-agnostic | Owner |
 | 2026-11-12 | Pesan tab on /notify: WhatsApp-style conversations; admins may reply, only to numbers that wrote in | Owner |
+| 2026-11-12 | The platform receives photos: stored, shown in Pesan, forwarded to the rep as photos | Owner |

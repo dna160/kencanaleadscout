@@ -8,8 +8,33 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 process.env["WA_GATEWAY_SECRET"] = "gw-secret-0123456789";
 process.env["NOTIFY_ADMIN_TOKEN"] = "admin-token-wp5";
 
-const { autoReplyText, forwardText } = await import("../src/notify/inbound.js");
+const { autoReplyText, forwardText, sniffImage } = await import("../src/notify/inbound.js");
+
+/** A real 1×1 PNG, and the first bytes of a JPEG and a WebP. */
+const PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+const JPEG = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0, 16]);
+const WEBP = new TextEncoder().encode("RIFF\u0000\u0000\u0000\u0000WEBPVP8 ");
 const { GatewayAdmin } = await import("../src/notify/channel.js");
+
+describe("image detection (pure)", () => {
+  it("trusts the bytes, not the label", () => {
+    expect(sniffImage(Buffer.from(PNG_B64, "base64"))).toBe("image/png");
+    expect(sniffImage(JPEG)).toBe("image/jpeg");
+    expect(sniffImage(WEBP)).toBe("image/webp");
+    expect(sniffImage(new TextEncoder().encode("%PDF-1.7"))).toBeNull();
+    expect(sniffImage(new Uint8Array())).toBeNull();
+  });
+  it("GatewayChannel sends an image as image_b64 + mime, text as its caption", async () => {
+    const { GatewayChannel } = await import("../src/notify/channel.js");
+    let body: Record<string, unknown> = {};
+    const ch = new GatewayChannel("http://gw", "s", async (_u: string, init: RequestInit) => {
+      body = JSON.parse(String(init.body));
+      return new Response(JSON.stringify({ message_id: "m1", queued: true }), { status: 200 });
+    });
+    await ch.send({ to: "+6281234567890", text: "Foto", idempotencyKey: "k", media: { mime: "image/png", dataB64: PNG_B64 } });
+    expect(body).toEqual({ to_pn: "+6281234567890", text: "Foto", idempotency_key: "k", image_b64: PNG_B64, mime: "image/png" });
+  });
+});
 
 describe("reply texts and the gateway admin client (pure)", () => {
   it("the auto-reply names the rep when known", () => {
@@ -51,11 +76,11 @@ describe.skipIf(!hasDb)("gateway callbacks over the real schema", async () => {
   const { runNotifyMigrations } = await import("../src/db/migrateNotify.js");
 
   let db: NonNullable<ReturnType<typeof dbmod.getSql>>;
-  const sent: { to: string; text: string }[] = [];
+  const sent: { to: string; text: string; media?: { mime: string; dataB64: string } }[] = [];
   const ch = {
     mode: "stub" as const,
-    async send(m: { to: string; text: string }) {
-      sent.push({ to: m.to, text: m.text });
+    async send(m: { to: string; text: string; media?: { mime: string; dataB64: string } }) {
+      sent.push({ to: m.to, text: m.text, ...(m.media ? { media: m.media } : {}) });
       return { status: "stubbed" as const, providerMessageId: `stub-${sent.length}`, error: null };
     },
     async health() {
@@ -71,6 +96,7 @@ describe.skipIf(!hasDb)("gateway callbacks over the real schema", async () => {
 
   async function cleanup(): Promise<void> {
     await db`delete from notify_ledger where idempotency_key like ${`${P}:%`} or to_number in (${CUST}, ${REP}, '+6281355000002', '+6281355000003')`;
+    await db`delete from notify_media where id in (select media_id from notify_inbound where message_id like ${`${P}%`})`;
     await db`delete from notify_inbound where message_id like ${`${P}%`}`;
     await db`delete from notify_contacts where phone_e164 like '+6281355%' or phone_e164 like '+6281356%'`;
     await db`delete from notify_sales_contacts where erp_sales_id like ${`${P}%`}`;
@@ -183,6 +209,50 @@ describe.skipIf(!hasDb)("gateway callbacks over the real schema", async () => {
     expect(sent.map((s) => s.to)).toEqual([REP, CUST, REP]); // forwarded again, no second auto-reply
     const kinds = await db`select milestone from notify_ledger where to_number in (${CUST}, ${REP}) and idempotency_key like 'system:%' order by id`;
     expect(kinds.map((k) => k.milestone)).toEqual(["reply_forward", "auto_reply", "reply_forward"]);
+  });
+
+  it("a customer's photo is stored, forwarded to the rep AS a photo, and shown with its caption", async () => {
+    await seedSent({ mode: "live", to: CUST });
+    const id = msgId();
+    const big = "A".repeat(2 * 1024 * 1024); // the callback route must accept multi-MB bodies
+    const r = await post({ type: "inbound", message_id: id, from_pn: CUST, text: "barang sampai rusak",
+      media: { mime: "image/jpeg", data_b64: PNG_B64, size: 70 }, padding: big });
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toMatchObject({ action: "forwarded" });
+    const [row] = await db`select kind, media_id, media_error, text from notify_inbound where message_id = ${id}`;
+    expect(row).toMatchObject({ kind: "image", media_error: null, text: "barang sampai rusak" });
+    const [m] = await db`select mime, size, caption from notify_media where id = ${row!.media_id}`;
+    expect(m).toEqual({ mime: "image/png", size: 70, caption: "barang sampai rusak" }); // sniffed, not the label
+    const toRep = sent.find((x) => x.to === REP)!;
+    expect(toRep.media).toEqual({ mime: "image/png", dataB64: PNG_B64 });
+    expect(toRep.text).toContain("📷 Foto dari pelanggan");
+    expect(toRep.text).toContain("barang sampai rusak");
+    const [fwd] = await db`select media_id from notify_ledger where to_number = ${REP} and milestone = 'reply_forward'`;
+    expect(fwd!.media_id).toBe(row!.media_id);
+
+    // The gateway retrying the same callback stores nothing new.
+    await post({ type: "inbound", message_id: id, from_pn: CUST, text: "barang sampai rusak", media: { data_b64: PNG_B64 } });
+    expect((await db`select 1 from notify_media where caption = 'barang sampai rusak' and id = ${row!.media_id}`).length).toBe(1);
+    expect(sent.filter((x) => x.to === REP)).toHaveLength(1);
+  });
+
+  it("a photo captioned STOP is a photo, not an opt-out; a fake image is refused but still reported", async () => {
+    await seedSent({ mode: "live", to: CUST });
+    const r = await post({ type: "inbound", message_id: msgId(), from_pn: CUST, text: "STOP", media: { data_b64: PNG_B64 } });
+    expect(r.json()).toMatchObject({ action: "forwarded" });
+    expect(await db`select 1 from notify_contacts where phone_e164 = ${CUST} and consent_state = 'opted_out'`).toHaveLength(0);
+
+    const pdf = Buffer.from("%PDF-1.7 not an image").toString("base64");
+    const id = msgId();
+    await post({ type: "inbound", message_id: id, from_pn: CUST, text: "", media: { mime: "image/jpeg", data_b64: pdf } });
+    const [row] = await db`select kind, media_id, media_error from notify_inbound where message_id = ${id}`;
+    expect(row).toEqual({ kind: "image", media_id: null, media_error: "not_an_image" });
+    expect(sent.filter((x) => x.to === REP).at(-1)!.text).toContain("tidak dapat diteruskan (not_an_image)");
+
+    const id2 = msgId();
+    await post({ type: "inbound", message_id: id2, from_pn: CUST, text: "", media_error: "too_large" });
+    const [r2] = await db`select kind, media_error from notify_inbound where message_id = ${id2}`;
+    expect(r2).toEqual({ kind: "image", media_error: "too_large" });
   });
 
   it("a message from a number we never notified is stored, not answered", async () => {
