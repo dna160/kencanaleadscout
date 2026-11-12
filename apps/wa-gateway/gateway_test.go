@@ -372,7 +372,7 @@ func TestPGStore(t *testing.T) {
 	if again, _ := st.Next(ctx); again != nil {
 		t.Fatal("a claimed item must not be handed out twice")
 	}
-	_ = st.Recover(ctx) // crash mid-send → back in the queue
+	_ = st.Recover(ctx)              // crash mid-send → back in the queue
 	time.Sleep(2 * time.Millisecond) // created_at after k1, so k1 is still first in line
 	_, _, _ = st.Enqueue(ctx, OutboxItem{Key: "k2", MessageID: "m3", ToPN: "+6281234567890", Body: "", MediaMime: "image/png", Media: tinyPNG})
 	it, _ = st.Next(ctx)
