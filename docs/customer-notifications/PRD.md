@@ -7,7 +7,7 @@
 | **Owner** | Mechashock (product) · Claude (spec) |
 | **Product** | LeadScout (`dna160/kencanaleadscout`, `apps/server`) |
 | **Companion docs** | `docs/ontology/SELARAS-ONTOLOGY.md` (verified ERP map, 165 tables) · `claude/leadscout-2.0-prd.md` (master: auth, F1, F2) · `claude/stock-system-prd.md` (mirror + derived-state patterns) |
-| **Audience** | Whoever builds the next phase (human or Claude Code). §4–§7 plus the phase's work packages in §14 are enough to build from. |
+| **Audience** | Whoever builds the next phase (human or Claude Code). §4–§7 plus the phase's work packages in §14 are enough to build from; §19 is how to configure, deploy and test it. |
 
 ---
 
@@ -36,7 +36,7 @@ Notifications are the first consumer. The same events later feed the customer-36
 
 **Trigger and rep come straight from Selaras.** A message fires as soon as the ERP records the movement: a webhook once the Selaras vendor adds one (the API has none today), a 60-second poll until then. The rep CC'd is the sales person Selaras puts on the SO, whatever the segment.
 
-**Where we are.** The ERP has been swept and verified (Appendix A). `/notify` is built and committed: config, a three-step test pipeline with sales CC, trigger rules, a ledger, a stub channel, a gateway adapter and 26 tests. **Next:** deploy and smoke-test (rest of WP-0), fix the SO mirror key, build the event engine and the whatsmeow gateway, then two weeks of internal shadow sends to reps.
+**Where we are.** Phase 1 is **built and merged** (WP-0 to WP-6): ERP mirror keyed on `po_no`, the 60 s order lane and webhook, the order event log, the rules/outbox/dispatcher (off by default), the whatsmeow gateway, and the `/notify` admin tabs. **Next:** deploy, pair the dedicated number, fill rep numbers, and run two weeks in `shadow` mode against the §19.6 go-live checklist. §19 has the configuration, deploy order and tests.
 
 ---
 
@@ -382,7 +382,7 @@ Before the first send to a number, the gateway's `/check` runs (WhatsApp `IsOnWh
 | Phase | Scope | Gate | Status |
 |---|---|---|---|
 | **0 — Discovery** | ERP sweep and ontology; field verification; MVP test pipeline (stub) | Signals verified on ≥ 200 SOs | ✅ Done (pipeline committed; deploy + smoke test pending) |
-| **1 — Backbone + shadow** (≈ 3 wks) | WP-1…WP-6: mirror key fix and extensions; `order_events` deriver; outbox and dispatcher; wa-gateway with pairing; sales CC mapping. **Live triggers on, but every message goes only to the SO's rep** (shadow), which doubles as number warm-up. Plus the M9 internal delay log | **≥ 99% "benar"** on rep-graded MV1–MV3 over 2 weeks; 0 gateway logouts; < 1% unreachable reps | Next |
+| **1 — Backbone + shadow** (≈ 3 wks) | WP-1…WP-6: mirror key fix and extensions; `order_events` deriver; outbox and dispatcher; wa-gateway with pairing; sales CC mapping. **Live triggers on, but every message goes only to the SO's rep** (shadow), which doubles as number warm-up. Plus the M9 internal delay log | **≥ 99% "benar"** on rep-graded MV1–MV3 over 2 weeks; 0 gateway logouts; < 1% unreachable reps | Built ✅ (WP-0…WP-6); shadow trial not started |
 | **2 — Customer MVP** | Customers receive MV1–MV3 and reps get the CC. Pilot **retail** → project → distributor. Pacing, caps, STOP | 0 false messages in the pilot month; opt-out < 3%; WISMO down | — |
 | **3 — Close the delivery loop + COD/CBD** | POD source (driver link or `received_date` discipline) → M5; M2b; M1-W nudges and the "CBD menunggu" queue | CBD created→approved median −30% | — |
 | **4 — Tempo reminders** | Accurate paid-status feed (Accurate Online API, else daily AR export upload); ladder R1–R5; Finance exclusions | 30 days with 0 reminders to paid invoices | — |
@@ -507,6 +507,165 @@ Each item is a new consumer of the backbone, not new plumbing.
 
 ---
 
+## 19. Testing and configuration
+
+Everything needed to configure, deploy, test and operate Phase 1. Setting names are exactly as read by `apps/server/src/config.ts` and `apps/wa-gateway/main.go`.
+
+### 19.1 Configuration: LeadScout (`leadscout` service)
+
+**Channel and access**
+
+| Env | Default | Purpose |
+|---|---|---|
+| `NOTIFY_CHANNEL` | `stub` | `stub` records messages without sending; `gateway` sends through wa-gateway |
+| `WA_GATEWAY_URL` | — | Gateway over private networking, e.g. `http://wa-gateway.railway.internal:8080` |
+| `WA_GATEWAY_SECRET` | — | Shared secret, both directions. Must equal the gateway's. **Secret.** |
+| `NOTIFY_ADMIN_TOKEN` | — | Required for every `/notify` write (switches, actions, rep phones, overrides, test sends, pairing). Gateway mode refuses test sends without it. **Secret.** |
+| `NOTIFY_TEST_SENDS_PER_10MIN` | 30 | Rate limit on the Uji Pipeline tab |
+
+**Live triggers**
+
+| Env | Default | Purpose |
+|---|---|---|
+| `NOTIFY_LIVE` | `off` | `off`: record events, send nothing. `shadow`: everything goes only to the SO's rep, marked [SHADOW]. `on`: customers plus the rep CC. **Any change starts afresh from that moment**: earlier events are never sent, and pending rows of the old mode are cancelled. |
+| `NOTIFY_DISPATCH_INTERVAL_MS` | 15000 | Dispatcher tick; up to 20 messages per tick |
+| `NOTIFY_HOLD_MV1_MIN` / `_MV2_MIN` / `_MV3_MIN` | 10 / 0 / 0 | Hold before sending, per step |
+| `NOTIFY_SEND_FROM_HOUR` / `NOTIFY_SEND_UNTIL_HOUR` | 7 / 20 | Sending window, WIB. Outside it, messages wait. |
+| `NOTIFY_DAILY_CAP_PER_PHONE` | 3 | Order messages per customer number per WIB day; the rest wait for tomorrow |
+| `NOTIFY_MAX_EVENT_AGE_HOURS` | 24 | Movements older than this are skipped (no catch-up blast after an outage) |
+| `NOTIFY_EXCLUDE_CUSTOMERS` | `Anugerah Kencana Panelindo,KMI,Kencana SY Build` | Never messaged; whole-word, case-insensitive |
+| `NOTIFY_SHARED_NUMBER_CUSTOMERS` | 3 | A number on SOs of this many customers (90 days) is held for review |
+
+**Order lane, webhook and events**
+
+| Env | Default | Purpose |
+|---|---|---|
+| `ERP_FAST_POLL_MS` | 60000 | Order lane tick for 1202/1236/1082/1205. `0` turns the lane off; the webhook still works. |
+| `ERP_ORDER_SLOW_EVERY_TICKS` | 30 | The rep list (1130) is read every Nth tick |
+| `ERP_ORDER_BACKFILL_DAYS` | 60 | Where an empty cursor starts |
+| `ERP_ORDER_PAGE_SIZE` / `ERP_ORDER_MAX_PAGES_PER_TICK` | 500 / 20 | Paging per table per tick |
+| `ERP_WEBHOOK_SECRET` | — | HMAC key for `POST /api/erp/webhook`. Empty means the webhook answers 503. **Secret.** |
+| `EVENTS_SWEEP_MS` | 300000 | Catch-up sweep over mirror rows that changed; `0` turns the timer off |
+| `EVENTS_LATE_SWEEP_MINUTES` | 30 | How often `so.late` is checked |
+| `EVENTS_HORIZON_DAYS` | 60 | Orders created earlier produce no events |
+| `DATABASE_URL`, `SELARAS_*` | existing | Shared with the rest of LeadScout |
+
+**Set on `/notify`, stored in the database (no redeploy)**
+
+| Where | What |
+|---|---|
+| Konfigurasi | System number (shown as sender); your name (recorded on every admin action) |
+| Live | Kill switch; per-step on/off; pairing |
+| Sales CC | Each rep's WhatsApp number (by Selaras rep ID) and CC on/off |
+| Pelanggan | Per-customer replacement number and/or mute, with a reason |
+
+### 19.2 Configuration: wa-gateway (`wa-gateway` service)
+
+| Env | Default | Purpose |
+|---|---|---|
+| `DATABASE_URL` | — | The same Postgres. The gateway uses schema `wa_store`. |
+| `WA_GATEWAY_SECRET` | — | 16+ characters; same value as LeadScout. **Secret.** |
+| `LEADSCOUT_EVENTS_URL` | — | `http://<leadscout>.railway.internal:<port>/api/notify/wa-events`. Without it, receipts and replies don't reach LeadScout. |
+| `PORT` | 8080 | |
+| `WA_MIN_GAP_S` / `WA_MAX_GAP_S` | 8 / 25 | Random gap between sends |
+| `WA_HOURLY_CAP` / `WA_DAILY_CAP` | 40 / 200 | Raise slowly after the shadow weeks |
+
+Railway: Root Directory `apps/wa-gateway`, **exactly one replica**, no public domain. `apps/wa-gateway/railway.toml` sets the Dockerfile build and the `/healthz` health check.
+
+### 19.3 Settings per stage
+
+| Stage | LeadScout | Gateway |
+|---|---|---|
+| **Today (merged, nothing sent)** | `NOTIFY_LIVE=off` (default). Set `NOTIFY_ADMIN_TOKEN`. Order lane and events run if Selaras credentials exist; set `ERP_FAST_POLL_MS=0` to hold the lane off. | not deployed |
+| **Pairing** | `NOTIFY_CHANNEL=gateway`, `WA_GATEWAY_URL`, `WA_GATEWAY_SECRET`. Still `NOTIFY_LIVE=off`. | deployed, pair on the Live tab |
+| **Shadow (Phase 1 gate)** | `NOTIFY_LIVE=shadow`; rep numbers filled on Sales CC | default caps |
+| **Customer pilot (Phase 2)** | `NOTIFY_LIVE=on` only after the gate (§19.6) | raise caps gradually |
+
+### 19.4 Deploy order
+
+1. **Merge and deploy LeadScout.** Migrations run on boot and are all additive.
+   - The first boot resets the `so_header` / `so_line` sync cursors once, to fill `po_no` and the recipient fields. Expect one full re-download of those two tables. During it, older SO lines still show a blank customer; reserved quantities stay correct.
+   - Set `NOTIFY_ADMIN_TOKEN`.
+2. **Check that orders are flowing.** `GET /api/orders/sync-status` should show the order-lane tables with a recent `last_ok_at`. Event counts should grow within minutes of new SOs/DOs, as shown by `GET /api/orders/events?limit=20`.
+3. **Deploy wa-gateway** (§19.2), then set the channel variables on LeadScout.
+4. **Pair** from `/notify` → Live with the dedicated phone (OQ-1). The card should turn to "Nomor tertaut dan terhubung".
+5. **Fill rep numbers** on Sales CC, at least for the reps on the most active SOs.
+6. **Set `NOTIFY_LIVE=shadow`.** From that moment, new movements reach reps as [SHADOW] messages.
+
+### 19.5 Automated tests
+
+| Suite | Command | Needs |
+|---|---|---|
+| LeadScout, no database | `pnpm -r --filter @kencana/core build`, then `cd apps/server && npx vitest run` | Node 20, pnpm |
+| LeadScout, full | the same, with `DATABASE_URL=postgres://…` pointing at a **throwaway** database | Postgres 16 |
+| Gateway | `cd apps/wa-gateway && go test -race ./...`; add `DATABASE_URL=…?sslmode=disable` for the Postgres outbox test | Go 1.26 (downloaded automatically by `GOTOOLCHAIN=auto`) |
+
+**Throwaway database**, for example:
+
+```bash
+initdb -D /tmp/pg -A trust && pg_ctl -D /tmp/pg -o "-p 55432" start && createdb -p 55432 leadscout_test
+DATABASE_URL=postgres://$USER@localhost:55432/leadscout_test npx vitest run
+```
+
+**What they cover:**
+
+| File | Covers |
+|---|---|
+| `notify.test.ts` | Message wording; test pipeline; gateway adapter |
+| `soKey.test.ts` | WP-1 `po_no` join; duplicate headers; one-time re-pull |
+| `orderLane.test.ts` | Order lane: cursors, paging, failure isolation, lease, deleted rows; webhook (HMAC, re-read) |
+| `events.test.ts` | Each event rule, replay-safety, horizon, sweep, `so.late`, poll vs. webhook source |
+| `dispatcher.test.ts` | On / shadow / off; merge; DO cancelled before and after sending; unreachable; opt-out; shared number; exclusions; window; daily cap; stale events; mode change; retries; pause; kill switch; step off; release |
+| `waEvents.test.ts` | Receipts; STOP/MULAI; LID learning; shadow grading; reply forwarding; gateway state; pairing proxy |
+| `notifyAdmin.test.ts` | Switches; outbox actions; overrides; shadow summary; pairing QR |
+| `atp.test.ts` | Includes an assertion that the WP-1 re-keying leaves ATP unchanged |
+| `apps/wa-gateway` | API auth and validation; idempotency; pacing; caps; retries; `not_on_whatsapp`; inbound filtering; callbacks; Postgres outbox |
+
+**Isolation rules, for anyone adding tests:**
+- Database suites run in parallel on one database, so every suite prefixes its rows (`wp4disp`, `wp5in`, …) and deletes only its own.
+- Suites that change `notify_settings` hold `test/helpers/settingsLock.ts` for their whole run.
+- `events.test.ts` sweeps the whole mirror, so other suites' orders become events. Dispatcher tests use a large batch so that doesn't push their own rows to a second tick.
+
+Last full run on this branch: 593 passed (Postgres 16) and 13 gateway tests.
+
+### 19.6 Manual checks
+
+**After each deploy (stub channel):**
+1. `/notify` → Uji Pipeline: send each step to your own number with a real SO number ("Muat dari ERP"). Check the wording and the masked recipient.
+2. `/notify` → Live: the mode shows OFF and the order-lane table has recent "Terakhir OK" times.
+
+**After pairing (gateway channel, still `off`):**
+1. Uji Pipeline to your own phone: the message arrives with "typing…" first.
+2. Riwayat shows `queued`, then `sent` once the gateway has sent it (delivery and read times are recorded on the row).
+3. Reply **STOP**: you get the confirmation, and Antrian → Balasan masuk shows `opted_out`. Reply **MULAI** to undo it.
+
+**Shadow trial (two weeks):**
+- **Daily:** Antrian → Ditahan (review shared numbers: release or cancel) and Gagal / tanpa nomor (fix numbers in Selaras, or set an override on Pelanggan).
+- Reps grade by replying **BENAR** / **SALAH** + reason. The Shadow tab shows % benar against the 99% gate, SALAH first.
+
+**Go-live checklist (Phase 1 → 2):**
+- [ ] ≥ 99% "benar" over 14 days, with most messages graded
+- [ ] 0 gateway `logged_out` / `temporary_ban` in the period (gateway logs; Live → Gateway shows only the latest state)
+- [ ] < 1% unreachable reps (Sales CC: no "CC belum aktif" among active reps)
+- [ ] OQ-1 standby number paired-ready; OQ-3 policy decided
+- [ ] Then set `NOTIFY_LIVE=on`. Note: staging the pilot by segment (retail → project → distributor, §13) is **not built**; `on` applies to every customer that passes the rules.
+
+### 19.7 Troubleshooting
+
+| You see | Meaning | Do |
+|---|---|---|
+| Log `dispatch paused: erp_not_configured` | No Selaras base URL | Set `SELARAS_*` |
+| `mirror_stale` | Order lane (or the stock sync, if the lane is off) has no success within 3 intervals | Check Live → Sinkron ERP errors; messages wait, none are dropped |
+| `gateway_disconnected` | Gateway up but not connected or logged in | Live → pairing card; check the primary phone is on |
+| `kill_switch` | Someone stopped sending | Live → Saklar; "Terakhir diubah" says who |
+| Row `unreachable` / `rep_no_phone` | No WhatsApp number on the SO / rep has no number | Fix `kontak_penerima` in Selaras, or add an override / rep number |
+| Row `held: shared_number` | Number used by ≥ 3 customers | Antrian → Ditahan: release after checking, or cancel |
+| Row `skipped: stale_event` | The movement is more than 24 h old when detected | Expected after an outage |
+| Receipt `failed: not_on_whatsapp` | The number has no WhatsApp | Override with a WhatsApp number |
+| Nothing planned after switching mode | By design: a new mode starts from now | Wait for the next ERP movement |
+
+---
+
 ## Appendix A — Selaras field reference (verified 2026-11-10)
 
 | Table | Use | Key fields |
@@ -537,39 +696,19 @@ API: `GET {base}/table/{t}?col=val&col__gte=…&fields=…&order_by=…&limit=�
 
 ## Appendix C — Configuration
 
-| Env | Default | Purpose |
-|---|---|---|
-| `NOTIFY_CHANNEL` | `stub` | `stub` or `gateway` ✅ |
-| `WA_GATEWAY_URL` / `WA_GATEWAY_SECRET` | — | Gateway endpoint and shared secret ✅ |
-| `NOTIFY_ADMIN_TOKEN` | — | Guards `/notify` writes; required for gateway mode ✅ |
-| `NOTIFY_TEST_SENDS_PER_10MIN` | 30 | Test-pipeline rate limit ✅ |
-| `NOTIFY_LIVE` | `off` | `off` / `shadow` / `on` ✅ |
-| `NOTIFY_DISPATCH_INTERVAL_MS` | 15000 | Dispatcher tick ✅ |
-| `NOTIFY_HOLD_MV1_MIN` / `_MV2_MIN` / `_MV3_MIN` | 10 / 0 / 0 | Holds; 0 = send on detection ✅ |
-| `NOTIFY_SEND_FROM_HOUR` / `NOTIFY_SEND_UNTIL_HOUR` | 7 / 20 | Sending window, WIB ✅ |
-| `NOTIFY_MAX_EVENT_AGE_HOURS` | 24 | Older movements are skipped ✅ |
-| `NOTIFY_EXCLUDE_CUSTOMERS` | Anugerah Kencana Panelindo, KMI, Kencana SY Build | Never messaged ✅ |
-| `NOTIFY_SHARED_NUMBER_CUSTOMERS` | 3 | Shared-number hold threshold ✅ |
-| `ERP_FAST_POLL_MS` | 60000 | Order lane for 1202/1236/1082/1205; 0 disables it ✅ |
-| `ERP_ORDER_SLOW_EVERY_TICKS` | 30 | Rep master (1130) read every Nth tick ✅ |
-| `ERP_ORDER_BACKFILL_DAYS` | 60 | Where an empty order-lane cursor starts ✅ |
-| `ERP_ORDER_PAGE_SIZE` / `ERP_ORDER_MAX_PAGES_PER_TICK` | 500 / 20 | Order-lane paging ✅ |
-| `ERP_WEBHOOK_SECRET` | — | HMAC secret for Selaras webhooks; empty ⇒ webhook 503 ✅ |
-| `NOTIFY_DAILY_CAP_PER_PHONE` | 3 | Cap ✅ |
-| `EVENTS_SWEEP_MS` | 300000 | Event catch-up sweep; 0 disables the timer ✅ |
-| `EVENTS_LATE_SWEEP_MINUTES` | 30 | `so.late` check cadence ✅ |
-| `EVENTS_HORIZON_DAYS` | 60 | Older SOs/DOs/requests produce no events ✅ |
-| `SELARAS_*` | existing | ERP access (shared with the stock sync) |
+Moved to §19.1–19.3, so there is one table to keep current.
 
-## Appendix D — Built API (`/api/notify`)
+## Appendix D — Built API
 
-- `GET /config` → `{systemNumber, channel{mode,connected,detail}, adminTokenRequired, erpLookupAvailable, databaseAvailable, milestones[{key,step,label,trigger,hold,coverage,notes}]}`
-- `PUT /config {systemNumber}` [token]
-- `GET /order?so_no=` → read-only SO preview (recipient masked)
-- `POST /test {milestone, customerNumber, salesNumber?, salesName?, soNo?, introduce?}` [token] → `{from, context, warnings[], messages[{role,to,text,status,providerMessageId,error}]}`
-- `GET /ledger?limit=`
-
-Files: `src/notify/{messages,channel,erpLookup}.ts`, `src/routes/notify.ts`, `src/db/migrateNotify.ts`, `public/notify.html`, `test/notify.test.ts` (26 tests).
+| Area | Routes |
+|---|---|
+| Test pipeline | `GET/PUT /api/notify/config`, `GET /api/notify/order?so_no=`, `POST /api/notify/test` [token], `GET /api/notify/ledger?mode=&status=&so_no=` |
+| Live and outbox (WP-6) | `GET/PUT /api/notify/live` [PUT: token], `GET /api/notify/outbox?view=pending\|held\|problems\|recent`, `POST /api/notify/outbox/:id/action` (`send_now`, `release`, `cancel`, `grade`) [token] |
+| People | `GET/PUT /api/notify/sales-contacts[/:id]`, `GET/PUT /api/notify/overrides[/:customerId]`, `GET /api/notify/customers?q=` [PUT: token] |
+| Shadow, replies | `GET /api/notify/shadow?days=`, `GET /api/notify/inbound` |
+| Gateway | `POST /api/notify/wa-events` (gateway secret); `GET /api/notify/gateway/pair`, `GET /api/notify/gateway/pair-svg`, `POST /api/notify/gateway/pair-phone` [token] |
+| Order backbone | `GET /api/orders/events?so_no=&type=`, `GET /api/orders/sync-status`, `POST /api/erp/webhook` (HMAC) |
+| wa-gateway | `POST /send`, `POST /check`, `GET /health`, `GET /pair`, `POST /pair/phone`, `GET /healthz` — see `apps/wa-gateway/README.md` |
 
 ## Appendix E — Decision log
 
