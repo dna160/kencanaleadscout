@@ -129,13 +129,19 @@ describe.skipIf(!hasDb)("planner + dispatcher over the real schema", async () =>
       untilHour: 24,
       dailyCap: 3,
       maxEventAgeHours: 24,
+      // events.test.ts sweeps the whole mirror in parallel, so other suites'
+      // orders become events here too and are planned alongside ours. The
+      // production batch (20 per tick) could then leave OUR rows for the next
+      // tick, which a test that dispatches once would read as "never sent".
+      batch: 1000,
       pauseReason: async () => null,
       log: { info: () => undefined, warn: () => undefined, error: () => undefined },
       ...over,
     })!;
 
   async function cleanup(): Promise<void> {
-    await db`delete from notify_ledger where mode in ('live', 'shadow')`;
+    // Only planner rows (other suites write live rows of their own in parallel).
+    await db`delete from notify_ledger where mode in ('live', 'shadow') and idempotency_key like 'notify:%'`;
     await db`delete from order_events where so_no like ${`${P}%`}`;
     await db`delete from erp_so_line where id like ${`${P}%`}`;
     await db`delete from erp_so_header where id like ${`${P}%`}`;

@@ -361,6 +361,7 @@ async function sentTodayTo(deps: DispatchDeps, e164: string): Promise<number> {
   const [r] = await deps.db<{ n: number }[]>`
     select count(*)::int as n from notify_ledger
      where mode = 'live' and recipient_role = 'customer' and to_number = ${e164}
+       and milestone in ('so_received', 'production_started', 'delivery_scheduled')
        and sent_at >= ${wibDayStart(deps.now())}
   `;
   return r?.n ?? 0;

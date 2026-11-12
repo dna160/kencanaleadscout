@@ -438,10 +438,13 @@ Each WP is independently testable. The order is the dependency order.
   - Flags: `NOTIFY_LIVE=off|shadow|on` (default off). Any mode change sets the activation watermark to now, starts planning after the newest event, and cancels the previous mode's pending rows.
   - API: `GET/PUT /api/notify/sales-contacts` (rep phones, ahead of the WP-6 table); `/api/notify/config` reports the live mode, since when, and outbox counts; `/api/notify/ledger` filters by mode/status/SO.
   - **Not yet:** anti-fingerprinting variants (NTF-R38), the end-of-day digest, the 180-day body redaction.
-- **WP-5. wa-gateway** (`apps/wa-gateway`, Go).
-  - whatsmeow with the Postgres store, the §10.2 API, pacing queue, receipts and inbound callbacks, LID resolution.
-  - A `/api/notify/wa-events` receiver in LeadScout.
-  - Railway service with internal networking.
+- **WP-5. wa-gateway** ✅ (`apps/wa-gateway`, Go 1.26; whatsmeow pinned to the 2026-10-27 commit `1eec113`; deploy notes in `apps/wa-gateway/README.md`)
+  - whatsmeow with the Postgres store (schema `wa_store`), the §10.2 API, a **persistent** outbox (`wa_store.wa_outbox`, written before `/send` answers; 7-day idempotency), paced sender (typing first, 8–25 s gap, hourly 40 / daily 200 caps, waits while disconnected), receipts and inbound callbacks, LID resolution (SenderAlt, then the LID store).
+  - A number with no LID is looked up once via `IsOnWhatsApp` before failing permanently as `not_on_whatsapp` (whatsmeow returns `ErrRecipientNotOnWhatsApp` since 2026-10-26).
+  - Added to the contract: `POST /pair/phone` (link by 8-character code), `GET /healthz` (open liveness), and `status`/`duplicate` in the `/send` answer.
+  - LeadScout: `POST /api/notify/wa-events` (receipts → ledger `sent`/`delivered_at`/`read_at`/`failed`; STOP/BERHENTI → opt-out + one confirmation, MULAI → back in; a rep's BENAR/SALAH grades their latest [SHADOW] message; other customer replies → forwarded to the SO's rep + at most one auto-reply per 24 h; logged_out / temporary_ban / disconnected recorded and shown on `/api/notify/config`). Pairing proxy: `GET /api/notify/gateway/pair`, `POST /api/notify/gateway/pair-phone` (admin token).
+  - Railway: its own service, Root Directory `apps/wa-gateway`, exactly one replica, private networking only.
+  - Verified here: builds, 13 Go tests (race detector, Postgres outbox), and a live boot that reached WhatsApp and produced a pairing QR. **Not verified:** the Docker image build (no Docker daemon here) and an actual paired send (needs the dedicated number, OQ-1).
 - **WP-6. `/notify` additions.**
   - Live switches, holds queue, sales CC list (Selaras reps by ID, one phone field each), shared-number review, pairing QR, health, shadow grading.
 

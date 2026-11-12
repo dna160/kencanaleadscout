@@ -82,12 +82,13 @@ async function liveStatus(): Promise<{
   activeMode: string | null;
   since: string | null;
   counts: Record<string, number>;
+  gateway?: { state: string; detail: string | null; at: string | null } | null;
 } | null> {
   const db = getSql();
   if (!db) return { mode: config.notify.live, activeMode: null, since: null, counts: {} };
   try {
-    const [s] = await db<{ live_mode: string | null; activation_watermark: Date | null }[]>`
-      select live_mode, activation_watermark from notify_settings where id = 1`;
+    const [s] = await db<{ live_mode: string | null; activation_watermark: Date | null; gateway_state: string | null; gateway_detail: string | null; gateway_state_at: Date | null }[]>`
+      select live_mode, activation_watermark, gateway_state, gateway_detail, gateway_state_at from notify_settings where id = 1`;
     const rows = await db<{ status: string; n: number }[]>`
       select status, count(*)::int as n from notify_ledger where mode in ('live', 'shadow') group by status`;
     return {
@@ -95,6 +96,9 @@ async function liveStatus(): Promise<{
       activeMode: s?.live_mode ?? null,
       since: s?.activation_watermark?.toISOString() ?? null,
       counts: Object.fromEntries(rows.map((r) => [r.status, r.n])),
+      gateway: s?.gateway_state
+        ? { state: s.gateway_state, detail: s.gateway_detail, at: s.gateway_state_at?.toISOString() ?? null }
+        : null,
     };
   } catch {
     return { mode: config.notify.live, activeMode: null, since: null, counts: {} };

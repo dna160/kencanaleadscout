@@ -107,6 +107,50 @@ export class GatewayChannel implements Channel {
   }
 }
 
+export interface PairState {
+  paired: boolean;
+  jid?: string;
+  qr?: string;
+  expires_in?: number;
+  error?: string;
+}
+
+/** Gateway-only extras (pairing, number check) used by the /notify admin routes. */
+export class GatewayAdmin {
+  constructor(
+    private readonly baseUrl: string,
+    private readonly secret: string,
+    private readonly fetchImpl: FetchLike = fetch,
+  ) {}
+
+  private async call<T>(method: "GET" | "POST", path: string, body?: unknown, timeoutMs = 30_000): Promise<T> {
+    if (!this.baseUrl) throw new Error("WA_GATEWAY_URL belum diisi.");
+    const res = await this.fetchImpl(`${this.baseUrl.replace(/\/+$/, "")}${path}`, {
+      method,
+      headers: { "x-gateway-secret": this.secret, ...(body ? { "content-type": "application/json" } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    const data = (await res.json().catch(() => ({}))) as T & { error?: string };
+    if (!res.ok) throw new Error(data.error ?? `gateway HTTP ${res.status}`);
+    return data;
+  }
+
+  pair(): Promise<PairState> {
+    return this.call<PairState>("GET", "/pair");
+  }
+  pairPhone(phoneE164: string): Promise<{ code: string }> {
+    return this.call<{ code: string }>("POST", "/pair/phone", { phone: phoneE164 });
+  }
+  check(pns: string[]): Promise<{ pn: string; on_whatsapp: boolean; jid?: string; lid?: string }[]> {
+    return this.call("POST", "/check", { pns });
+  }
+}
+
+export function getGatewayAdmin(): GatewayAdmin | null {
+  return config.notify.channel === "gateway" ? new GatewayAdmin(config.notify.gatewayUrl, config.notify.gatewaySecret) : null;
+}
+
 let cached: Channel | null = null;
 
 /** The configured channel (memoized). Stub unless NOTIFY_CHANNEL=gateway. */
