@@ -266,6 +266,7 @@ interface LedgerRow {
   subject_ref: string | null;
   attempts: number;
   meta: Record<string, unknown>;
+  due_at: Date | null;
 }
 
 export interface DispatchResult {
@@ -277,7 +278,7 @@ export interface DispatchResult {
 async function claim(deps: DispatchDeps): Promise<LedgerRow[]> {
   const now = deps.now();
   const lease = new Date(now.getTime() + 120_000);
-  return deps.db<LedgerRow[]>`
+  const rows = await deps.db<LedgerRow[]>`
     update notify_ledger set status = 'sending', leased_until = ${lease}, attempts = attempts + 1
      where id in (
        select id from notify_ledger
@@ -288,8 +289,14 @@ async function claim(deps: DispatchDeps): Promise<LedgerRow[]> {
         for update skip locked
      )
     returning id::text, mode, milestone, so_no, recipient_role, to_number, body, status, cancel_reason,
-              idempotency_key, subject_ref, attempts, meta
+              idempotency_key, subject_ref, attempts, meta, due_at
   `;
+  // UPDATE … RETURNING yields rows in PHYSICAL order, not the subquery's. The
+  // processing order matters (a customer row must settle before its CC, which
+  // is planned with the same due_at and a higher id), so restore it here.
+  return [...rows].sort(
+    (a, b) => (a.due_at?.getTime() ?? 0) - (b.due_at?.getTime() ?? 0) || Number(a.id) - Number(b.id),
+  );
 }
 
 async function finish(
