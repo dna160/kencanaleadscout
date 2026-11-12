@@ -47,6 +47,17 @@ import { stockRoutes } from "./routes/stock.js";
 import { stockAtpRoutes } from "./routes/stock-atp.js";
 import { runStockMigrations } from "./db/migrateStock.js";
 import { runErpStockMigrations } from "./db/migrateErpStock.js";
+import { runNotifyMigrations } from "./db/migrateNotify.js";
+import { runOrderMigrations } from "./db/migrateOrders.js";
+import { runEventMigrations } from "./db/migrateEvents.js";
+import { startEventDeriver, stopEventDeriver } from "./events/runner.js";
+import { orderEventRoutes } from "./routes/order-events.js";
+import { startNotifyDispatcher, stopNotifyDispatcher } from "./notify/dispatcher.js";
+import { waEventRoutes } from "./routes/wa-events.js";
+import { notifyAdminRoutes } from "./routes/notify-admin.js";
+import { startOrderSync, stopOrderSync } from "./erp/orderSync.js";
+import { erpWebhookRoutes } from "./routes/erp-webhook.js";
+import { notifyRoutes } from "./routes/notify.js";
 import { startErpSync, stopErpSync } from "./erp/syncWorker.js";
 
 const PUBLIC_DIR = fileURLToPath(new URL("../public", import.meta.url));
@@ -62,6 +73,9 @@ async function bootDatabase(app: ReturnType<typeof Fastify>): Promise<void> {
     await runMigrations(db);
     await runStockMigrations(db);
     await runErpStockMigrations(db);
+    await runOrderMigrations(db);
+    await runEventMigrations(db);
+    await runNotifyMigrations(db);
     const n = await seedLeads(db);
     app.log.info({ seeded: n }, "database ready (migrated + seeded)");
   } catch (err) {
@@ -125,6 +139,18 @@ async function main(): Promise<void> {
   app.get("/sy-champion",  (_req, reply) => reply.header("Cache-Control", NC).sendFile("sy-champion.html"));
   app.get("/stock",      (_req, reply) => reply.header("Cache-Control", NC).sendFile("stock.html"));
   app.get("/stock-ppic", (_req, reply) => reply.header("Cache-Control", NC).sendFile("stock-ppic.html"));
+  app.get("/notify",     (_req, reply) => reply.header("Cache-Control", NC).sendFile("notify.html"));
+
+  // Kabar Pesanan: customer order notifications (config + test pipeline, stub channel by default).
+  await app.register(notifyRoutes);
+  // Kabar Pesanan WP-2: Selaras push receiver (503 until ERP_WEBHOOK_SECRET is set).
+  await app.register(erpWebhookRoutes);
+  // Kabar Pesanan WP-3: read-only order events + order-lane status.
+  await app.register(orderEventRoutes);
+  // WP-5: wa-gateway callbacks (receipts, replies, STOP) and the pairing proxy.
+  await app.register(waEventRoutes);
+  // WP-6: the /notify admin tabs (switches, outbox, overrides, shadow grades, pairing).
+  await app.register(notifyAdminRoutes);
 
   // [A] Scraper APIs.
   await app.register(enrichRoutes);
@@ -183,6 +209,14 @@ async function main(): Promise<void> {
   // [STK 2.0] ERP mirror poll. Self-guards on hasErp/hasDatabase, so it is safe
   // unconditionally: with no ERP configured it logs once and does nothing.
   startErpSync();
+  // Kabar Pesanan WP-2: 60 s order lane (1202/1236/1082/1205 + 1130). Same
+  // self-guarding: without ERP credentials or a database it logs and stays off.
+  startOrderSync();
+  // WP-3: derive order events from each lane batch, plus a catch-up sweep.
+  startEventDeriver();
+  // WP-4: plan + send messages from events. NOTIFY_LIVE=off (default) records
+  // the mode and sends nothing; shadow sends only to reps.
+  await startNotifyDispatcher();
 
   try {
     await app.listen({ host: config.host, port: config.port });
@@ -208,6 +242,9 @@ async function main(): Promise<void> {
     // in which the replacement process declined every tick and /stock told the
     // operator to confirm with PPIC about an ERP that was perfectly healthy.
     // It never throws, and it releases only rows this process owns.
+    await stopOrderSync();
+    await stopNotifyDispatcher();
+    await stopEventDeriver();
     const erp = await stopErpSync();
     app.log.info({ ...erp }, "erp sync stopped");
     await closeDatabase();

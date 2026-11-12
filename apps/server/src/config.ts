@@ -430,6 +430,104 @@ export const config = {
      */
     diagnoseColumns: bool("STOCK_SYNC_DIAGNOSE_COLUMNS", true),
   },
+
+  // ── Kabar Pesanan order lane (PRD §5.0, WP-2) ────────────────────────────
+  // A separate, small sync for the order-to-cash tables (1202, 1236, 1082,
+  // 1205, 1130) so an order movement reaches LeadScout within ~1 minute. Kept
+  // apart from the 180 s stock sync: its own lease, cursors and errors.
+  orders: {
+    /** Fast-lane tick. 0 disables the lane entirely (the webhook still works). */
+    fastPollMs: intOrZero("ERP_FAST_POLL_MS", 60_000),
+    /** The rep master (1130, ~86 rows) is read every N ticks, not every tick. */
+    slowEveryTicks: int("ERP_ORDER_SLOW_EVERY_TICKS", 30),
+    /**
+     * Where an EMPTY cursor starts: this many days back, not the beginning of
+     * time. The lane needs live orders, not 78k historic DOs; and rules only fire
+     * after the activation watermark anyway (PRD §5.1).
+     */
+    backfillDays: int("ERP_ORDER_BACKFILL_DAYS", 60),
+    pageSize: int("ERP_ORDER_PAGE_SIZE", 500),
+    /** Bound on pages per table per tick; the cursor resumes from the last row read. */
+    maxPagesPerTick: int("ERP_ORDER_MAX_PAGES_PER_TICK", 20),
+    /**
+     * HMAC-SHA256 secret for POST /api/erp/webhook (header x-selaras-signature,
+     * hex of the raw body). Empty ⇒ the webhook answers 503. SECRET.
+     */
+    webhookSecret: str("ERP_WEBHOOK_SECRET"),
+  },
+
+  // ── Kabar Pesanan order events (PRD §5.1, WP-3) ──────────────────────────
+  events: {
+    /**
+     * Catch-up sweep: re-derives from mirror rows written since the last sweep
+     * (by EITHER sync loop), so nothing depends on a listener having run. 0
+     * disables the timer; events from the order lane still derive per batch.
+     */
+    sweepMs: intOrZero("EVENTS_SWEEP_MS", 300_000),
+    /** How often the time-based so.late check runs. */
+    lateSweepMinutes: int("EVENTS_LATE_SWEEP_MINUTES", 30),
+    /**
+     * Facts about SOs / DOs / requests created longer ago than this are not
+     * recorded. Keeps the log about live orders: the WP-1 re-pull touches all
+     * 75k historic headers, and none of them is news.
+     */
+    horizonDays: int("EVENTS_HORIZON_DAYS", 60),
+  },
+
+  // ── Kabar Pesanan / customer notifications (docs/customer-notifications) ──
+  notify: {
+    /**
+     * `stub` (default): nothing leaves the server; every message is recorded in
+     * `notify_ledger` and shown on /notify. `gateway`: POST to the whatsmeow
+     * sidecar at WA_GATEWAY_URL. Stub until the gateway is built and paired.
+     */
+    channel: oneOf("NOTIFY_CHANNEL", ["stub", "gateway"] as const, "stub"),
+    /** Internal URL of the wa-gateway sidecar (e.g. http://wa-gateway.railway.internal:8080). */
+    gatewayUrl: str("WA_GATEWAY_URL"),
+    /** Shared secret sent to the gateway as `x-gateway-secret`. SECRET. */
+    gatewaySecret: str("WA_GATEWAY_SECRET"),
+    /**
+     * When set, every write on /api/notify (config save, test sends) needs the
+     * header `x-notify-token` with this value. Leave blank only while the channel
+     * is `stub`: once messages really go out, the test pipeline can message any
+     * number, so it must not be open to anyone who has the URL. SECRET.
+     */
+    adminToken: str("NOTIFY_ADMIN_TOKEN"),
+    /** Test sends allowed per rolling 10 minutes (per server process). */
+    testSendsPer10Min: int("NOTIFY_TEST_SENDS_PER_10MIN", 30),
+
+    // ── Live triggers (PRD §5.2, §7, §9, WP-4) ──
+    /**
+     * `off` (default): events are recorded, nothing is planned or sent.
+     * `shadow`: every message goes ONLY to the SO's rep, prefixed [SHADOW] and
+     *   annotated with what live mode would have done (PRD §13 Phase 1).
+     * `on`: customers receive the messages and the rep gets the CC.
+     * Changing the mode starts it fresh from that moment (activation watermark):
+     * events from before the switch are never sent.
+     */
+    live: oneOf("NOTIFY_LIVE", ["off", "shadow", "on"] as const, "off"),
+    dispatchIntervalMs: int("NOTIFY_DISPATCH_INTERVAL_MS", 15_000),
+    /** Hold before release, minutes (PRD §5.0): absorbs SOs deleted/edited right after entry. */
+    holdMinutes: {
+      so_received: intOrZero("NOTIFY_HOLD_MV1_MIN", 10),
+      production_started: intOrZero("NOTIFY_HOLD_MV2_MIN", 0),
+      delivery_scheduled: intOrZero("NOTIFY_HOLD_MV3_MIN", 0),
+    },
+    /** Customer messages per phone per WIB day; the rest wait for the next day. */
+    dailyCapPerPhone: int("NOTIFY_DAILY_CAP_PER_PHONE", 3),
+    /** Sending window, WIB hours [start, end). Outside it messages wait. */
+    quietStartHour: int("NOTIFY_SEND_FROM_HOUR", 7),
+    quietEndHour: int("NOTIFY_SEND_UNTIL_HOUR", 20),
+    /**
+     * An event describing a movement older than this is not sent (no catch-up
+     * blast after an outage, PRD §16). Measured on the ERP's own timestamp.
+     */
+    maxEventAgeHours: int("NOTIFY_MAX_EVENT_AGE_HOURS", 24),
+    /** Customers never messaged (related parties, PRD §7). Case-insensitive substring match. */
+    excludeCustomers: csv("NOTIFY_EXCLUDE_CUSTOMERS", ["Anugerah Kencana Panelindo", "KMI", "Kencana SY Build"]),
+    /** A number on SOs of this many different customers in 90 days is held for review. */
+    sharedNumberCustomers: int("NOTIFY_SHARED_NUMBER_CUSTOMERS", 3),
+  },
 } as const;
 
 export const hasDatabase = Boolean(config.databaseUrl);

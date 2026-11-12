@@ -1,0 +1,13 @@
+# Railway service "wa-gateway": set the service's Root Directory to apps/wa-gateway.
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/healthz"
+healthcheckTimeout = 60
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 10
+# EXACTLY ONE replica: two processes on one WhatsApp session kick each other
+# off (StreamReplaced) and look like an unofficial client to WhatsApp.
+numReplicas = 1

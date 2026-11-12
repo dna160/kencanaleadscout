@@ -1,0 +1,167 @@
+# Selaras sweep 2026-11-10 (Railway selaras-sweep, 300 most-recently-updated rows/table)
+# id|name|module|rows|u30 (updated last 30d)|u365|first created|last updated|ncols|lookup targets (tbl numbers)
+1238|DB - Booking Stock FG|Booking Stock|90|0|0|2020-06|2022-04-28|22|1173,1217,1194,1228,1172,1130|
+1244|DB - Booking Stock RM|Booking Stock|0|||||18|1173,1217,1194,1228,1178,1130|
+1054|DB - List Customer|Customer|15502|132|1616|2020-05|2026-11-10|35|1130,1206,1200|
+1354|Customer Export Setting|Customer Export|1|0|0|2022-05|2022-05-13|10|1194|
+1358|Customer Export|Customer Export|8|0|0|||26||
+1380|Customer History|Customer History|4754|0|0|||34|1054|
+1274|DSB - Project|Dashboard|2785|0|0|||35|1233,1130,1230,1173,1231,1232|
+1275|DSB - Customer|Dashboard|4284|0|0|||31|1130,1206,1200|
+1277|DSB - DO|Dashboard|6821|0|0|2020-05|2021-01-13|27|1054,1172,1173,1130|
+1395|Dashboard Top|Dashboard Invoice|0|||||8||
+1196|PO - Incoming Material PN|DB Incoming Material|5056|104|820|2020-05|2026-11-10|42|1178,1228,1177,1176,1076,1172,1194,1322|
+1372|Database Marketplace|DB Marketplace|4|0|0|2023-05|2024-06-27|9||
+1076|DB - List Pack- ID|DB Product|5|0|0|2019-09|2019-11-20|8|1076|
+1161|DB - List Barang TH M2|DB Product|6|0|0|2019-11|2019-11-20|9||
+1172|DB - List Finished Goods|DB Product|9094|143|973|2020-03|2026-11-10|50|1194,1228,1173,1195,1076,1174,1175|
+1173|DB - Combo|DB Product|168|0|15|2019-11|2026-08-21|11||
+1174|DB - List Protective Film|DB Product|2|0|0|2019-11|2021-04-02|10||
+1175|DB - List Finished Goods Category|DB Product|0|||||8||
+1176|DB - List Raw Material Category|DB Product|7|0|0|2019-11|2020-01-20|8||
+1178|DB - List Raw Material|DB Product|4363|59|789|2020-04|2026-10-30|38|1173,1228,1177,1076,1176,1194|
+1194|DB - List FG Brand|DB Product|18|0|4|2019-11|2026-08-12|9||
+1225|DB - Product Thickness|DB Product|2|0|0|2019-12|2019-12-24|8||
+1228|DB - List Warna|DB Product|289|2|78|2019-12|2026-11-03|12|1174|
+1253|DB - FG Stock Import|DB Product|62|0|0|2024-09|2024-09-24|12||
+1254|DB - RM Stock Import|DB Product|634|634|634|2026-11|2026-11-09|11||
+1276|DB - List Finished Goods Checker|DB Product|4090|0|0|2021-06|2021-06-14|41|1194,1228,1173,1195,1076,1174,1175|
+1303|DB - TH Alu Sales Master|DB Product|20|0|1|2020-09|2026-08-12|10||
+1306|DB - List Raw Material Checker|DB Product|1926|0|0|2020-10|2020-10-29|31|1228,1177,1076,1176,1194|
+1360|DB - Auto Approval FG V2|DB Product|192|0|0|2023-10|2023-10-05|16|1194,1228|
+1361|DB - Min Price Bekasi|DB Product|462|0|0|2022-06|2022-06-23|16|1194,1228|
+1084|PO A - Item P|DB Purchase Order|4597|67|663|2020-05|2026-11-09|51|1251,1178,1228,1177,1194,1076,1172,1176|
+1087|PO C - Invoice P|DB Purchase Order|2|0|0|2019-09|2019-12-15|22|1177|
+1251|PO - List Supplier|DB Purchase Order|134|0|3|2020-04|2026-02-09|12||
+1252|PO - List|DB Purchase Order|1197|16|149|2020-05|2026-11-09|18|1251|
+1086|PO B - Item P Delivery|DB Purchase Order2|4|0|0|2019-09|2019-12-15|33|1178,1228,1177,1076,1176|
+1240|QC - Finished Goods|DB Quality Control|8056|87|818|2020-05|2026-11-10|21|1172,1322|
+1241|QC - Raw Material|DB Quality Control|255|0|15|2020-04|2026-05-05|20|1178,1322|
+1236|DB - Request Produksi|DB Request Produksi|9064|240|1765|2020-01|2026-11-10|44|1280,1054,1217,1130,1194,1228,1173,1172|
+1280|DB - Summary Request Produksi|DB Request Produksi|323|5|50|2020-07|2026-11-09|11||
+1130|CRM - List Sales|DB Sales|86|2|53|2019-12|2026-11-04|19|1123|
+1323|DB - Stock Opname RM|DB Stock Opname|0|||||11|1178,1322|
+1324|DB - Stock Opname FG|DB Stock Opname|131742|0|44321|2023-01|2026-08-19|12|1172,1322|
+1336|DB - Stock Opname Pemutihan FG|DB Stock Opname|31|0|5|2021-09|2026-08-03|10|1322|
+1340|DB - Stock Opname Pemutihan RM|DB Stock Opname|228|5|49|2021-11|2026-11-09|9||
+1053|DB - Supplier PIC|DB Supplier|1|0|0|2019-09|2019-12-10|13|1177|
+1177|DB - List RM Supplier/Brand|DB Supplier|8|0|0|2019-11|2020-04-22|15||
+1328|ST - Transfer Stock FG|DB Transfer Stock|9101|200|2137|2021-04|2026-11-07|34|1334,1194,1228,1172,1322,1173|
+1329|ST - Transfer Stock RM|DB Transfer Stock|0|||||19|1178,1322|
+1334|ST - Transfer Stock Summary FG|DB Transfer Stock|1132|25|260|2021-07|2026-11-07|19|1322|
+1165|WO - Work Order|DB Work Order|341|6|50|2019-11|2026-11-06|17|1173|
+1168|WO - Formula Conversion|DB Work Order|63|0|0|2019-11|2024-09-06|11|1176|
+1169|PRD - Jumlah Jam|DB Work Order|0|||||15||
+1170|WO - Jam Conversion|DB Work Order|27|0|0|2019-11|2025-08-01|13|1173|
+1171|WO - Production RM|DB Work Order|7289|51|1987|2019-12|2026-10-13|30|1178,1177,1176,1076,1173,1322|
+1190|WO - Production FG|DB Work Order|9678|262|1890|2019-11|2026-11-10|72|1178,1172,1228,1194,1322,1173,1175,1177,1176|
+1191|WO - Report Jam WO|DB Work Order|0|||||14||
+1287|FORM - WO Approval|DB Work Order|0|||||8||
+1320|WO - Estimasi|DB Work Order|1135|0|0|2021-06|2021-06-17|11||
+1339|WO - Production FG Waste|DB Work Order|10664|107|1153||2026-11-09|52|1172,1228|
+1341|Wo - Summary - Mx|DB Work Order|26|0|0|||11||
+1082|SO - Delivery Order|Delivery Order|77929|1383|15976|2020-05|2026-11-10|54|1322,1054,1055,1130,1173,1123|
+1205|SO - Sales Order Delivery N|Delivery Order|143029|2401|27088|2020-05|2026-11-10|40|1054,1172,1060,1173,1082,1322,1228|
+1370|Sales Order Delivery Ecommerce|Delivery Order Ecomm|6400|114|1386|2023-06|2026-11-10|37|1054,1172,1060,1173,1371,1322,1228|
+1371|Delivery Order Ecommerce|Delivery Order Ecomm|5629|102|1261|2023-06|2026-11-10|47|1322,1054,1055,1130,1173,1123|
+1338|DO Daily|DO Daily|5|0|0|||11|1194|
+1312|EXP - Sales Order Delivery N|Export Manager|13460|0|0|2021-12|2022-09-02|32|1054,1172,1060,1173|
+1313|EXP - Sales Order Detail N|Export Manager|1062|0|0|2021-01|2021-03-16|51|1194,1228,1172,1060,1173,1054,1130|
+1314|EXP - Sales Order N|Export Manager|473|0|0|2021-02|2021-07-16|46|1206,1054,1130,1218,1055,1173|
+1316|EXP - Incoming Material PN|Export Manager|50|0|0|2021-02|2021-03-19|41|1178,1228,1177,1176,1076,1172,1194|
+1317|EXP - Item P|Export Manager|37|0|0|2021-02|2021-04-08|51|1251,1178,1228,1177,1194,1076,1172,1176|
+1318|EXP - Manager|Export Manager|13|2|3|2021-02|2026-11-02|11|1|
+1321|EXP - Sales Invoice|Export Manager|245|0|0|2025-10|2025-10-31|11||
+1335|EXP - Delivery Order|Export Manager|2815|0|0|2024-09|2024-09-19|19|1194|
+1349|EXP - Delivery Order Head|Export Manager|1465|0|0|||43|1322,1054,1055,1130,1173,1123|
+1378|EXP CRM - Project|Export Manager|70|0|0|2024-08|2024-08-31|25|1233,1231,1232|
+1387|EXP CRM - Project - ID (Sales Project A)|Export Manager|70|0|0|2024-08|2024-08-31|25|1233,1231,1232|
+1388|EXP CRM - Project - ID (Sales Project Al|Export Manager|25|0|0|2024-09|2024-09-26|25|1233,1231,1232|
+1389|EXP CRM - Project - ID (Estimate Closed |Export Manager|14|0|0|2020-05|2024-10-09|25|1233,1231,1232|
+1392|EXP - Delivery Order Head Ecommerce|Export Manager|140|69|101|2023-09|2026-10-30|46|1322,1054,1055,1130,1173,1123|
+1394|Export Manager|Export Manager V2|0|||||8||
+1282|FORM - List Raw Material|Form Raw Material|0|||||8||
+1286|FORM - SO Approval|Form SO Approval|0|||||8||
+1337|FORM - Transfer Stock|Form Transfer Stock|1|0|0|2021-11|2021-11-12|8||
+1322|DB - List Gudang|Gudang|15|0|0|2021-03|2023-01-16|14||
+1055|DB - Customer PIC|Kustomer|14982|107|1304|2020-05|2026-11-10|16|1054,1130|
+1200|DB - List Customer Business|Kustomer|19|0|0|2020-05|2020-05-03|8||
+1206|DB - Badan Usaha|Kustomer|24|0|0|2020-05|2021-07-08|9||
+1310|DB - Lacak Raw|Lacak|15|0|0|2021-01|2021-01-14|26||
+1246|FORM - Laporan Sales|Laporan|0|||||8||
+1179|ST - Mutasi FG|Mutasi Stock|186576|48984|73488|2020-05|2026-11-10|42|1322,1054,1172,1194,1228,1174,1175|
+1217|CRM - Project|Projects|6563|64|608|2020-05|2026-11-10|38|1233,1130,1230,1173,1231,1232|
+1218|CRM - Project Detail|Projects|10271|69|647|2020-05|2026-11-10|19|1217,1054,1200,1055,1130|
+1230|CRM - Klasifikasi|Projects|2|0|0|2020-01|2020-01-04|8||
+1231|CRM - Status|Projects|2|0|0|2020-01|2020-01-04|8||
+1232|CRM - Sub Status|Projects|5|0|0|2020-01|2020-03-02|9|1231|
+1233|CRM - Category|Projects|28|0|0|2020-05|2020-05-03|8||
+1239|CRM - Project Item Detail|Projects|74|0|0|2020-05|2024-03-22|30|1173,1217,1194,1228,1130|
+1288|DB - List Gudang|QR Code|2|0|0|2020-08|2020-08-24|8||
+1292|DB - QR FG Stock Out|QR Code|2|0|0|2020-08|2021-01-13|25|1288,1296,1172,1194,1228,1175|
+1293|DB - QR RM Stock In|QR Code|2|0|0|2020-08|2020-08-24|26|1288,1296,1178,1228,1177,1076,1176,1194|
+1295|DB - QR RM Stock Out|QR Code|0|||||26|1288,1296,1178,1228,1177,1076,1176,1194|
+1296|DB - List Gudang Position|QR Code|6|0|0|2020-08|2020-08-24|9|1288|
+1297|DB - Live QR RM Stock|QR Code|2|0|0|2020-08|2020-08-24|26|1288,1296,1178,1228,1177,1076,1176,1194|
+1298|DB - Live QR FG Stock|QR Code|3|0|0|2020-08|2021-01-13|25|1288,1296,1172,1194,1228,1175|
+1216|CRM - Laporan Sales|Record Laporan|34867|0|25|2018-02|2026-04-27|37|1054,1218,1055,1219,1231,1232,1130|
+1219|PRJ - List Kondisi Lapangan|Record Laporan|5|0|0|2019-12|2019-12-15|8||
+1262|DB - Request Pembelian Detail|Request Pembelian|3980|67|644|2020-06|2026-11-09|21|1251,1172,1178|
+1263|DB - Kode dan Nama Barang|Request Pembelian|2606|0|0|2020-06|2021-01-04|10||
+1264|DB - Request Pembelian|Request Pembelian|1173|16|147|2020-06|2026-11-09|19|1322,1251|
+1390|Request Produksi Report|Request Produksi Rep|1|0|0|2024-12|2025-06-09|10||
+1081|SO D - Invoice P|Sales Order|1|0|0|2021-02|2021-03-12|21|1054,1130|
+1202|SO - Sales Order N|Sales Order|75212|1355|15458|2020-05|2026-11-10|50|1206,1054,1130,1218,1055,1173|
+1203|SO - Sales Order Detail N|Sales Order|142206|2529|27172|2020-05|2026-11-10|57|1054,1194,1228,1172,1060,1173,1130|
+1256|SO - Report Retail Exportable|Sales Order|44|0|0|||21||
+1260|SO - Export Settings|Sales Order|1|1|1|2020-05|2026-11-09|10||
+1261|SO - Report Do Exportable|Sales Order|45|45|45|2026-11|2026-11-09|17||
+1272|SO - Sales Order Detail N|Sales Order|228759|0|0|2020-06|2023-10-06|26|1194,1172|
+1307|DO - Delivery|Sales Order|1|0|0|2020-12|2020-12-08|12||
+1308|DO - Delivery Detail|Sales Order|2|0|0|2020-12|2020-12-08|15|1307,1082,1054|
+1330|SO - Booking FG|Sales Order|0|||||14|1172,1322|
+1331|SO - Booking RM|Sales Order|0|||||14|1178,1322|
+1332|SO - Sales Invoice Import|Sales Order|45|45|45|2026-11|2026-11-09|44||
+1359|SO - Sales Order Detail N Deleted|Sales Order|2651|0|0|2022-06|2024-12-10|57|1194,1228,1172,1060,1173,1054,1130|
+1281|Form - SO Update|Sales Order Delivery|1|0|0|2020-07|2020-11-02|8||
+1368|Sales Order Ecommerce|Sales Order Ecommerc|5598|103|1243|2023-06|2026-11-10|29|1130|
+1369|Sales Order Detail Ecommerce|Sales Order Ecommerc|6340|117|1389|2023-06|2026-11-10|48|1054,1194,1228,1172,1060,1173,1130|
+1373|SO - Sales Invoice Import Ecommerce|Sales Order Ecommerc|3|3|3|2026-11|2026-11-09|43||
+1374|SO - Report Do Exportable Ecommerce|Sales Order Ecommerc|3|3|3|2026-11|2026-11-09|21||
+1375|Export Settings Ecommerce|Sales Order Ecommerc|1|1|1|2023-06|2026-11-09|10||
+1309|CRM - Sales Target|Sales Target|60|0|60|2026-05|2026-06-04|21|1130|
+1180|ST - Mutasi RM|Stock|8803|8803|8803|2026-11|2026-11-09|35|1322,1178,1228,1177,1176|
+1210|ST - Live FG|Stock|1489|1489|1489|2026-11|2026-11-10|42|1172,1194,1228,1174,1175|
+1212|ST - Live RM|Stock|301|301|301|2026-11|2026-11-09|39|1178,1228,1177,1194,1176,1060|
+1265|DB - Level Stock Min|Stock|284|0|0|2020-06|2020-06-15|26|1194,1228|
+1269|DB - Level Stock Min|Stock|235|0|0|2020-07|2020-07-03|84|1194,1228|
+1270|DB - Level Stock Settings|Stock|1|0|0|2020-06|2020-07-29|8||
+1271|DB - Level Stock Min V2|Stock|224|0|0|2020-08|2020-08-14|91|1194,1228|
+1278|ST - Stock Notification|Stock|2|0|0|2020-07|2020-07-28|8||
+1279|ST - Stock Notification Log|Stock|13|0|0|2020-07|2020-07-28|8||
+1283|Db - Stock Level Min RM|Stock|36|0|0|2020-07|2020-07-29|28|1176,1194|
+1284|Db - Stock Level Min RM|Stock|36|0|0|2020-07|2020-07-28|23||
+1301|ST - Live FG Diff|Stock|2518|0|0|||53|1322,1172,1194,1228,1174,1175|
+1302|ST - Live RM Diff|Stock|154|0|0|||38|1178,1228,1177,1194,1176,1060|
+1326|ST - Live RM Gudang|Stock|65445|65445|65445|2026-11|2026-11-09|38|1178,1322,1228,1177,1194,1176,1060|
+1397|FORM - Cek Stok FG|Stock Movement FG|0|||||8||
+1325|ST - Live FG Gudang|Stock Validator|2557|2557|2557|2026-11|2026-11-10|42|1172,1322,1194,1228,1174,1175|
+1207|DB - Customer TOP Approval|T.O.P Approval|9709|123|1473|2020-05|2026-11-10|18|1054,1130,1173|
+1350|Setting Transfer Stock Export|Transfer Stock Expor|1|0|0|2022-03|2022-10-06|10|1322|
+1351|Transfer Stock Export|Transfer Stock Expor|119|0|0|||26||
+1201|tbl_1201_DBListCustomerProvinceID|-||||||0||ERR: sample 400
+1204|xxxDB - FG Warna|-|63|0|0|2019-12|2019-12-27|8||
+1208|SO - Sales Order Detail N FU|-|42|0|0|2020-05|2020-05-08|34|1173,1194,1228,1172,1060,1054,1130|
+1209|WO - Production RM Waste|-|6|0|0|2019-12|2020-01-14|25|1178,1177,1176,1060|
+1211|ST - Live Buffer FG|-|3|0|0|2020-01|2020-01-22|26|1172,1194,1174,1175|
+1213|ST - Live Buffer RM|-|22|0|0|2020-02|2020-02-13|21|1178,1228,1177,1176|
+1229|CRM - Provinsi|-|34|0|0|2020-01|2020-04-03|8||
+1235|SPB - Surat Pengeluaran Barang|-|3|0|0|2020-01|2020-01-15|15|1054,1130|
+1242|ST - Stock Opname FG|-|3020|0|0|2020-02|2020-02-13|25|1172,1194,1228,1174,1175|
+1243|ST - Stock Opname RM|-|1651|0|0|2020-02|2020-02-13|20|1178,1228,1177,1176|
+1255|SO - Report Retail|-|34394|0|0|2023-02|2023-02-20|24|1130,1054,1228|
+1291|DB - QR FG Stock In|-|2|0|0|2020-08|2021-01-13|25|1288,1296,1172,1194,1228,1175|
+1299|Form - QR FG|-|0|||||8||
+1311|DB - Lacak Summary|-|14|0|0|2021-06|2021-06-17|15||
+1327|DB - Retur Approval|-|1|0|0|2021-06|2021-07-01|18|1205,1322|
+1346|FORM - FG Add|-|0|||||8||

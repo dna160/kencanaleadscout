@@ -50,6 +50,7 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import type { Sql } from "../db/client.js";
 import { getSql } from "../db/client.js";
 import { config, hasErp } from "../config.js";
+import { SO_HEADER_LOOKUP_SQL } from "../db/migrateErpStock.js";
 
 /** Canonical unit for ATP maths in v1 (A4, ST-R5.4). qty_m2 is display only. */
 const UNIT = "lembar";
@@ -1067,7 +1068,7 @@ function commitSource(db: Sql, segment: CommitSegment) {
              false as autoclosed, null::text as autoclose_basis,
              false as autoclose_reserving
       from erp_so_line l
-      left join erp_so_header h on h.id = l.so_id
+      ${db.unsafe(SO_HEADER_LOOKUP_SQL)}
     ) v
     join stock_commitment_overrides oc on oc.so_line_id = v.id and oc.state = 'closed'
   `;

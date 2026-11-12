@@ -1,0 +1,743 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Kabar Pesanan</title>
+<style>
+  :root{
+    --bg:#f2f4f7; --card:#fff; --ink:#17233b; --ink-2:#475569; --muted:#6b7280; --line:#e5e7eb;
+    --accent:#157a46; --danger:#c03c2b; --gold:#bb9457; --red:#9b2226;
+    --ok-bg:#dcfce7; --ok-ink:#15803d; --warn-bg:#fef3c7; --warn-ink:#7a4f08; --warn-line:#fde68a;
+    --neg-bg:#fee2e2; --neg-ink:#b91c1c; --stub-bg:#e0e7ff; --stub-ink:#3730a3;
+    --wa-bg:#efeae2; --wa-out:#d9fdd3; --wa-cc:#ffffff;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --tap:44px; --focus:#1d4ed8;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{font-family:var(--sans);background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased;padding-bottom:48px}
+  header{position:sticky;top:0;z-index:20;background:var(--ink);color:#fff;padding:12px 16px;box-shadow:0 2px 10px rgba(0,0,0,.12)}
+  .hrow{display:flex;align-items:center;justify-content:space-between;gap:10px;max-width:980px;margin:0 auto}
+  header h1{font-size:18px;margin:0;font-weight:700}
+  header .sub{font-size:12px;color:#c7cfde;margin-top:2px}
+  header a{color:#ffd27a;text-decoration:none;font-size:13px;font-weight:600}
+  .wrap{max-width:980px;margin:0 auto;padding:14px 16px}
+  .tabs{display:flex;gap:6px;margin:4px 0 14px;border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:thin}
+  .tabs button{white-space:nowrap;font:inherit;font-size:14px;font-weight:600;background:none;border:none;border-bottom:3px solid transparent;padding:10px 12px;color:var(--muted);cursor:pointer;min-height:var(--tap)}
+  .tabs button[aria-selected=true]{color:var(--ink);border-bottom-color:var(--red)}
+  .panel[hidden]{display:none}
+  .banner{border-radius:12px;padding:10px 14px;font-size:13px;line-height:1.45;margin-bottom:12px;border:1px solid}
+  .banner.stub{background:var(--stub-bg);color:var(--stub-ink);border-color:#c7d2fe}
+  .banner.live{background:var(--ok-bg);color:var(--ok-ink);border-color:#bbf7d0}
+  .banner.warn{background:var(--warn-bg);color:var(--warn-ink);border-color:var(--warn-line)}
+  .banner.err{background:var(--neg-bg);color:var(--neg-ink);border-color:#fecaca}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;margin-bottom:14px;overflow:hidden}
+  .card h2{font-size:14px;margin:0;padding:12px 14px;border-bottom:1px solid var(--line);background:#fafbfc}
+  .card .body{padding:14px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+  label.fld{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted);font-weight:600}
+  label.fld small{font-weight:400;color:var(--muted)}
+  input[type=text],input[type=tel],input[type=password]{font:inherit;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink);min-height:var(--tap);width:100%}
+  input:focus-visible,button:focus-visible,summary:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+  .chk{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-2);min-height:var(--tap);cursor:pointer}
+  .chk input{width:18px;height:18px}
+  .btn{font:inherit;font-weight:700;font-size:14px;border-radius:10px;border:1px solid transparent;padding:10px 16px;min-height:var(--tap);cursor:pointer}
+  .btn.primary{background:var(--red);color:#fff}
+  .btn.primary:disabled{opacity:.55;cursor:progress}
+  .btn.ghost{background:#fff;color:var(--ink);border-color:var(--line)}
+  .row{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}
+  .row > label.fld{flex:1;min-width:200px}
+  .muted{color:var(--muted);font-size:12px}
+  .so-sum{margin-top:10px;font-size:13px;line-height:1.5;background:#fafbfc;border:1px dashed var(--line);border-radius:10px;padding:10px 12px}
+  .so-sum b{color:var(--ink)}
+
+  /* Pipeline */
+  .pipe{position:relative;padding-left:26px}
+  .pipe::before{content:"";position:absolute;left:11px;top:18px;bottom:18px;width:2px;background:var(--line)}
+  .step{position:relative;margin-bottom:14px}
+  .dot{position:absolute;left:-26px;top:14px;width:24px;height:24px;border-radius:50%;background:#fff;border:2px solid var(--gold);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:var(--ink)}
+  .step.done .dot{background:var(--accent);border-color:var(--accent);color:#fff}
+  .step .head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;flex-wrap:wrap}
+  .step .title{font-weight:700;font-size:15px}
+  .step .title small{display:block;font-weight:500;color:var(--muted);font-size:12px;margin-top:2px}
+  details.trig{border-top:1px solid var(--line);font-size:12.5px;color:var(--ink-2)}
+  details.trig summary{cursor:pointer;padding:10px 14px;font-weight:600;color:var(--ink);min-height:var(--tap);display:flex;align-items:center}
+  details.trig dl{margin:0;padding:0 14px 12px;display:grid;grid-template-columns:110px 1fr;gap:6px 10px}
+  details.trig dt{font-weight:700;color:var(--muted)}
+  details.trig dd{margin:0;line-height:1.45}
+  .out{border-top:1px solid var(--line);background:var(--wa-bg);padding:12px 14px;display:flex;flex-direction:column;gap:10px}
+  .out[hidden]{display:none}
+  .bubblewrap{display:flex;flex-direction:column;gap:4px;max-width:520px}
+  .bubblewrap.cc{align-self:flex-start}
+  .bubblewrap.cust{align-self:flex-end}
+  .meta{font-size:11px;color:var(--ink-2);display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+  .bubble{background:var(--wa-out);border-radius:10px;padding:8px 10px 6px;font-size:14px;line-height:1.42;white-space:pre-wrap;word-wrap:break-word;box-shadow:0 1px 1px rgba(0,0,0,.08)}
+  .cc .bubble{background:var(--wa-cc)}
+  .chip{font-size:10.5px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;border-radius:999px;padding:2px 8px}
+  .chip.stubbed{background:var(--stub-bg);color:var(--stub-ink)}
+  .chip.sent,.chip.queued{background:var(--ok-bg);color:var(--ok-ink)}
+  .chip.failed{background:var(--neg-bg);color:var(--neg-ink)}
+  .chip.test{background:#f3f4f6;color:#4b5563}
+  .warnline{font-size:12.5px;background:var(--warn-bg);color:var(--warn-ink);border:1px solid var(--warn-line);border-radius:8px;padding:8px 10px}
+
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);background:#fafbfc}
+  td pre{margin:6px 0 0;white-space:pre-wrap;font:inherit;font-size:12.5px;color:var(--ink-2);background:#fafbfc;border-radius:8px;padding:8px}
+  .empty{padding:24px;text-align:center;color:var(--muted);font-size:13px}
+  .toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:50}
+  .toast.show{opacity:1}
+
+  /* WP-6 admin tabs */
+  .kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+  .kv > div{background:#fafbfc;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+  .kv .k{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:700}
+  .kv .v{font-size:15px;font-weight:700;margin-top:4px;word-break:break-word}
+  .kv .v small{display:block;font-size:12px;font-weight:500;color:var(--muted);margin-top:2px}
+  .switch{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--line);min-height:var(--tap)}
+  .switch:last-child{border-bottom:none}
+  .switch .t{font-weight:600;font-size:14px}
+  .switch .t small{display:block;font-weight:400;color:var(--muted);font-size:12px;margin-top:2px}
+  .toggle{position:relative;display:inline-block;vertical-align:middle;width:52px;height:30px;flex:none}
+  .toggle input{opacity:0;width:100%;height:100%;margin:0;cursor:pointer;position:absolute;inset:0;z-index:1}
+  .toggle span{position:absolute;inset:0;background:#cbd5e1;border-radius:999px;transition:background .15s}
+  .toggle span::after{content:"";position:absolute;left:3px;top:3px;width:24px;height:24px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2);transition:transform .15s}
+  .toggle input:checked + span{background:var(--accent)}
+  .toggle.danger input:checked + span{background:var(--danger)}
+  .toggle input:checked + span::after{transform:translateX(22px)}
+  .toggle input:focus-visible + span{outline:3px solid var(--focus);outline-offset:2px}
+  .seg{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+  .seg button{font:inherit;font-size:13px;font-weight:600;border:1px solid var(--line);background:#fff;border-radius:999px;padding:6px 12px;min-height:36px;cursor:pointer;color:var(--ink-2)}
+  .seg button[aria-pressed=true]{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .rowact{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+  .btn.sm{min-height:34px;padding:4px 10px;font-size:12.5px}
+  .btn.warn{background:#fff;color:var(--danger);border-color:#fecaca}
+  .tblwrap{overflow-x:auto}
+  .chip.pending,.chip.sending{background:var(--warn-bg);color:var(--warn-ink)}
+  .chip.held{background:#fde2c8;color:#9a3412}
+  .chip.cancelled,.chip.skipped{background:#f3f4f6;color:#4b5563}
+  .chip.unreachable{background:var(--neg-bg);color:var(--neg-ink)}
+  .chip.benar{background:var(--ok-bg);color:var(--ok-ink)}
+  .chip.salah{background:var(--neg-bg);color:var(--neg-ink)}
+  .qr{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+  .qr .code{width:220px;height:220px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:8px}
+  .qr .code svg{width:100%;height:100%}
+  .big{font-size:28px;font-weight:800}
+  .gate-ok{color:var(--ok-ink)} .gate-no{color:var(--neg-ink)}
+</style>
+</head>
+<body>
+<header>
+  <div class="hrow">
+    <div>
+      <h1>Kabar Pesanan</h1>
+      <div class="sub">Notifikasi status pesanan ke pelanggan via WhatsApp</div>
+    </div>
+    <a href="/">← Beranda</a>
+  </div>
+</header>
+
+<main class="wrap">
+  <div id="modeBanner" class="banner stub" role="status">Memuat konfigurasi…</div>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" aria-controls="p-live" id="t-live">Live</button>
+    <button role="tab" aria-selected="false" aria-controls="p-queue" id="t-queue">Antrian</button>
+    <button role="tab" aria-selected="false" aria-controls="p-shadow" id="t-shadow">Shadow</button>
+    <button role="tab" aria-selected="false" aria-controls="p-sales" id="t-sales">Sales CC</button>
+    <button role="tab" aria-selected="false" aria-controls="p-cust" id="t-cust">Pelanggan</button>
+    <button role="tab" aria-selected="false" aria-controls="p-pipe" id="t-pipe">Uji Pipeline</button>
+    <button role="tab" aria-selected="false" aria-controls="p-cfg" id="t-cfg">Konfigurasi</button>
+    <button role="tab" aria-selected="false" aria-controls="p-log" id="t-log">Riwayat</button>
+  </nav>
+
+  <!-- ── Test pipeline ─────────────────────────────────────────────── -->
+  <!-- ── Live (WP-6) ───────────────────────────────────────────────── -->
+  <section id="p-live" class="panel" role="tabpanel" aria-labelledby="t-live">
+    <div class="card">
+      <h2>Status</h2>
+      <div class="body"><div class="kv" id="liveKv"><div><div class="k">Memuat…</div></div></div>
+        <p class="muted" id="liveNote" style="margin:10px 0 0"></p></div>
+    </div>
+    <div class="card">
+      <h2>Saklar</h2>
+      <div class="body" id="switches"></div>
+    </div>
+    <div class="card" id="pairCard" hidden>
+      <h2>Tautkan nomor WhatsApp</h2>
+      <div class="body" id="pairBody"></div>
+    </div>
+    <div class="card">
+      <h2>Sinkron ERP (jalur pesanan)</h2>
+      <div class="tblwrap" id="laneBody"><div class="empty">Memuat…</div></div>
+    </div>
+  </section>
+
+  <!-- ── Antrian / outbox ──────────────────────────────────────────── -->
+  <section id="p-queue" class="panel" role="tabpanel" aria-labelledby="t-queue" hidden>
+    <div class="seg" role="group" aria-label="Tampilan antrian">
+      <button type="button" data-view="pending" aria-pressed="true">Menunggu</button>
+      <button type="button" data-view="held" aria-pressed="false">Ditahan (nomor bersama)</button>
+      <button type="button" data-view="problems" aria-pressed="false">Gagal / tanpa nomor</button>
+      <button type="button" data-view="recent" aria-pressed="false">Terbaru</button>
+    </div>
+    <div class="card"><div class="tblwrap" id="queueBody"><div class="empty">Memuat…</div></div></div>
+    <div class="card">
+      <h2>Balasan masuk</h2>
+      <div class="tblwrap" id="inboundBody"><div class="empty">Memuat…</div></div>
+    </div>
+  </section>
+
+  <!-- ── Shadow grading ────────────────────────────────────────────── -->
+  <section id="p-shadow" class="panel" role="tabpanel" aria-labelledby="t-shadow" hidden>
+    <div class="card">
+      <h2>Penilaian mode shadow (14 hari)</h2>
+      <div class="body"><div class="kv" id="shadowKv"></div>
+        <p class="muted" style="margin:10px 0 0">Gerbang Phase 1: ≥ 99% "benar" selama 2 minggu. Sales menilai dengan membalas BENAR atau SALAH; admin juga bisa menilai di sini.</p></div>
+    </div>
+    <div class="card"><div class="tblwrap" id="shadowBody"><div class="empty">Memuat…</div></div></div>
+  </section>
+
+  <!-- ── Sales CC ──────────────────────────────────────────────────── -->
+  <section id="p-sales" class="panel" role="tabpanel" aria-labelledby="t-sales" hidden>
+    <div class="card">
+      <h2>Nomor WhatsApp sales (CC)</h2>
+      <div class="body" style="padding-bottom:0"><p class="muted" style="margin:0 0 10px">Daftar sales dari Selaras (CRM - List Sales). Isi nomor sekali; setiap pesan ke pelanggan disalin ke sales di SO. Di mode shadow, hanya sales yang menerima pesan.</p>
+        <label class="fld" style="max-width:320px">Cari sales<input id="salesFilter" type="text" autocomplete="off" placeholder="nama…" /></label></div>
+      <div class="tblwrap" id="salesBody"><div class="empty">Memuat…</div></div>
+    </div>
+  </section>
+
+  <!-- ── Pelanggan: overrides / mutes ──────────────────────────────── -->
+  <section id="p-cust" class="panel" role="tabpanel" aria-labelledby="t-cust" hidden>
+    <div class="card">
+      <h2>Atur pelanggan</h2>
+      <div class="body">
+        <div class="row">
+          <label class="fld">Cari pelanggan (dari SO)<input id="custQ" type="text" autocomplete="off" placeholder="mis. FITRAH" /></label>
+          <button class="btn ghost" id="custSearch" type="button">Cari</button>
+        </div>
+        <div id="custResults" class="tblwrap"></div>
+        <form id="ovForm" hidden style="margin-top:12px">
+          <p style="margin:0 0 8px"><b id="ovName"></b> <span class="muted" id="ovId"></span></p>
+          <div class="grid">
+            <label class="fld">Nomor pengganti (opsional)<input id="ovPhone" type="tel" inputmode="tel" autocomplete="off" placeholder="0812-…" />
+              <small>Dipakai menggantikan kontak_penerima di SO.</small></label>
+            <label class="fld">Alasan<input id="ovReason" type="text" autocomplete="off" /></label>
+          </div>
+          <label class="chk"><input id="ovMuted" type="checkbox" /> Jangan kirim notifikasi ke pelanggan ini (mute)</label>
+          <div class="row"><button class="btn primary" type="submit">Simpan</button></div>
+        </form>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Pengaturan tersimpan</h2>
+      <div class="tblwrap" id="ovBody"><div class="empty">Memuat…</div></div>
+    </div>
+  </section>
+
+  <section id="p-pipe" class="panel" role="tabpanel" aria-labelledby="t-pipe" hidden>
+    <div class="card">
+      <h2>Penerima uji</h2>
+      <div class="body">
+        <div class="grid">
+          <label class="fld">Nomor pelanggan (uji) *
+            <input id="custNo" type="tel" inputmode="tel" placeholder="0812-xxxx-xxxx" autocomplete="off" />
+            <small>Pesan pelanggan dikirim ke nomor ini, bukan ke nomor di SO.</small>
+          </label>
+          <label class="fld">Nomor sales (CC)
+            <input id="salesNo" type="tel" inputmode="tel" placeholder="0813-xxxx-xxxx" autocomplete="off" />
+            <small>Menerima salinan setiap pesan.</small>
+          </label>
+          <label class="fld">Nama sales
+            <input id="salesName" type="text" placeholder="mis. Rahmanto" autocomplete="off" />
+            <small>Opsional. Muncul di pesan sebagai kontak.</small>
+          </label>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <label class="fld">No. SO dari Selaras (opsional)
+            <input id="soNo" type="text" placeholder="SO.26/12821" autocomplete="off" />
+            <small id="soHint">Kosongkan untuk memakai contoh pesanan.</small>
+          </label>
+          <button class="btn ghost" id="loadSo" type="button">Muat dari ERP</button>
+        </div>
+        <div id="soSummary" class="so-sum" hidden></div>
+        <label class="chk"><input id="introduce" type="checkbox" /> Sertakan pesan perkenalan (kontak pertama ke nomor ini)</label>
+      </div>
+    </div>
+
+    <div class="pipe" id="pipe"></div>
+  </section>
+
+  <!-- ── Config ────────────────────────────────────────────────────── -->
+  <section id="p-cfg" class="panel" role="tabpanel" aria-labelledby="t-cfg" hidden>
+    <div class="card">
+      <h2>Nomor sistem (pengirim)</h2>
+      <div class="body">
+        <div class="row">
+          <label class="fld">Nomor WhatsApp sistem
+            <input id="sysNo" type="tel" inputmode="tel" placeholder="0811-xxxx-xxxx" autocomplete="off" />
+            <small>Nomor khusus notifikasi. Jangan pakai nomor sales atau nomor utama.</small>
+          </label>
+          <button class="btn primary" id="saveSys" type="button">Simpan</button>
+        </div>
+        <p class="muted" id="sysMeta"></p>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Kanal pengiriman</h2>
+      <div class="body" id="chanBody"></div>
+    </div>
+    <div class="card">
+      <h2>Nama Anda</h2>
+      <div class="body">
+        <label class="fld">Dicatat pada setiap aksi admin (saklar, kirim sekarang, batalkan, nilai)
+          <input id="actorName" type="text" autocomplete="name" placeholder="mis. Sales Admin — Rina" />
+        </label>
+      </div>
+    </div>
+    <div class="card" id="tokenCard" hidden>
+      <h2>Token admin</h2>
+      <div class="body">
+        <label class="fld">NOTIFY_ADMIN_TOKEN
+          <input id="adminToken" type="password" autocomplete="off" />
+          <small>Disimpan hanya di tab ini (sessionStorage).</small>
+        </label>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Ledger ────────────────────────────────────────────────────── -->
+  <section id="p-log" class="panel" role="tabpanel" aria-labelledby="t-log" hidden>
+    <div class="card">
+      <h2 style="display:flex;justify-content:space-between;align-items:center">Riwayat pesan <button class="btn ghost" id="reloadLog" type="button" style="min-height:32px;padding:4px 10px;font-size:12px">Muat ulang</button></h2>
+      <div id="logBody"><div class="empty">Memuat…</div></div>
+    </div>
+  </section>
+</main>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  /** WhatsApp-style preview: escape first, then *bold* and _italic_. */
+  const waFormat = (s) => esc(s).replace(/\*([^*\n]+)\*/g, "<b>$1</b>").replace(/(^|\s)_([^_\n]+)_(?=\s|$)/g, "$1<i>$2</i>");
+  const toast = (msg) => { const t = $("toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove("show"), 2600); };
+  const store = { get: (k) => { try { return sessionStorage.getItem(k) || ""; } catch { return ""; } }, set: (k, v) => { try { sessionStorage.setItem(k, v); } catch {} } };
+  const local = { get: (k) => { try { return localStorage.getItem(k) || ""; } catch { return ""; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
+
+  let CFG = null;
+
+  async function api(path, opts = {}) {
+    const headers = { ...(opts.body ? { "content-type": "application/json" } : {}) };
+    const tok = store.get("notifyToken");
+    if (tok) headers["x-notify-token"] = tok;
+    const who = local.get("notify.actor");
+    if (who) headers["x-notify-actor"] = who;
+    const res = await fetch(path, { ...opts, headers });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    return data;
+  }
+
+  // Tabs
+  const tabs = [["t-live", "p-live"], ["t-queue", "p-queue"], ["t-shadow", "p-shadow"], ["t-sales", "p-sales"],
+    ["t-cust", "p-cust"], ["t-pipe", "p-pipe"], ["t-cfg", "p-cfg"], ["t-log", "p-log"]];
+  const loaders = { "p-live": () => loadLive(), "p-queue": () => loadQueue(), "p-shadow": () => loadShadow(),
+    "p-sales": () => loadSales(), "p-cust": () => loadOverrides(), "p-log": () => loadLog() };
+  tabs.forEach(([t, p]) => $(t).addEventListener("click", () => {
+    tabs.forEach(([t2, p2]) => { $(t2).setAttribute("aria-selected", String(t2 === t)); $(p2).hidden = p2 !== p; });
+    loaders[p]?.();
+  }));
+  $("actorName").value = local.get("notify.actor");
+  $("actorName").addEventListener("change", () => { local.set("notify.actor", $("actorName").value.trim()); toast("Nama disimpan di perangkat ini."); });
+
+  // Remember tester's numbers on this device (not the system number).
+  ["custNo", "salesNo", "salesName"].forEach((id) => {
+    $(id).value = local.get("notify." + id);
+    $(id).addEventListener("change", () => local.set("notify." + id, $(id).value.trim()));
+  });
+
+  function renderBanner() {
+    const b = $("modeBanner");
+    if (!CFG) return;
+    const ch = CFG.channel;
+    if (ch.mode === "stub") {
+      b.className = "banner stub";
+      b.innerHTML = "<b>Mode STUB.</b> Pesan tidak benar-benar dikirim ke WhatsApp. Isi pesan dan penerimanya tampil di bawah dan dicatat di Riwayat. Pemicu live belum aktif: hanya tombol uji yang mengirim.";
+    } else {
+      b.className = ch.connected ? "banner live" : "banner warn";
+      b.innerHTML = `<b>Mode GATEWAY.</b> ${esc(ch.detail)}`;
+    }
+    if (!CFG.databaseAvailable) b.innerHTML += "<br>Database tidak tersedia: Riwayat dan nomor sistem tidak tersimpan.";
+  }
+
+  function renderConfig() {
+    $("sysNo").value = CFG.systemNumberDisplay || "";
+    $("sysMeta").textContent = CFG.systemNumber
+      ? `Tersimpan: ${CFG.systemNumberDisplay}${CFG.updatedAt ? " · diubah " + new Date(CFG.updatedAt).toLocaleString("id-ID") : ""}`
+      : "Belum ada nomor sistem.";
+    const ch = CFG.channel;
+    $("chanBody").innerHTML = `
+      <p style="margin:0 0 8px"><span class="chip ${ch.mode === "stub" ? "stubbed" : (ch.connected ? "sent" : "failed")}">${esc(ch.mode)}</span>
+      <span style="margin-left:6px">${esc(ch.detail)}</span></p>
+      <p class="muted" style="margin:0">${ch.mode === "stub"
+        ? "Menautkan nomor ke WhatsApp (whatsmeow, linked device) dilakukan di layanan wa-gateway. Setelah gateway siap, set NOTIFY_CHANNEL=gateway, WA_GATEWAY_URL dan NOTIFY_ADMIN_TOKEN di Railway."
+        : "Penautan nomor (QR / kode) dikelola oleh layanan wa-gateway."}</p>
+      <p class="muted" style="margin:8px 0 0">Muat SO dari ERP: ${CFG.erpLookupAvailable ? "tersedia" : "tidak tersedia (ERP belum dikonfigurasi)"}.</p>`;
+    $("tokenCard").hidden = !CFG.adminTokenRequired;
+    $("adminToken").value = store.get("notifyToken");
+    if (!CFG.erpLookupAvailable) { $("loadSo").disabled = true; $("soNo").disabled = true; $("soHint").textContent = "ERP belum terhubung: pesan memakai contoh pesanan."; }
+  }
+
+  function renderPipeline() {
+    $("pipe").innerHTML = CFG.milestones.map((m) => `
+      <div class="step" id="step-${m.key}">
+        <span class="dot">${m.step}</span>
+        <div class="card" style="margin:0">
+          <div class="head">
+            <div class="title">${esc(m.label)}<small>${esc(m.labelEn)}</small></div>
+            <button class="btn primary" type="button" data-send="${m.key}">Kirim uji</button>
+          </div>
+          <details class="trig">
+            <summary>Pemicu di sistem live</summary>
+            <dl>
+              <dt>Trigger</dt><dd>${esc(m.trigger)}</dd>
+              <dt>Hold</dt><dd>${esc(m.hold)}</dd>
+              <dt>Coverage</dt><dd>${esc(m.coverage)}</dd>
+              <dt>Notes</dt><dd>${esc(m.notes)}</dd>
+            </dl>
+          </details>
+          <div class="out" id="out-${m.key}" hidden></div>
+        </div>
+      </div>`).join("");
+    document.querySelectorAll("[data-send]").forEach((b) => b.addEventListener("click", () => sendTest(b.dataset.send, b)));
+  }
+
+  async function sendTest(milestone, btn) {
+    const customerNumber = $("custNo").value.trim();
+    if (!customerNumber) { $("custNo").focus(); toast("Isi nomor pelanggan (uji) dulu."); return; }
+    btn.disabled = true; const label = btn.textContent; btn.textContent = "Mengirim…";
+    const out = $("out-" + milestone);
+    try {
+      const r = await api("/api/notify/test", { method: "POST", body: JSON.stringify({
+        milestone, customerNumber,
+        salesNumber: $("salesNo").value.trim(),
+        salesName: $("salesName").value.trim(),
+        soNo: $("soNo").disabled ? "" : $("soNo").value.trim(),
+        introduce: $("introduce").checked,
+      }) });
+      const from = r.from ? `dari ${esc(r.from)}` : "dari (nomor sistem belum diisi)";
+      out.innerHTML = [
+        ...r.warnings.map((w) => `<div class="warnline">${esc(w)}</div>`),
+        `<div class="meta">SO <b>${esc(r.context.soNo)}</b> · ${esc(r.context.customerName)} · sumber: ${r.context.source === "erp" ? "Selaras" : "contoh"}${r.context.erpRecipientPhoneMasked ? ` · di mode live dikirim ke ${esc(r.context.erpRecipientPhoneMasked)}` : ""}</div>`,
+        ...r.messages.map((m) => `
+          <div class="bubblewrap ${m.role === "customer" ? "cust" : "cc"}">
+            <div class="meta"><span class="chip ${esc(m.status)}">${esc(m.status)}</span>
+              ${m.role === "customer" ? "Ke pelanggan" : "CC sales"} ${esc(m.toDisplay)} · ${from}${m.error ? ` · <span style="color:var(--neg-ink)">${esc(m.error)}</span>` : ""}</div>
+            <div class="bubble">${waFormat(m.text)}</div>
+          </div>`),
+      ].join("");
+      out.hidden = false;
+      $("step-" + milestone).classList.add("done");
+      toast(r.channel === "stub" ? "Tercatat (stub): tidak dikirim ke WhatsApp." : "Terkirim ke gateway.");
+    } catch (e) {
+      out.innerHTML = `<div class="warnline" style="background:var(--neg-bg);color:var(--neg-ink);border-color:#fecaca">${esc(e.message)}</div>`;
+      out.hidden = false;
+    } finally {
+      btn.disabled = false; btn.textContent = label;
+    }
+  }
+
+  $("loadSo").addEventListener("click", async () => {
+    const so = $("soNo").value.trim();
+    const box = $("soSummary");
+    if (!so) { box.hidden = true; toast("Isi nomor SO."); return; }
+    box.hidden = false; box.textContent = "Memuat dari Selaras…";
+    try {
+      const r = await api("/api/notify/order?so_no=" + encodeURIComponent(so));
+      const items = r.items.slice(0, 5).map((i) => `${esc(i.label)} × ${esc(i.qty)}`).join("<br>") || "(tidak ada baris)";
+      box.innerHTML = `<b>${esc(r.soNo)}</b> · ${esc(r.customerName)} · status ${esc(r.statusOrder || "-")} · ${esc(r.paymentTerm || "-")}<br>
+        Penerima: ${esc(r.recipientName || "-")} (${esc(r.erpRecipientPhoneMasked || "tanpa nomor")}) · Sales: ${esc(r.salesName || "-")}<br>
+        Produksi: ${r.production ? "ya, " + esc(r.production.woNo || "") : "tidak (dari stok)"} ·
+        DO: ${r.delivery ? esc(r.delivery.sjNo) + " · " + esc(r.delivery.sjDate) + (r.delivery.pickup ? " · diambil" : " · diantar") : "belum ada"}<br>
+        <span class="muted">${items}</span>`;
+    } catch (e) {
+      box.innerHTML = `<span style="color:var(--neg-ink)">${esc(e.message)}</span>`;
+    }
+  });
+
+  $("saveSys").addEventListener("click", async () => {
+    try {
+      const r = await api("/api/notify/config", { method: "PUT", body: JSON.stringify({ systemNumber: $("sysNo").value.trim() }) });
+      CFG.systemNumber = r.systemNumber; CFG.systemNumberDisplay = r.systemNumberDisplay; CFG.updatedAt = new Date().toISOString();
+      renderConfig(); toast("Nomor sistem disimpan.");
+    } catch (e) { toast(e.message); }
+  });
+  $("adminToken").addEventListener("change", () => { store.set("notifyToken", $("adminToken").value.trim()); toast("Token disimpan untuk tab ini."); });
+
+  async function loadLog() {
+    const body = $("logBody");
+    try {
+      const { rows } = await api("/api/notify/ledger?limit=100");
+      if (!rows.length) { body.innerHTML = '<div class="empty">Belum ada pesan.</div>'; return; }
+      body.innerHTML = `<table><thead><tr><th>Waktu</th><th>Langkah</th><th>Ke</th><th>Status</th></tr></thead><tbody>${rows.map((r) => {
+        const step = (CFG.milestones.find((m) => m.key === r.milestone) || {}).label || r.milestone;
+        return `<tr><td>${esc(new Date(r.created_at).toLocaleString("id-ID"))}<br><span class="chip test">${esc(r.mode)}</span></td>
+          <td>${esc(step)}<br><span class="muted">${esc(r.so_no || "")}</span></td>
+          <td>${r.recipient_role === "customer" ? "Pelanggan" : "CC sales"}<br><span class="muted">${esc(r.to_number)}</span></td>
+          <td><span class="chip ${esc(r.status)}">${esc(r.status)}</span>${r.error ? `<br><span class="muted">${esc(r.error)}</span>` : ""}
+            <details><summary class="muted" style="cursor:pointer">Isi pesan</summary><pre>${esc(r.body)}</pre></details></td></tr>`;
+      }).join("")}</tbody></table>`;
+    } catch (e) {
+      body.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+    }
+  }
+  $("reloadLog").addEventListener("click", loadLog);
+
+  // ── WP-6: Live ─────────────────────────────────────────────────────────
+  const fmtTime = (v) => v ? new Date(v).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" }) : "–";
+  const STEP = { so_received: "Pesanan diterima", production_started: "Mulai produksi", delivery_scheduled: "Pengiriman dijadwalkan",
+    do_cancelled_notice: "DO dibatalkan (ke sales)", stop_ack: "Konfirmasi STOP", start_ack: "Konfirmasi MULAI",
+    reply_forward: "Teruskan balasan", auto_reply: "Balasan otomatis" };
+  const MODE_TEXT = { off: "MATI — tidak ada pesan", shadow: "SHADOW — hanya ke sales", on: "LIVE — ke pelanggan + CC sales" };
+  const tokenHint = () => CFG && CFG.adminTokenRequired && !store.get("notifyToken") ? " Isi token admin di tab Konfigurasi untuk mengubah." : "";
+  let LIVE = null;
+
+  async function loadLive() {
+    try {
+      LIVE = await api("/api/notify/live");
+    } catch (e) { $("liveKv").innerHTML = `<div><div class="k">Gagal</div><div class="v">${esc(e.message)}</div></div>`; return; }
+    const c = LIVE.counts7d || {};
+    const sentN = (c.sent || 0) + (c.queued || 0) + (c.stubbed || 0);
+    const gw = LIVE.gateway;
+    $("liveKv").innerHTML = [
+      ["Mode", MODE_TEXT[LIVE.mode] || LIVE.mode, LIVE.since ? "sejak " + fmtTime(LIVE.since) : "env NOTIFY_LIVE"],
+      ["Pengiriman", LIVE.killSwitch ? "DIHENTIKAN" : "Berjalan", LIVE.killSwitch ? "saklar darurat aktif" : `jam ${LIVE.window.from}.00–${LIVE.window.until}.00 WIB`],
+      ["Kanal", LIVE.channel.mode.toUpperCase(), LIVE.channel.detail],
+      ["Gateway", gw ? gw.state : "–", gw ? (gw.detail || "") + " · " + fmtTime(gw.at) : "belum ada laporan"],
+      ["7 hari: terkirim", sentN, `menunggu ${(c.pending || 0) + (c.sending || 0)} · ditahan ${c.held || 0}`],
+      ["7 hari: tidak terkirim", (c.failed || 0) + (c.unreachable || 0), `gagal ${c.failed || 0} · tanpa nomor ${c.unreachable || 0} · batal ${c.cancelled || 0}`],
+    ].map(([k, v, sm]) => `<div><div class="k">${esc(k)}</div><div class="v">${esc(v)}<small>${esc(sm)}</small></div></div>`).join("");
+    $("liveNote").textContent = "Mode diubah lewat env NOTIFY_LIVE (keputusan deploy). Saklar di bawah hanya bisa membuat lebih aman." +
+      (LIVE.switchesSetBy ? " Terakhir diubah: " + LIVE.switchesSetBy + "." : "") + tokenHint();
+    const hold = LIVE.holds;
+    $("switches").innerHTML = `
+      <div class="switch"><div class="t">Saklar darurat — hentikan semua pengiriman<small>Pesan tetap direncanakan dan menunggu; tidak ada yang dibuang.</small></div>
+        <label class="toggle danger"><input type="checkbox" data-kill ${LIVE.killSwitch ? "checked" : ""} aria-label="Saklar darurat" /><span></span></label></div>
+      ${LIVE.milestones.map((m) => `
+      <div class="switch"><div class="t">${esc(STEP[m.key])}<small>Tahan ${esc(hold[m.key])} menit. Jika dimatikan, langkah ini dicatat "dilewati", tidak dikirim.</small></div>
+        <label class="toggle"><input type="checkbox" data-ms="${m.key}" ${m.enabled ? "checked" : ""} aria-label="${esc(STEP[m.key])}" /><span></span></label></div>`).join("")}`;
+    document.querySelectorAll("[data-kill],[data-ms]").forEach((el) => el.addEventListener("change", async () => {
+      const body = el.dataset.kill !== undefined ? { killSwitch: el.checked } : { milestones: { [el.dataset.ms]: el.checked } };
+      try { await api("/api/notify/live", { method: "PUT", body: JSON.stringify(body) }); toast("Saklar disimpan."); }
+      catch (e) { el.checked = !el.checked; toast(e.message); }
+      loadLive();
+    }));
+    const lane = LIVE.lane;
+    $("laneBody").innerHTML = !lane.enabled && !lane.tables.length
+      ? '<div class="empty">Jalur pesanan tidak aktif (perlu kredensial Selaras dan ERP_FAST_POLL_MS &gt; 0).</div>'
+      : `<table><thead><tr><th>Tabel</th><th>Kursor</th><th>Terakhir OK</th><th>Galat</th></tr></thead><tbody>${lane.tables.map((t) => `
+          <tr><td>${esc(t.table_name)}<br><span class="muted">${esc(t.cursor_field)}</span></td><td>${fmtTime(t.cursor_value)}</td>
+          <td>${fmtTime(t.last_ok_at)}</td><td>${t.last_error ? `<span class="chip failed">galat</span> <span class="muted">${esc(t.last_error)}</span>` : "–"}</td></tr>`).join("")}</tbody></table>`;
+    const showPair = LIVE.channel.mode === "gateway";
+    $("pairCard").hidden = !showPair;
+    if (showPair) renderPair();
+  }
+
+  async function renderPair() {
+    const box = $("pairBody");
+    if (LIVE.channel.connected) { box.innerHTML = '<p style="margin:0">✅ Nomor tertaut dan terhubung.</p>'; return; }
+    box.innerHTML = '<p class="muted" style="margin:0">Memuat kode QR…</p>';
+    try {
+      const r = await api("/api/notify/gateway/pair-svg");
+      if (r.paired) { box.innerHTML = `<p style="margin:0">Tertaut sebagai ${esc(r.jid || "")}, tetapi belum terhubung. Periksa ponsel utama (harus menyala dan online).</p>`; return; }
+      box.innerHTML = `<div class="qr"><div class="code" role="img" aria-label="Kode QR penautan">${r.svg || ""}</div>
+        <div><p style="margin:0 0 6px"><b>Pindai dari ponsel nomor notifikasi:</b><br>WhatsApp → Perangkat tertaut → Tautkan perangkat.</p>
+        <p class="muted" style="margin:0 0 10px">Kode berganti otomatis${r.expiresIn ? ` (±${esc(r.expiresIn)} detik)` : ""}.</p>
+        <div class="row"><label class="fld">Atau tautkan dengan nomor<input id="pairPhone" type="tel" inputmode="tel" placeholder="0811-…" /></label>
+        <button class="btn ghost" type="button" id="pairPhoneBtn">Minta kode</button></div><p id="pairCode" class="big"></p></div></div>`;
+      $("pairPhoneBtn").addEventListener("click", async () => {
+        try { const c = await api("/api/notify/gateway/pair-phone", { method: "POST", body: JSON.stringify({ phone: $("pairPhone").value.trim() }) });
+          $("pairCode").textContent = c.code; } catch (e) { toast(e.message); }
+      });
+      clearTimeout(renderPair._t);
+      renderPair._t = setTimeout(() => { if (!$("p-live").hidden) loadLive(); }, Math.max(10, (r.expiresIn || 20)) * 1000);
+    } catch (e) { box.innerHTML = `<p style="margin:0;color:var(--neg-ink)">${esc(e.message)}${esc(tokenHint())}</p>`; }
+  }
+
+  // ── WP-6: Antrian ──────────────────────────────────────────────────────
+  let VIEW = "pending";
+  document.querySelectorAll("[data-view]").forEach((b) => b.addEventListener("click", () => {
+    VIEW = b.dataset.view;
+    document.querySelectorAll("[data-view]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    loadQueue();
+  }));
+
+  const reasonText = { merged: "digabung ke jadwal kirim", do_cancelled: "DO dibatalkan", so_missing: "SO hilang", so_cancelled: "SO batal",
+    excluded_customer: "pihak terkait", direct_ship: "kirim langsung (distributor)", muted: "pelanggan di-mute", opted_out: "berhenti (STOP)",
+    shared_number: "nomor dipakai banyak pelanggan", unreachable: "tanpa nomor WA", rep_no_phone: "sales belum punya nomor",
+    cc_disabled: "CC dimatikan", stale_event: "kejadian terlalu lama", milestone_off: "langkah dimatikan", mode_changed: "mode berganti",
+    admin_cancel: "dibatalkan admin", no_production_request: "tanpa request produksi" };
+
+  async function loadQueue() {
+    const body = $("queueBody");
+    try {
+      const { rows } = await api("/api/notify/outbox?view=" + VIEW);
+      if (!rows.length) { body.innerHTML = '<div class="empty">Kosong.</div>'; }
+      else body.innerHTML = `<table><thead><tr><th>Langkah</th><th>Pelanggan / SO</th><th>Ke</th><th>Status</th></tr></thead><tbody>${rows.map((r) => {
+        const acts = [];
+        if (r.status === "pending") acts.push(`<button class="btn ghost sm" data-act="send_now" data-id="${r.id}">Kirim sekarang</button>`);
+        if (r.status === "held") acts.push(`<button class="btn ghost sm" data-act="release" data-id="${r.id}">Sudah dicek — kirim</button>`);
+        if (r.status === "pending" || r.status === "held") acts.push(`<button class="btn warn sm" data-act="cancel" data-id="${r.id}">Batalkan</button>`);
+        const waitText = { quiet_hours: "di luar jam kirim", daily_cap: "batas harian nomor ini", awaiting_customer_row: "menunggu pesan pelanggan" };
+        const why = r.cancel_reason ? (reasonText[r.cancel_reason] || r.cancel_reason)
+          : (r.meta && r.meta.deferred ? "menunggu: " + (waitText[r.meta.deferred] || r.meta.deferred) : "");
+        return `<tr><td>${esc(STEP[r.milestone] || r.milestone)}<br><span class="chip test">${esc(r.mode)}</span> <span class="muted">${r.recipient_role === "customer" ? "pelanggan" : "CC sales"}</span></td>
+          <td>${esc(r.customer || "")}<br><span class="muted">${esc(r.so_no || "")}</span></td>
+          <td>${esc(r.to_number || "–")}<br><span class="muted">${r.status === "pending" ? "jadwal " + fmtTime(r.due_at) : fmtTime(r.sent_at || r.created_at)}</span></td>
+          <td><span class="chip ${esc(r.status)}">${esc(r.status)}</span>${why ? `<br><span class="muted">${esc(why)}</span>` : ""}${r.error ? `<br><span class="muted">${esc(r.error)}</span>` : ""}
+            ${r.body ? `<details><summary class="muted" style="cursor:pointer">Isi pesan</summary><pre>${esc(r.body)}</pre></details>` : ""}
+            ${acts.length ? `<div class="rowact">${acts.join("")}</div>` : ""}</td></tr>`;
+      }).join("")}</tbody></table>`;
+      body.querySelectorAll("[data-act]").forEach((b) => b.addEventListener("click", async () => {
+        if (b.dataset.act === "cancel" && !confirm("Batalkan pesan ini?")) return;
+        b.disabled = true;
+        try { await api(`/api/notify/outbox/${b.dataset.id}/action`, { method: "POST", body: JSON.stringify({ action: b.dataset.act }) }); toast("Tersimpan."); }
+        catch (e) { toast(e.message + tokenHint()); }
+        loadQueue();
+      }));
+    } catch (e) { body.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+    try {
+      const { rows } = await api("/api/notify/inbound?limit=30");
+      $("inboundBody").innerHTML = rows.length ? `<table><thead><tr><th>Waktu</th><th>Dari</th><th>Pesan</th><th>Tindakan</th></tr></thead><tbody>${rows.map((r) => `
+        <tr><td>${fmtTime(r.received_at)}</td><td>${esc(r.from_pn || (r.from_lid ? "LID " + r.from_lid : "–"))}</td><td>${esc(r.text)}</td>
+        <td><span class="chip test">${esc(r.action || "–")}</span>${r.so_no ? `<br><span class="muted">${esc(r.so_no)}</span>` : ""}</td></tr>`).join("")}</tbody></table>`
+        : '<div class="empty">Belum ada balasan.</div>';
+    } catch (e) { $("inboundBody").innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+  }
+
+  // ── WP-6: Shadow ───────────────────────────────────────────────────────
+  async function loadShadow() {
+    try {
+      const r = await api("/api/notify/shadow?days=14");
+      const s = r.summary;
+      const pct = s.pctBenar;
+      $("shadowKv").innerHTML = [
+        ["Pesan shadow terkirim", s.sent, ""],
+        ["Sudah dinilai", s.graded, s.sent ? Math.round((s.graded / s.sent) * 100) + "% dari terkirim" : ""],
+        ["Benar", pct === null ? "–" : pct + "%", `${s.benar} benar · ${s.salah} salah`],
+      ].map(([k, v, sm]) => `<div><div class="k">${esc(k)}</div><div class="v ${k === "Benar" && pct !== null ? (pct >= s.gate ? "gate-ok" : "gate-no") : ""}">${esc(v)}<small>${esc(sm)}</small></div></div>`).join("");
+      $("shadowBody").innerHTML = !r.rows.length ? '<div class="empty">Belum ada pesan shadow.</div>'
+        : `<table><thead><tr><th>Langkah / SO</th><th>Sales</th><th>Penilaian</th></tr></thead><tbody>${r.rows.map((x) => {
+          const g = x.meta && x.meta.grade;
+          return `<tr><td>${esc(STEP[x.milestone] || x.milestone)}<br><span class="muted">${esc(x.customer || "")} · ${esc(x.so_no || "")}</span>
+            <details><summary class="muted" style="cursor:pointer">Isi pesan</summary><pre>${esc(x.body || "")}</pre></details></td>
+            <td>${esc(x.to_number || "")}<br><span class="muted">${fmtTime(x.sent_at)}</span></td>
+            <td>${g ? `<span class="chip ${esc(g.verdict)}">${esc(g.verdict)}</span>${g.note ? `<br><span class="muted">${esc(g.note)}</span>` : ""}${g.by ? `<br><span class="muted">oleh ${esc(g.by)}</span>` : ""}` : '<span class="muted">belum</span>'}
+              <div class="rowact"><button class="btn ghost sm" data-grade="benar" data-id="${x.id}">Benar</button>
+              <button class="btn warn sm" data-grade="salah" data-id="${x.id}">Salah…</button></div></td></tr>`;
+        }).join("")}</tbody></table>`;
+      $("shadowBody").querySelectorAll("[data-grade]").forEach((b) => b.addEventListener("click", async () => {
+        let note = "";
+        if (b.dataset.grade === "salah") { note = prompt("Apa yang salah?") || ""; if (!note) return; }
+        try { await api(`/api/notify/outbox/${b.dataset.id}/action`, { method: "POST", body: JSON.stringify({ action: "grade", verdict: b.dataset.grade, note }) }); }
+        catch (e) { toast(e.message + tokenHint()); }
+        loadShadow();
+      }));
+    } catch (e) { $("shadowBody").innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+  }
+
+  // ── WP-6: Sales CC ─────────────────────────────────────────────────────
+  let SALES = [];
+  async function loadSales() {
+    try { SALES = (await api("/api/notify/sales-contacts")).rows; renderSales(); }
+    catch (e) { $("salesBody").innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+  }
+  function renderSales() {
+    const q = $("salesFilter").value.trim().toLowerCase();
+    const rows = SALES.filter((r) => !q || (r.sales_name || "").toLowerCase().includes(q));
+    const missing = SALES.filter((r) => !r.phone_e164 && !r.selaras_phone && /^(yes|active|1|true)$/i.test(r.active || "")).length;
+    $("salesBody").innerHTML = !SALES.length ? '<div class="empty">Belum ada daftar sales dari Selaras (jalur pesanan membaca tbl_1130 setiap 30 menit).</div>'
+      : `<p class="muted" style="margin:0;padding:0 14px 8px">${missing} sales aktif belum punya nomor ("CC belum aktif").</p>
+      <table><thead><tr><th>Sales</th><th>Nomor WA</th><th>CC</th></tr></thead><tbody>${rows.map((r) => `
+        <tr><td>${esc(r.sales_name || "(tanpa nama)")}<br><span class="muted">ID ${esc(r.erp_sales_id)}${r.department ? " · " + esc(r.department) : ""}${r.active ? " · " + esc(r.active) : ""}</span></td>
+        <td>${r.selaras_phone ? `${esc(r.selaras_phone)}<br><span class="muted">dari Selaras</span>` :
+          `<input type="tel" inputmode="tel" data-phone="${esc(r.erp_sales_id)}" value="${esc(r.phone_e164 || "")}" placeholder="0813-…" aria-label="Nomor ${esc(r.sales_name || "")}" style="min-width:150px" />`}
+          ${!r.phone_e164 && !r.selaras_phone ? '<br><span class="chip pending">CC belum aktif</span>' : ""}</td>
+        <td><label class="toggle"><input type="checkbox" data-cc="${esc(r.erp_sales_id)}" ${r.cc_enabled ? "checked" : ""} aria-label="CC ${esc(r.sales_name || "")}" /><span></span></label></td></tr>`).join("")}</tbody></table>`;
+    const save = async (id) => {
+      const phoneEl = document.querySelector(`[data-phone="${CSS.escape(id)}"]`);
+      const ccEl = document.querySelector(`[data-cc="${CSS.escape(id)}"]`);
+      const r = SALES.find((x) => x.erp_sales_id === id);
+      try {
+        const out = await api(`/api/notify/sales-contacts/${encodeURIComponent(id)}`, { method: "PUT",
+          body: JSON.stringify({ phone: phoneEl ? phoneEl.value.trim() : (r.phone_e164 || ""), ccEnabled: ccEl.checked, salesName: r.sales_name }) });
+        r.phone_e164 = out.phone; r.cc_enabled = out.ccEnabled; toast("Tersimpan: " + (r.sales_name || id));
+      } catch (e) { toast(e.message + tokenHint()); }
+      renderSales();
+    };
+    document.querySelectorAll("[data-phone]").forEach((el) => el.addEventListener("change", () => save(el.dataset.phone)));
+    document.querySelectorAll("[data-cc]").forEach((el) => el.addEventListener("change", () => save(el.dataset.cc)));
+  }
+  $("salesFilter").addEventListener("input", renderSales);
+
+  // ── WP-6: Pelanggan ────────────────────────────────────────────────────
+  let OV_ID = null;
+  async function loadOverrides() {
+    try {
+      const { rows } = await api("/api/notify/overrides");
+      $("ovBody").innerHTML = !rows.length ? '<div class="empty">Belum ada.</div>'
+        : `<table><thead><tr><th>Pelanggan</th><th>Pengaturan</th><th></th></tr></thead><tbody>${rows.map((r) => `
+          <tr><td>${esc(r.customer || "(nama tidak ditemukan)")}<br><span class="muted">ID ${esc(r.customer_name_id)}</span></td>
+          <td>${r.muted ? '<span class="chip failed">mute</span> ' : ""}${r.phone_e164 ? "nomor: " + esc(r.phone_e164) : ""}
+            ${r.reason ? `<br><span class="muted">${esc(r.reason)}</span>` : ""}<br><span class="muted">${esc(r.set_by || "")} · ${fmtTime(r.updated_at)}</span></td>
+          <td><button class="btn warn sm" data-unov="${esc(r.customer_name_id)}">Hapus</button></td></tr>`).join("")}</tbody></table>`;
+      document.querySelectorAll("[data-unov]").forEach((b) => b.addEventListener("click", async () => {
+        try { await api(`/api/notify/overrides/${encodeURIComponent(b.dataset.unov)}`, { method: "PUT", body: JSON.stringify({ remove: true }) }); }
+        catch (e) { toast(e.message + tokenHint()); }
+        loadOverrides();
+      }));
+    } catch (e) { $("ovBody").innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+  }
+  async function searchCustomers() {
+    const q = $("custQ").value.trim();
+    if (q.length < 2) { toast("Ketik minimal 2 huruf."); return; }
+    try {
+      const { rows } = await api("/api/notify/customers?q=" + encodeURIComponent(q));
+      $("custResults").innerHTML = !rows.length ? '<div class="empty">Tidak ditemukan di SO.</div>'
+        : `<table><tbody>${rows.map((r) => `<tr><td>${esc(r.customer)}<br><span class="muted">ID ${esc(r.customer_name_id)} · ${esc(r.sos)} SO</span></td>
+          <td><button class="btn ghost sm" data-pick="${esc(r.customer_name_id)}" data-name="${esc(r.customer)}">Atur</button></td></tr>`).join("")}</tbody></table>`;
+      document.querySelectorAll("[data-pick]").forEach((b) => b.addEventListener("click", () => {
+        OV_ID = b.dataset.pick; $("ovName").textContent = b.dataset.name; $("ovId").textContent = "ID " + OV_ID;
+        $("ovPhone").value = ""; $("ovReason").value = ""; $("ovMuted").checked = false; $("ovForm").hidden = false; $("ovPhone").focus();
+      }));
+    } catch (e) { toast(e.message); }
+  }
+  $("custSearch").addEventListener("click", searchCustomers);
+  $("custQ").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); searchCustomers(); } });
+  $("ovForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      await api(`/api/notify/overrides/${encodeURIComponent(OV_ID)}`, { method: "PUT",
+        body: JSON.stringify({ phone: $("ovPhone").value.trim(), muted: $("ovMuted").checked, reason: $("ovReason").value.trim() }) });
+      toast("Tersimpan."); $("ovForm").hidden = true; loadOverrides();
+    } catch (err) { toast(err.message + tokenHint()); }
+  });
+
+  (async () => {
+    try {
+      CFG = await api("/api/notify/config");
+      renderBanner(); renderConfig(); renderPipeline(); loadLive();
+    } catch (e) {
+      $("modeBanner").className = "banner err";
+      $("modeBanner").textContent = "Gagal memuat konfigurasi: " + e.message;
+    }
+  })();
+})();
+</script>
+</body>
+</html>

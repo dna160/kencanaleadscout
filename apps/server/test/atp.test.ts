@@ -415,6 +415,28 @@ describe.skipIf(!hasDb)("ATP over the real schema", () => {
       });
     });
 
+    it("WP-1: re-keying lines→header on po_no (even with a duplicate header) leaves ATP unchanged", async () => {
+      await inRollback(async (tx) => {
+        await seedFg(tx, FG);
+        await seedLines(tx, [...LIVE, ...STALE]);
+        const before = await atpFor(tx, BG_KEY);
+
+        // What the post-WP-1 sync writes: po_no on header and every line, and no
+        // so_id (Selaras has none). Plus a SECOND header row with the same SO
+        // number — the case a plain join would turn into double-counted demand.
+        await tx`update erp_so_header set po_no = ${`${P}/SO-1`} where id = ${`${P}-so`}`;
+        await tx`update erp_so_line set po_no = ${`${P}/SO-1`}, so_id = null where id like ${`${P}-%`}`;
+        await tx`
+          insert into erp_so_header (id, po_no, so_number, customer_name_text, status_order)
+          values (${`${P}-so-dup`}, ${`${P}/SO-1`}, ${`${P}/SO-1`}, ${"PT Pelanggan"}, ${"Open"})
+        `;
+        const after = await atpFor(tx, BG_KEY);
+
+        expect(after).toEqual(before);
+        expect(after.atp).toBe(3849);
+      });
+    });
+
     it("AMENDMENT 22 moves 27 phantoms out of the queue and ATP by exactly zero", async () => {
       // The property, on the module's canonical example: build the SAME fixtures
       // under both settings of the flag and compare the promiseable figure. The
