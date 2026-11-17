@@ -91,7 +91,52 @@ export async function orderEventRoutes(app: FastifyInstance): Promise<void> {
        group by 1, 2 order by 1, 2`;
     const [tracked] = await db`
       select count(*)::int as n, min(detected_at)::text as since from order_events where event_type = 'do.created'`;
-    return { range, byBucket, printedWhen, waitingWhen, createdAhead, moves, movesTrackedOver: tracked };
+    // The SO line's estimate_delivery (the "dijadwalkan" date set at order entry)
+    // against the first live DO's sj_date (the actual dispatch day).
+    const etaVsDo = await db`
+      with eta as (
+        select po_no, min(estimate_delivery) as eta from erp_so_line
+         where po_no is not null and estimate_delivery is not null group by po_no),
+      firstdo as (
+        select so_no, min(sj_date) as sj from erp_do_header where ${live} and sj_date is not null group by so_no)
+      select greatest(least(f.sj - e.eta, 15), -15) as do_minus_eta_days, count(*)::int as n
+        from eta e join firstdo f on f.so_no = e.po_no
+       where f.sj >= date '2026-09-01'
+       group by 1 order by 1`;
+    // How far ahead of the order date the estimate is set.
+    const etaLead = await db`
+      with eta as (
+        select po_no, min(estimate_delivery) as eta from erp_so_line
+         where po_no is not null and estimate_delivery is not null group by po_no)
+      select greatest(least(e.eta - h.po_date, 30), -5) as eta_minus_po_days, count(*)::int as n
+        from eta e join erp_so_header h on h.po_no = e.po_no
+       where h.po_date >= date '2026-09-01'
+       group by 1 order by 1`;
+    // Cancelled or deleted DOs, and whether the SO got another DO later.
+    const cancelled = await db`
+      select case when d.deleted_at is not null then 'deleted' else 'cancel_order=yes' end as kind,
+             count(*)::int as n,
+             count(*) filter (where exists (
+               select 1 from erp_do_header x
+                where x.so_no = d.so_no and x.id <> d.id and x.deleted_at is null
+                  and lower(coalesce(x.cancel_order, '')) <> 'yes' and x.sj_date > d.sj_date))::int as redone_later
+        from erp_do_header d
+       where (d.deleted_at is not null or lower(coalesce(d.cancel_order, '')) = 'yes') and d.sj_date >= date '2026-09-01'
+       group by 1`;
+    // Open SOs past their estimate with no DO yet, by days overdue.
+    const overdueNow = await db`
+      with late as (
+        select po_no, min(estimate_delivery) as eta from v_live_commitments
+         where po_no is not null and estimate_delivery < ${today} group by po_no)
+      select case when ${today} - eta <= 1 then '1' when ${today} - eta <= 3 then '2-3'
+                  when ${today} - eta <= 7 then '4-7' when ${today} - eta <= 30 then '8-30' else '>30' end as days_overdue,
+             count(*)::int as sos,
+             count(*) filter (where exists (select 1 from erp_do_header x where x.so_no = late.po_no and x.deleted_at is null))::int as with_some_do
+        from late group by 1 order by 1`;
+    return {
+      range, byBucket, printedWhen, waitingWhen, createdAhead, moves, movesTrackedOver: tracked,
+      etaVsDo, etaLead, cancelled, overdueNow,
+    };
   });
 
   app.get("/api/orders/sync-status", async (_req, reply) => {
