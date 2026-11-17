@@ -31,9 +31,12 @@ import { isOrderLaneEnabled } from "../erp/orderSync.js";
 import { redactSecrets } from "../erp/selarasClient.js";
 import { getChannel, type Channel, type SendResult } from "./channel.js";
 import { loadDo, loadHeader, loadLiveOrder, loadRep, localDisplay } from "./context.js";
+import { unmarkedToday, type UnmarkedRow } from "./dispatch.js";
 import {
   isMilestone,
+  MILESTONES,
   renderCustomerMessage,
+  renderDispatchReminder,
   renderDoCancelledNotice,
   renderSalesCc,
   renderShadow,
@@ -41,7 +44,9 @@ import {
   type Milestone,
 } from "./messages.js";
 import {
+  DISPATCH_REMINDER,
   DO_CANCELLED_NOTICE,
+  DO_MILESTONES,
   erpAgeHours,
   EVENT_MILESTONE,
   holdFor,
@@ -51,7 +56,9 @@ import {
   nextSendWindow,
   outboxKey,
   resolveRecipient,
+  wibDate,
   wibDayStart,
+  wibHour,
   type LiveMode,
 } from "./rules.js";
 
@@ -69,7 +76,7 @@ export interface DispatchDeps {
   channel: Channel;
   mode: LiveMode;
   now: () => Date;
-  holds: Record<Milestone, number>;
+  holds: Partial<Record<Milestone, number>>;
   dailyCap: number;
   fromHour: number;
   untilHour: number;
@@ -77,6 +84,8 @@ export interface DispatchDeps {
   excluded: readonly string[];
   sharedNumberCustomers: number;
   batch: number;
+  /** Plan the afternoon reminder of unmarked deliveries (off in tests that count messages). */
+  reminders: boolean;
   /** Null when sending may proceed; otherwise why it is paused. */
   pauseReason: (db: AnySql, channel: Channel) => Promise<string | null>;
   log: DispatchLogger;
@@ -146,6 +155,7 @@ interface PlannedRow {
   event_id: number;
   subject_ref: string | null;
   due_at: Date;
+  meta?: Record<string, unknown>;
 }
 
 export async function planEvents(deps: DispatchDeps, limit = 500): Promise<number> {
@@ -174,7 +184,11 @@ export async function planEvents(deps: DispatchDeps, limit = 500): Promise<numbe
     }
     const milestone = EVENT_MILESTONE[e.event_type];
     if (!milestone) continue; // so.late is internal (M9 delay log), never a customer message
-    const subject = milestone === "delivery_scheduled" ? String(e.payload["do_id"] ?? e.subject_ref ?? "") : e.so_no;
+    const doId = DO_MILESTONES.includes(milestone) ? String(e.payload["do_id"] ?? e.subject_ref ?? "") : null;
+    // Step 3 is one message per surat jalan; a dispatch mark is one per mark
+    // (a DO can be delayed twice), and the dispatcher sends only the latest.
+    const markId = e.payload["mark_id"] != null ? String(e.payload["mark_id"]) : null;
+    const subject = doId ? (markId ? `${doId}:m${markId}` : doId) : e.so_no;
     if (!subject) continue;
 
     const age = erpAgeHours(e.occurred_at, now);
@@ -182,7 +196,7 @@ export async function planEvents(deps: DispatchDeps, limit = 500): Promise<numbe
     const off = !enabled(milestone);
     const stale = off || (age !== null && age > deps.maxEventAgeHours);
     const due = new Date(now.getTime() + holdFor(milestone, deps.holds) * 60_000);
-    const base = { milestone, so_no: e.so_no, event_id: eid, subject_ref: milestone === "delivery_scheduled" ? subject : null };
+    const base = { milestone, so_no: e.so_no, event_id: eid, subject_ref: doId, meta: markId ? e.payload : {} };
     rows.push({
       ...base,
       recipient_role: "customer",
@@ -191,7 +205,9 @@ export async function planEvents(deps: DispatchDeps, limit = 500): Promise<numbe
       idempotency_key: outboxKey(mode, milestone, subject, "customer"),
       due_at: due,
     });
-    if (mode === "on" && !stale) {
+    // "Barang dikirim" carries no rep CC: one more message per delivery to every
+    // rep, every morning, would bury the CCs that need attention (delays).
+    if (mode === "on" && !stale && milestone !== "delivery_departed") {
       rows.push({
         ...base,
         recipient_role: "sales_cc",
@@ -208,9 +224,9 @@ export async function planEvents(deps: DispatchDeps, limit = 500): Promise<numbe
   if (rows.length) {
     await db`
       insert into notify_ledger ${db(
-        rows.map((r) => ({ ...r, mode: lmode, channel: deps.channel.mode, context_source: "erp" })),
+        rows.map((r) => ({ ...r, meta: db.json(r.meta ?? {}), mode: lmode, channel: deps.channel.mode, context_source: "erp" })),
         "mode", "milestone", "so_no", "recipient_role", "status", "cancel_reason", "idempotency_key",
-        "event_id", "subject_ref", "due_at", "channel", "context_source",
+        "event_id", "subject_ref", "due_at", "channel", "context_source", "meta",
       )}
       on conflict (idempotency_key) do nothing
     `;
@@ -227,7 +243,7 @@ async function planDoCancelled(deps: DispatchDeps, e: EventRow, rows: PlannedRow
   const lmode = ledgerMode(mode);
   await db`
     update notify_ledger set status = 'cancelled', cancel_reason = 'do_cancelled', leased_until = null
-     where mode = ${lmode} and milestone = 'delivery_scheduled' and subject_ref = ${doId}
+     where mode = ${lmode} and milestone = any(${DO_MILESTONES as string[]}) and subject_ref = ${doId}
        and status in ('pending', 'held')
   `;
   const [told] = await db<{ n: number }[]>`
@@ -373,7 +389,7 @@ async function sentTodayTo(deps: DispatchDeps, e164: string): Promise<number> {
   const [r] = await deps.db<{ n: number }[]>`
     select count(*)::int as n from notify_ledger
      where mode = 'live' and recipient_role = 'customer' and to_number = ${e164}
-       and milestone in ('so_received', 'production_started', 'delivery_scheduled')
+       and milestone = any(${[...MILESTONES] as string[]})
        and sent_at >= ${wibDayStart(deps.now())}
   `;
   return r?.n ?? 0;
@@ -382,7 +398,7 @@ async function sentTodayTo(deps: DispatchDeps, e164: string): Promise<number> {
 async function processCustomer(deps: DispatchDeps, row: LedgerRow): Promise<void> {
   const { db, mode } = deps;
   const m = row.milestone as Milestone;
-  const isDelivery = m === "delivery_scheduled";
+  const isDelivery = DO_MILESTONES.includes(m);
   const order = await loadLiveOrder(db, row.so_no, isDelivery ? row.subject_ref : null);
   if (!order) return finish(deps, row, { status: "cancelled", cancel_reason: "so_missing" });
   const { header, ctx, rep, doRow } = order;
@@ -398,8 +414,48 @@ async function processCustomer(deps: DispatchDeps, row: LedgerRow): Promise<void
     return finish(deps, row, { status: "cancelled", cancel_reason: "do_cancelled" });
   }
 
-  // 2. Merge step 1 into step 3 (whichever is processed first).
+  // 1b. Dispatch marks (PRD §20): only the DO's latest mark is ever sent, and
+  // step 3 gives way to a mark made before it went out (the mark's message
+  // carries the up-to-date schedule).
   const lmode = ledgerMode(mode);
+  let change: { from: string | null; to: string | null; told: boolean } | undefined;
+  if (isDelivery && row.subject_ref) {
+    const [ds] = await db<{ last_mark_id: string | null }[]>`
+      select last_mark_id::text from notify_dispatch where do_id = ${row.subject_ref}`;
+    const markId = row.meta["mark_id"] != null ? String(row.meta["mark_id"]) : null;
+    if (m === "delivery_scheduled") {
+      if (ds?.last_mark_id) return finish(deps, row, { status: "cancelled", cancel_reason: "superseded" });
+    } else {
+      if (!markId || ds?.last_mark_id !== markId) return finish(deps, row, { status: "cancelled", cancel_reason: "superseded" });
+      const today = wibDate(deps.now());
+      if (m === "delivery_departed" && row.meta["marked_on"] !== today) {
+        return finish(deps, row, { status: "cancelled", cancel_reason: "stale_departure" });
+      }
+      const to = (row.meta["to"] as string | null) ?? null;
+      if (m === "delivery_changed" && to !== null && to < today) {
+        return finish(deps, row, { status: "cancelled", cancel_reason: "stale_change" });
+      }
+      // Has the customer been given a date for this DO? If not, the pending
+      // step-3 message is dropped and this one gives the full details.
+      const [told] = await db<{ n: number }[]>`
+        select count(*)::int as n from notify_ledger
+         where mode = ${lmode} and subject_ref = ${row.subject_ref} and recipient_role = 'customer'
+           and milestone in ('delivery_scheduled', 'delivery_changed') and status = any(${SENT}) and id <> ${row.id}
+      `;
+      const wasTold = (told?.n ?? 0) > 0;
+      if (!wasTold) {
+        await db`
+          update notify_ledger set status = 'cancelled', cancel_reason = 'superseded', leased_until = null,
+                 meta = meta || ${db.json({ supersededBy: row.id })}
+           where mode = ${lmode} and subject_ref = ${row.subject_ref} and milestone = 'delivery_scheduled'
+             and status in ('pending', 'held')
+        `;
+      }
+      if (m === "delivery_changed") change = { from: (row.meta["from"] as string | null) ?? null, to, told: wasTold };
+    }
+  }
+
+  // 2. Merge step 1 into step 3 (whichever is processed first).
   let mergedReceived = row.meta["mergedReceived"] === true;
   if (m === "so_received") {
     const [mv3] = await db<{ id: string }[]>`
@@ -418,7 +474,7 @@ async function processCustomer(deps: DispatchDeps, row: LedgerRow): Promise<void
       `;
       return finish(deps, row, { status: "cancelled", cancel_reason: "merged", meta: { mergedInto: mv3.id } });
     }
-  } else if (isDelivery) {
+  } else if (m === "delivery_scheduled") {
     const merged = await db`
       update notify_ledger set status = 'cancelled', cancel_reason = 'merged', leased_until = null,
              meta = meta || ${db.json({ mergedInto: row.id })}
@@ -464,7 +520,7 @@ async function processCustomer(deps: DispatchDeps, row: LedgerRow): Promise<void
   const [contact] = phone
     ? await db<{ first_contacted_at: Date | null }[]>`select first_contacted_at from notify_contacts where phone_e164 = ${phone}`
     : [];
-  const text = renderCustomerMessage(m, ctx, { mergedReceived, introduce: Boolean(phone) && !contact?.first_contacted_at });
+  const text = renderCustomerMessage(m, ctx, { mergedReceived, change, introduce: Boolean(phone) && !contact?.first_contacted_at });
   const meta = { mergedReceived, recipientSource: recipient.source, verdict: verdict.reason ?? "ok" };
 
   // 5. Sending window (also protects reps' evenings in shadow mode).
@@ -538,6 +594,80 @@ async function processNotice(deps: DispatchDeps, row: LedgerRow): Promise<void> 
   await send(deps, row, rep.phone, text);
 }
 
+// ── Afternoon reminder of unmarked deliveries (PRD §20) ─────────────────────
+
+/**
+ * Once per WIB day, at `dispatch_remind_hour`: today's deliveries nobody has
+ * marked Berangkat or Ditunda go to each one's rep, and the full list to the
+ * logistics numbers set in Konfigurasi. The customer is never messaged on the
+ * strength of a missing mark.
+ */
+export async function planReminders(deps: DispatchDeps): Promise<number> {
+  const { db, mode } = deps;
+  if (mode === "off" || !deps.reminders) return 0;
+  const now = deps.now();
+  const today = wibDate(now);
+  const [s] = await db<{ hour: number; numbers: string[] }[]>`
+    select dispatch_remind_hour as hour, dispatch_remind_numbers as numbers from notify_settings where id = 1`;
+  if (!s || s.hour < 0 || s.hour > 23 || wibHour(now) < s.hour) return 0;
+  const claimed = await db`
+    update notify_settings set dispatch_reminded_on = ${today}::date
+     where id = 1 and dispatch_reminded_on is distinct from ${today}::date
+    returning id
+  `;
+  if (!claimed.length) return 0; // already done today (or by another replica)
+
+  const rows = await unmarkedToday(db, today);
+  if (!rows.length) return 0;
+  const byPhone = new Map<string, UnmarkedRow[]>();
+  const add = (phone: string, list: UnmarkedRow[]) => {
+    const cur = byPhone.get(phone) ?? [];
+    for (const r of list) if (!cur.includes(r)) cur.push(r);
+    byPhone.set(phone, cur);
+  };
+  for (const n of s.numbers ?? []) add(n, rows);
+  const reps = new Map<string, string | null>();
+  for (const r of rows) {
+    const key = r.sales_name_id ?? "";
+    if (!reps.has(key)) reps.set(key, r.sales_name_id ? (await loadRep(db, r)).phone : null);
+    const p = reps.get(key);
+    if (p) add(p, [r]);
+  }
+  const lmode = ledgerMode(mode);
+  const planned = [...byPhone.entries()].map(([phone, list]) => ({
+    mode: lmode,
+    milestone: DISPATCH_REMINDER,
+    so_no: null,
+    recipient_role: "sales_cc",
+    to_number: phone,
+    body: renderDispatchReminder(
+      today,
+      list.map((r) => ({ sjNo: r.no_sj ?? r.do_id, soNo: r.so_no, customer: r.customer ?? "-" })),
+      mode === "shadow",
+    ),
+    status: "pending",
+    idempotency_key: outboxKey(mode, DISPATCH_REMINDER, `${today}:${phone}`, "sales_cc"),
+    due_at: now,
+    channel: deps.channel.mode,
+    context_source: "erp",
+    meta: db.json({ date: today, count: list.length }),
+  }));
+  await db`
+    insert into notify_ledger ${db(planned, "mode", "milestone", "so_no", "recipient_role", "to_number", "body", "status",
+      "idempotency_key", "due_at", "channel", "context_source", "meta")}
+    on conflict (idempotency_key) do nothing
+  `;
+  return planned.length;
+}
+
+async function processReminder(deps: DispatchDeps, row: LedgerRow): Promise<void> {
+  if (row.meta["date"] !== wibDate(deps.now())) return finish(deps, row, { status: "cancelled", cancel_reason: "stale_event" });
+  if (!row.to_number || !row.body) return finish(deps, row, { status: "cancelled", cancel_reason: "unreachable" });
+  const wait = nextSendWindow(deps.now(), deps.fromHour, deps.untilHour);
+  if (wait) return defer(deps, row, wait, "quiet_hours");
+  await send(deps, row, row.to_number, row.body);
+}
+
 async function processRow(deps: DispatchDeps, row: LedgerRow): Promise<void> {
   try {
     // An earlier row in this same batch may have settled this one (a step-3
@@ -545,6 +675,7 @@ async function processRow(deps: DispatchDeps, row: LedgerRow): Promise<void> {
     const [cur] = await deps.db<{ status: string }[]>`select status from notify_ledger where id = ${row.id}`;
     if (cur?.status !== "sending") return;
     if (row.milestone === DO_CANCELLED_NOTICE) return await processNotice(deps, row);
+    if (row.milestone === DISPATCH_REMINDER) return await processReminder(deps, row);
     if (!isMilestone(row.milestone)) return await finish(deps, row, { status: "cancelled", cancel_reason: "unknown_milestone" });
     if (row.recipient_role === "sales_cc") return await processCc(deps, row);
     return await processCustomer(deps, row);
@@ -564,7 +695,7 @@ async function processRow(deps: DispatchDeps, row: LedgerRow): Promise<void> {
 export async function dispatchOnce(deps: DispatchDeps): Promise<DispatchResult> {
   if (deps.mode === "off") return { paused: "off", planned: 0, processed: 0 };
   await syncMode(deps.db, deps.mode, deps.now());
-  const planned = await planEvents(deps);
+  const planned = (await planEvents(deps)) + (await planReminders(deps));
   const [ks] = await deps.db<{ kill_switch: boolean }[]>`select kill_switch from notify_settings where id = 1`;
   const paused = ks?.kill_switch ? "kill_switch" : await deps.pauseReason(deps.db, deps.channel);
   if (paused) return { paused, planned, processed: 0 };
@@ -620,6 +751,7 @@ export function defaultDispatchDeps(over: Partial<DispatchDeps> = {}): DispatchD
     excluded: over.excluded ?? config.notify.excludeCustomers,
     sharedNumberCustomers: over.sharedNumberCustomers ?? config.notify.sharedNumberCustomers,
     batch: over.batch ?? 20,
+    reminders: over.reminders ?? true,
     pauseReason: over.pauseReason ?? defaultPauseReason,
     log: over.log ?? { info: (m) => console.log(m), warn: (m) => console.warn(m), error: (m) => console.error(m) },
   };

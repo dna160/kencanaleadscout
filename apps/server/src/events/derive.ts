@@ -16,7 +16,14 @@
  * corrected phone is used rather than one frozen into an event.
  */
 
-export type EventType = "so.created" | "production.requested" | "do.created" | "do.cancelled" | "so.late";
+export type EventType =
+  | "so.created"
+  | "production.requested"
+  | "do.created"
+  | "do.cancelled"
+  | "so.late"
+  | "do.rescheduled" // staff mark or Selaras sj_date edit (notify/dispatch.ts)
+  | "do.departed"; // staff mark (notify/dispatch.ts)
 export type EventSource = "erp-mirror" | "erp-webhook" | "manual";
 
 export interface EventDraft {

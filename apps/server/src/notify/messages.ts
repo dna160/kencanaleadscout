@@ -13,7 +13,13 @@
  *  - Every message ends with the STOP footer.
  */
 
-export const MILESTONES = ["so_received", "production_started", "delivery_scheduled"] as const;
+export const MILESTONES = [
+  "so_received",
+  "production_started",
+  "delivery_scheduled",
+  "delivery_changed",
+  "delivery_departed",
+] as const;
 export type Milestone = (typeof MILESTONES)[number];
 
 export function isMilestone(v: unknown): v is Milestone {
@@ -54,7 +60,7 @@ export interface OrderContext {
  * Recorded on every ledger row (PRD §8). Bump when wording changes, so a
  * complaint about a message can be traced to the exact template that sent it.
  */
-export const TEMPLATE_VERSION = "2026-11-10.1";
+export const TEMPLATE_VERSION = "2026-11-17.1";
 
 export const FOOTER = "_Balas STOP untuk berhenti menerima notifikasi pesanan._";
 export const SIGNATURE = "— PT Kencana Panelindo";
@@ -113,6 +119,58 @@ export interface RenderOptions {
    * arrived while it was still on hold, so this one says both (PRD §7 MV1 merge).
    */
   mergedReceived?: boolean;
+  /**
+   * delivery_changed only. `from`: the date the customer was last given (null
+   * when no date was known); `to`: the new date (null = not yet known).
+   * `told`: false when the customer never received the step-3 schedule for
+   * this DO, so the message gives the full delivery details instead.
+   */
+  change?: { from: string | null; to: string | null; told: boolean };
+}
+
+/** "2026-11-11" + n days, as YYYY-MM-DD. */
+export function addDaysIso(iso: string, n: number): string {
+  const d = new Date(`${iso.slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return iso;
+  return new Date(d.getTime() + n * 86_400_000).toISOString().slice(0, 10);
+}
+
+function deliveryChanged(ctx: OrderContext, change: NonNullable<RenderOptions["change"]>): string[] {
+  const d = ctx.delivery;
+  if (!d) throw new Error("delivery_changed needs ctx.delivery");
+  const what = d.pickup ? "pengambilan" : "pengiriman";
+  const doLabel = d.pickup ? "No. DO" : "No. surat jalan";
+  const { from, to, told } = change;
+  const out: string[] = [];
+  if (!told || !from) {
+    // The customer has no date for this DO yet: give it now, in full.
+    if (to) {
+      out.push(
+        d.pickup
+          ? `Pesanan *${ctx.soNo}* siap diambil mulai ${formatDateId(to)} (${doLabel} ${d.sjNo}).`
+          : `Jadwal pengiriman pesanan *${ctx.soNo}* sudah ditetapkan.`,
+      );
+      if (!d.pickup) out.push([`${doLabel}: ${d.sjNo}`, `Jadwal pengiriman: ${formatDateId(to)}`, ...(d.address ? [`Alamat kirim: ${d.address}`] : [])].join("\n"));
+    } else {
+      out.push(`Pesanan *${ctx.soNo}* sedang kami siapkan untuk ${d.pickup ? "diambil" : "dikirim"} (${doLabel} ${d.sjNo}).`);
+      out.push(`Jadwal ${what} akan kami kabarkan kembali.`);
+    }
+    out.push(`Barang:\n${formatItems(ctx.items)}`);
+    return out;
+  }
+  if (to && to < from) {
+    out.push(`Jadwal ${what} pesanan *${ctx.soNo}* berubah menjadi lebih awal.`);
+    out.push([`${doLabel}: ${d.sjNo}`, `Jadwal sebelumnya: ${formatDateId(from)}`, `Jadwal baru: ${formatDateId(to)}`].join("\n"));
+    return out;
+  }
+  out.push(`Mohon maaf, ${what} pesanan *${ctx.soNo}* yang dijadwalkan ${formatDateId(from)} *tertunda*.`);
+  out.push(
+    to
+      ? [`${doLabel}: ${d.sjNo}`, `Jadwal baru: ${formatDateId(to)}`].join("\n")
+      : `${doLabel}: ${d.sjNo}\nJadwal ${what} yang baru akan kami kabarkan kembali.`,
+  );
+  out.push("Mohon maaf atas ketidaknyamanannya.");
+  return out;
 }
 
 /** The message the customer receives. */
@@ -128,6 +186,20 @@ export function renderCustomerMessage(m: Milestone, ctx: OrderContext, opts: Ren
     parts.push(`Pesanan *${ctx.soNo}* saat ini sedang diproduksi di pabrik kami.`);
     parts.push(`Item:\n${formatItems(items)}`);
     parts.push("Kami akan mengabari Anda kembali saat jadwal pengiriman sudah ditetapkan.");
+  } else if (m === "delivery_changed") {
+    const d = ctx.delivery;
+    const change = opts.change ?? { from: d?.sjDate ?? null, to: d?.sjDate ? addDaysIso(d.sjDate, 1) : null, told: true };
+    parts.push(...deliveryChanged(ctx, change));
+  } else if (m === "delivery_departed") {
+    const d = ctx.delivery;
+    if (!d) throw new Error("delivery_departed needs ctx.delivery");
+    parts.push(`Pesanan *${ctx.soNo}* sedang dalam perjalanan ke alamat Anda hari ini.`);
+    const lines = [`No. surat jalan: ${d.sjNo}`];
+    if (d.address) lines.push(`Alamat kirim: ${d.address}`);
+    parts.push(lines.join("\n"));
+    parts.push(`Barang:\n${formatItems(ctx.items)}`);
+    if (d.partial) parts.push("Ini pengiriman sebagian; sisa pesanan menyusul.");
+    parts.push("Mohon periksa kondisi dan jumlah barang saat diterima.");
   } else {
     const d = ctx.delivery;
     if (!d) throw new Error("delivery_scheduled needs ctx.delivery");
@@ -219,6 +291,29 @@ export const MILESTONE_INFO: Record<
     notes:
       "delivery_date, driver, no_kendaraan and received_date are never filled in the ERP, so they are never used.",
   },
+  delivery_changed: {
+    step: 4,
+    label: "Jadwal kirim berubah",
+    labelEn: "Delivery delayed / rescheduled",
+    trigger:
+      "Staff mark a surat jalan 'Ditunda' on the Pengiriman tab (new date, or date not yet known), or the DO's sj_date is edited in Selaras.",
+    hold: "None. Only the latest mark is sent: a mark undone or replaced before sending is cancelled.",
+    coverage:
+      "Any DO the customer was given a date for. If the step-3 message was never sent, this one gives the full delivery details instead.",
+    notes:
+      "Selaras never edited sj_date in 3,000 tracked DOs (Nov 2026), so staff marks are the main source. The rep gets a CC.",
+  },
+  delivery_departed: {
+    step: 5,
+    label: "Barang dikirim",
+    labelEn: "Goods dispatched",
+    trigger:
+      "Staff mark a surat jalan 'Berangkat' on the Pengiriman tab, on its delivery day. The ERP has no dispatch signal (print_status is set the afternoon before, and a third of DOs are never printed).",
+    hold: "None. Sent only on the day it was marked; a message still waiting at the end of that day is dropped.",
+    coverage: "Delivered orders (cara_kirim 'di Antar'). Pickups are not on the list.",
+    notes:
+      "No rep CC (the rep sees it in Pesan / Riwayat). An unmarked delivery never messages the customer: staff get a reminder in the afternoon instead.",
+  },
 };
 
 /** Sample order used when no SO number is given or the ERP is not connected. */
@@ -269,5 +364,22 @@ export function renderDoCancelledNotice(soNo: string, sjNo: string, customerName
       shadow ? "(mode uji) dibuat" : "terkirim ke pelanggan"
     }.`,
     "Pelanggan tidak menerima pesan otomatis lanjutan. Mohon informasikan pelanggan bila perlu.",
+  ].join("\n\n");
+}
+
+/** To the rep / logistics admin: today's surat jalan nobody has marked yet. */
+export function renderDispatchReminder(
+  dateIso: string,
+  rows: { sjNo: string; soNo: string; customer: string }[],
+  shadow: boolean,
+): string {
+  const max = 25;
+  const lines = rows.slice(0, max).map((r) => `• ${r.sjNo} — ${r.soNo} — ${r.customer}`);
+  if (rows.length > max) lines.push(`• dan ${rows.length - max} lainnya`);
+  return [
+    `${shadow ? "[SHADOW] " : ""}⏰ *Kabar Pesanan* — Pengiriman belum ditandai`,
+    `Surat jalan berikut dijadwalkan dikirim hari ini (${formatDateId(dateIso)}), tetapi belum ditandai *Berangkat* atau *Ditunda*:`,
+    lines.join("\n"),
+    "Pelanggan belum menerima kabar pengiriman. Mohon pastikan statusnya ditandai di LeadScout › Kabar Pesanan › Pengiriman.",
   ].join("\n\n");
 }

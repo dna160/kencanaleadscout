@@ -126,6 +126,25 @@
   .big{font-size:28px;font-weight:800}
   .gate-ok{color:var(--ok-ink)} .gate-no{color:var(--neg-ink)}
 
+  /* "Pengiriman" tab — dispatch marks */
+  .ship-head{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .ship-head input[type=date]{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:10px;min-height:var(--tap)}
+  .ship-bulk{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--line);background:#fafbfc}
+  .ship-row{display:grid;grid-template-columns:28px 1fr;gap:4px 8px;padding:12px 14px;border-bottom:1px solid var(--line)}
+  .ship-row:last-child{border-bottom:none}
+  .ship-row .cb{padding-top:2px}
+  .ship-row .cb input{width:20px;height:20px}
+  .ship-row .top{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:baseline}
+  .ship-row .sj{font-weight:700;font-size:14px}
+  .ship-row .sub{font-size:12.5px;color:var(--ink-2);line-height:1.45}
+  .ship-row .acts{grid-column:2;display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+  .ship-row form{grid-column:2;display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px;padding:10px;border:1px dashed var(--line);border-radius:10px;background:#fafbfc}
+  .ship-row form input[type=date]{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:10px;min-height:40px}
+  .chip.ok{background:var(--ok-bg);color:var(--ok-ink)}
+  .chip.warn{background:var(--warn-bg);color:var(--warn-ink)}
+  .chip.bad{background:var(--neg-bg);color:var(--neg-ink)}
+  .chip.info{background:var(--stub-bg);color:var(--stub-ink)}
+
   /* "Pesan" tab — WhatsApp-Web-style conversations */
   .tabs .badge[hidden]{display:none}
   .tabs .badge{display:inline-block;min-width:18px;padding:0 5px;margin-left:6px;border-radius:999px;background:#25d366;color:#fff;font-size:11px;font-weight:800;line-height:18px;text-align:center}
@@ -202,6 +221,7 @@
   <nav class="tabs" role="tablist">
     <button role="tab" aria-selected="true" aria-controls="p-live" id="t-live">Live</button>
     <button role="tab" aria-selected="false" aria-controls="p-chat" id="t-chat">Pesan<span class="badge" id="chatBadge" hidden></span></button>
+    <button role="tab" aria-selected="false" aria-controls="p-ship" id="t-ship">Pengiriman<span class="badge" id="shipBadge" hidden></span></button>
     <button role="tab" aria-selected="false" aria-controls="p-queue" id="t-queue">Antrian</button>
     <button role="tab" aria-selected="false" aria-controls="p-shadow" id="t-shadow">Shadow</button>
     <button role="tab" aria-selected="false" aria-controls="p-sales" id="t-sales">Sales CC</button>
@@ -244,6 +264,23 @@
         <div class="chat-empty"><b>Kabar Pesanan</b>Pilih percakapan untuk melihat pesan.</div>
       </div>
     </div>
+  </section>
+
+  <!-- ── Pengiriman: mark today's deliveries departed / delayed ────── -->
+  <section id="p-ship" class="panel" role="tabpanel" aria-labelledby="t-ship" hidden>
+    <div class="card">
+      <h2 class="ship-head">Pengiriman
+        <input type="date" id="shipDate" aria-label="Tanggal pengiriman" />
+        <button class="btn ghost sm" id="shipToday" type="button">Hari ini</button>
+        <button class="btn ghost sm" id="shipReload" type="button">Muat ulang</button>
+      </h2>
+      <div class="body">
+        <p style="margin:0 0 6px;font-size:13px;line-height:1.5">Setiap pagi, tandai setiap surat jalan: <b>Berangkat</b> saat barang keluar, atau <b>Tunda</b> bila jadwalnya bergeser. Pelanggan langsung dikabari. Surat jalan yang <b>tidak ditandai tidak mengirim apa pun</b> ke pelanggan.</p>
+        <p class="muted" id="shipNote" style="margin:0"></p>
+        <div class="kv" id="shipKv" style="margin-top:10px"></div>
+      </div>
+    </div>
+    <div id="shipLists"><div class="card"><div class="empty">Memuat…</div></div></div>
   </section>
 
   <!-- ── Antrian / outbox ──────────────────────────────────────────── -->
@@ -363,6 +400,21 @@
       <div class="body" id="chanBody"></div>
     </div>
     <div class="card">
+      <h2>Pengingat pengiriman</h2>
+      <div class="body">
+        <div class="row">
+          <label class="fld" style="flex:0 0 160px;min-width:140px">Jam pengingat (WIB)
+            <select id="remHour" style="font:inherit;padding:10px 12px;border:1px solid var(--line);border-radius:10px;min-height:var(--tap);background:#fff"></select>
+          </label>
+          <label class="fld">Nomor logistik / admin (opsional, pisahkan dengan koma)
+            <input id="remNumbers" type="text" inputmode="tel" autocomplete="off" placeholder="0812-…, 0813-…" />
+          </label>
+          <button class="btn primary" id="saveRem" type="button">Simpan</button>
+        </div>
+        <p class="muted" style="margin:8px 0 0">Sekali sehari pada jam ini, surat jalan hari ini yang belum ditandai <b>Berangkat</b> atau <b>Tunda</b> dikirim ke sales masing-masing dan ke nomor di atas. Pelanggan tidak menerima apa pun dari pengingat ini.</p>
+      </div>
+    </div>
+    <div class="card">
       <h2>Nama Anda</h2>
       <div class="body">
         <label class="fld">Dicatat pada setiap aksi admin (saklar, kirim sekarang, batalkan, nilai)
@@ -417,9 +469,9 @@
   }
 
   // Tabs
-  const tabs = [["t-live", "p-live"], ["t-chat", "p-chat"], ["t-queue", "p-queue"], ["t-shadow", "p-shadow"], ["t-sales", "p-sales"],
+  const tabs = [["t-live", "p-live"], ["t-chat", "p-chat"], ["t-ship", "p-ship"], ["t-queue", "p-queue"], ["t-shadow", "p-shadow"], ["t-sales", "p-sales"],
     ["t-cust", "p-cust"], ["t-pipe", "p-pipe"], ["t-cfg", "p-cfg"], ["t-log", "p-log"]];
-  const loaders = { "p-live": () => loadLive(), "p-chat": () => loadChats(), "p-queue": () => loadQueue(), "p-shadow": () => loadShadow(),
+  const loaders = { "p-live": () => loadLive(), "p-chat": () => loadChats(), "p-ship": () => loadShip(), "p-cfg": () => loadRemind(), "p-queue": () => loadQueue(), "p-shadow": () => loadShadow(),
     "p-sales": () => loadSales(), "p-cust": () => loadOverrides(), "p-log": () => loadLog() };
   tabs.forEach(([t, p]) => $(t).addEventListener("click", () => {
     tabs.forEach(([t2, p2]) => { $(t2).setAttribute("aria-selected", String(t2 === t)); $(p2).hidden = p2 !== p; });
@@ -575,6 +627,7 @@
   // ── WP-6: Live ─────────────────────────────────────────────────────────
   const fmtTime = (v) => v ? new Date(v).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" }) : "–";
   const STEP = { so_received: "Pesanan diterima", production_started: "Mulai produksi", delivery_scheduled: "Pengiriman dijadwalkan",
+    delivery_changed: "Jadwal kirim berubah", delivery_departed: "Barang dikirim", dispatch_reminder: "Pengingat pengiriman (ke sales)",
     do_cancelled_notice: "DO dibatalkan (ke sales)", stop_ack: "Konfirmasi STOP", start_ack: "Konfirmasi MULAI",
     reply_forward: "Teruskan balasan", auto_reply: "Balasan otomatis", manual_reply: "Balasan admin" };
   const MODE_TEXT = { off: "MATI — tidak ada pesan", shadow: "SHADOW — hanya ke sales", on: "LIVE — ke pelanggan + CC sales" };
@@ -603,7 +656,7 @@
       <div class="switch"><div class="t">Saklar darurat — hentikan semua pengiriman<small>Pesan tetap direncanakan dan menunggu; tidak ada yang dibuang.</small></div>
         <label class="toggle danger"><input type="checkbox" data-kill ${LIVE.killSwitch ? "checked" : ""} aria-label="Saklar darurat" /><span></span></label></div>
       ${LIVE.milestones.map((m) => `
-      <div class="switch"><div class="t">${esc(STEP[m.key])}<small>Tahan ${esc(hold[m.key])} menit. Jika dimatikan, langkah ini dicatat "dilewati", tidak dikirim.</small></div>
+      <div class="switch"><div class="t">${esc(STEP[m.key])}<small>Tahan ${esc(hold[m.key] ?? 0)} menit. Jika dimatikan, langkah ini dicatat "dilewati", tidak dikirim.</small></div>
         <label class="toggle"><input type="checkbox" data-ms="${m.key}" ${m.enabled ? "checked" : ""} aria-label="${esc(STEP[m.key])}" /><span></span></label></div>`).join("")}`;
     document.querySelectorAll("[data-kill],[data-ms]").forEach((el) => el.addEventListener("change", async () => {
       const body = el.dataset.kill !== undefined ? { killSwitch: el.checked } : { milestones: { [el.dataset.ms]: el.checked } };
@@ -727,7 +780,7 @@
     const parts = [step];
     if (m.mode === "shadow") parts.unshift("SHADOW");
     if (m.mode === "test") parts.unshift("UJI");
-    if (m.recipient_role === "sales_cc" && !/^(reply_forward|do_cancelled_notice)$/.test(m.milestone)) parts.push("salinan sales");
+    if (m.recipient_role === "sales_cc" && !/^(reply_forward|do_cancelled_notice|dispatch_reminder)$/.test(m.milestone)) parts.push("salinan sales");
     if (m.so_no) parts.push(m.so_no);
     return parts.join(" · ");
   };
@@ -876,7 +929,9 @@
     excluded_customer: "pihak terkait", direct_ship: "kirim langsung (distributor)", muted: "pelanggan di-mute", opted_out: "berhenti (STOP)",
     shared_number: "nomor dipakai banyak pelanggan", unreachable: "tanpa nomor WA", rep_no_phone: "sales belum punya nomor",
     cc_disabled: "CC dimatikan", stale_event: "kejadian terlalu lama", milestone_off: "langkah dimatikan", mode_changed: "mode berganti",
-    admin_cancel: "dibatalkan admin", no_production_request: "tanpa request produksi" };
+    admin_cancel: "dibatalkan admin", no_production_request: "tanpa request produksi",
+    superseded: "diganti tanda yang lebih baru", stale_departure: "hari pengirimannya sudah lewat", stale_change: "tanggal barunya sudah lewat",
+    undone: "tanda dibatalkan" };
 
   async function loadQueue() {
     const body = $("queueBody");
@@ -1023,11 +1078,200 @@
     } catch (err) { toast(err.message + tokenHint()); }
   });
 
+  // ── Pengiriman: dispatch marks (PRD §20) ─────────────────────────────────
+  const DAYS_ID = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+  const MONTHS_ID = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
+  const shipDay = (iso) => {
+    if (!iso) return "–";
+    const d = new Date(iso + "T00:00:00Z");
+    return `${DAYS_ID[d.getUTCDay()]}, ${d.getUTCDate()} ${MONTHS_ID[d.getUTCMonth()]}`;
+  };
+  const addDays = (iso, n) => new Date(Date.parse(iso + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
+  let SHIP = null;
+  let shipTimer = null;
+  const SENT_ST = ["sent", "queued", "stubbed"];
+
+  function msgLine(r) {
+    if (!r.last_action) {
+      return r.told_status && SENT_ST.includes(r.told_status) ? "Jadwal sudah dikabarkan ke pelanggan." : "";
+    }
+    if (SHIP.mode === "off") return "Mode MATI: tanda dicatat, tidak ada pesan.";
+    if (!r.last_has_event) return "Dicatat saja (hari pengirimannya sudah lewat), pelanggan tidak dikabari.";
+    const st = r.msg_status;
+    const who = SHIP.mode === "shadow" ? "sales (shadow)" : "pelanggan";
+    if (!st || st === "pending" || st === "sending") return `Pesan ke ${who} menunggu dikirim…`;
+    if (SENT_ST.includes(st)) return `Pesan terkirim ke ${who}.`;
+    if (st === "held") return "Pesan ditahan untuk ditinjau (Antrian).";
+    if (st === "unreachable") return "Pelanggan tidak punya nomor WhatsApp di SO.";
+    return `Pesan tidak dikirim: ${reasonText[r.msg_reason] || r.msg_reason || st}.`;
+  }
+
+  function statusChip(r) {
+    if (r.departed_on) return `<span class="chip ok">Berangkat${r.last_by ? " · " + esc(r.last_by) : ""}</span>`;
+    if (r.tbd) return '<span class="chip bad">Ditunda · tanggal belum pasti</span>';
+    if (r.section === "overdue") return `<span class="chip bad">Belum ditandai · ${esc(shipDay(r.eff_date))}</span>`;
+    if (r.section === "upcoming") return '<span class="chip info">Besok</span>';
+    if (r.last_action === "rescheduled") return `<span class="chip warn">Dijadwalkan ulang${r.last_source === "selaras" ? " (Selaras)" : ""}</span>`;
+    return '<span class="chip warn">Belum ditandai</span>';
+  }
+
+  function shipRow(r) {
+    const canDepart = !r.departed_on && (r.section === "today" || r.section === "overdue" || r.section === "tbd");
+    const canDelay = !r.departed_on;
+    const canUndo = r.last_action && r.last_source === "staff" && !SENT_ST.includes(r.msg_status) && r.msg_status !== "sending";
+    const moved = r.sj_date && r.eff_date && r.sj_date !== r.eff_date ? ` · Selaras: ${esc(shipDay(r.sj_date))}` : "";
+    const line = msgLine(r);
+    return `<div class="ship-row" data-do="${esc(r.do_id)}">
+      <div class="cb">${canDepart ? `<input type="checkbox" data-pick="${esc(r.do_id)}" aria-label="Pilih ${esc(r.no_sj)}" />` : ""}</div>
+      <div>
+        <div class="top"><span class="sj">${esc(r.no_sj || r.do_id)} <span class="muted">· ${esc(r.so_no || "")}</span></span>${statusChip(r)}</div>
+        <div class="sub"><b>${esc(r.customer || "–")}</b>${r.address ? " — " + esc(r.address) : ""}</div>
+        <div class="sub">Jadwal: ${r.tbd ? "belum pasti" : esc(shipDay(r.eff_date))}${moved}${r.sales ? " · Sales: " + esc(r.sales) : ""}${r.last_at ? " · " + esc(fmtTime(r.last_at)) : ""}</div>
+        ${line ? `<div class="sub muted">${esc(line)}</div>` : ""}
+      </div>
+      <div class="acts">
+        ${canDepart ? `<button class="btn primary sm" type="button" data-depart="${esc(r.do_id)}">Berangkat</button>` : ""}
+        ${canDelay ? `<button class="btn ghost sm" type="button" data-delay="${esc(r.do_id)}">Tunda…</button>` : ""}
+        ${canUndo ? `<button class="btn warn sm" type="button" data-undo="${esc(r.do_id)}">Batalkan tanda</button>` : ""}
+      </div>
+    </div>`;
+  }
+
+  function shipConfirm(n, what) {
+    const m = SHIP.mode;
+    const effect = m === "on" ? "Pelanggan akan langsung menerima pesan." : m === "shadow" ? "Mode SHADOW: hanya sales yang menerima contoh pesannya." : "Mode MATI: hanya dicatat, tidak ada pesan.";
+    return confirm(`${what} ${n} surat jalan?\n\n${effect}`);
+  }
+
+  async function shipMark(ids, action, date) {
+    if (!ids.length) return;
+    try {
+      const r = await api("/api/notify/dispatch/mark", { method: "POST", body: JSON.stringify({ doIds: ids, action, date }) });
+      const bad = r.results.filter((x) => !x.ok);
+      const notes = r.results.filter((x) => x.ok && x.note).map((x) => x.note);
+      toast(bad.length ? `${r.results.length - bad.length} berhasil, ${bad.length} gagal: ${bad[0].error}` : notes[0] || (action === "departed" ? "Ditandai berangkat." : "Jadwal disimpan."));
+    } catch (e) { toast(e.message + tokenHint()); }
+    loadShip();
+  }
+
+  function openDelay(row, doId) {
+    row.querySelector("form")?.remove();
+    const min = addDays(SHIP.today, 1);
+    const f = document.createElement("form");
+    f.innerHTML = `<label class="fld" style="flex:0 0 auto">Jadwal baru<input type="date" name="d" min="${min}" value="${min}" /></label>
+      <label class="chk"><input type="checkbox" name="tbd" /> Tanggal belum pasti</label>
+      <button class="btn primary sm" type="submit">Simpan</button><button class="btn ghost sm" type="button" data-x>Batal</button>`;
+    f.querySelector("[name=tbd]").addEventListener("change", (e) => { f.querySelector("[name=d]").disabled = e.target.checked; });
+    f.querySelector("[data-x]").addEventListener("click", () => f.remove());
+    f.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const tbd = f.querySelector("[name=tbd]").checked;
+      const d = f.querySelector("[name=d]").value;
+      if (!tbd && !d) return toast("Pilih tanggal, atau centang 'Tanggal belum pasti'.");
+      if (!shipConfirm(1, tbd ? "Tandai tertunda (tanggal belum pasti) untuk" : `Pindahkan ke ${shipDay(d)} untuk`)) return;
+      shipMark([doId], "delayed", tbd ? null : d);
+    });
+    row.appendChild(f);
+    f.querySelector("[name=d]").focus();
+  }
+
+  function renderShip() {
+    const rows = SHIP.rows;
+    const today = rows.filter((r) => r.section === "today");
+    const open = today.filter((r) => !r.departed_on && !r.tbd);
+    const overdue = rows.filter((r) => r.section === "overdue");
+    const tbd = rows.filter((r) => r.section === "tbd");
+    const up = rows.filter((r) => r.section === "upcoming");
+    const isToday = SHIP.date === SHIP.today;
+    $("shipKv").innerHTML = `
+      <div><div class="k">Jadwal ${isToday ? "hari ini" : esc(shipDay(SHIP.date))}</div><div class="v">${today.length}</div></div>
+      <div><div class="k">Berangkat</div><div class="v">${today.filter((r) => r.departed_on).length}</div></div>
+      <div><div class="k">Belum ditandai</div><div class="v">${open.length}</div></div>
+      <div><div class="k">Ditunda, tanggal belum pasti</div><div class="v">${tbd.length}</div></div>`;
+    const rem = SHIP.remind;
+    $("shipNote").textContent = (SHIP.mode === "on" ? "Mode LIVE: setiap tanda langsung mengabari pelanggan (dan sales untuk penundaan)."
+      : SHIP.mode === "shadow" ? "Mode SHADOW: tanda dicatat; contoh pesannya hanya dikirim ke sales."
+      : "Mode MATI: tanda dicatat, tidak ada pesan yang dikirim.") +
+      (rem.hour >= 0 ? ` Pengingat untuk yang belum ditandai: pukul ${String(rem.hour).padStart(2, "0")}.00 WIB.` : " Pengingat dimatikan.") +
+      " Pengambilan sendiri (di Ambil) tidak masuk daftar ini.";
+    const badge = $("shipBadge");
+    if (isToday) { badge.textContent = String(open.length + overdue.length); badge.hidden = open.length + overdue.length === 0; }
+
+    const card = (title, list, bulk) => !list.length ? "" : `<div class="card"><h2>${title} <span class="muted">(${list.length})</span></h2>
+      ${bulk ? `<div class="ship-bulk"><label class="chk" style="min-height:auto"><input type="checkbox" data-all="${bulk}" /> Pilih semua yang belum ditandai</label>
+        <button class="btn primary sm" type="button" data-bulk="${bulk}">Tandai terpilih Berangkat</button></div>` : ""}
+      <div data-list="${bulk || ""}">${list.map(shipRow).join("")}</div></div>`;
+    const html = card(isToday ? "Jadwal hari ini" : `Jadwal ${esc(shipDay(SHIP.date))}`, today, "today") +
+      card("Belum ditandai, hari sebelumnya", overdue, "") +
+      card("Ditunda, tanggal belum pasti", tbd, "tbd") +
+      card("Besok (bisa ditunda dari sekarang)", up, "");
+    $("shipLists").innerHTML = html || `<div class="card"><div class="empty">Tidak ada surat jalan untuk ${esc(shipDay(SHIP.date))}.</div></div>`;
+
+    $("shipLists").querySelectorAll("[data-depart]").forEach((b) => b.addEventListener("click", () => {
+      if (shipConfirm(1, "Tandai berangkat")) shipMark([b.dataset.depart], "departed");
+    }));
+    $("shipLists").querySelectorAll("[data-delay]").forEach((b) => b.addEventListener("click", () => openDelay(b.closest(".ship-row"), b.dataset.delay)));
+    $("shipLists").querySelectorAll("[data-undo]").forEach((b) => b.addEventListener("click", async () => {
+      if (!confirm("Batalkan tanda terakhir untuk surat jalan ini? Pesannya (yang belum terkirim) ikut dibatalkan.")) return;
+      try { await api("/api/notify/dispatch/undo", { method: "POST", body: JSON.stringify({ doId: b.dataset.undo }) }); toast("Tanda dibatalkan."); }
+      catch (e) { toast(e.message + tokenHint()); }
+      loadShip();
+    }));
+    $("shipLists").querySelectorAll("[data-all]").forEach((a) => a.addEventListener("change", () => {
+      a.closest(".card").querySelectorAll("[data-pick]").forEach((c) => { c.checked = a.checked; });
+    }));
+    $("shipLists").querySelectorAll("[data-bulk]").forEach((b) => b.addEventListener("click", () => {
+      const ids = [...b.closest(".card").querySelectorAll("[data-pick]:checked")].map((c) => c.dataset.pick);
+      if (!ids.length) return toast("Pilih surat jalan dulu.");
+      if (shipConfirm(ids.length, "Tandai berangkat")) shipMark(ids, "departed");
+    }));
+  }
+
+  async function loadShip() {
+    const date = $("shipDate").value;
+    try {
+      SHIP = await api("/api/notify/dispatch" + (date ? "?date=" + encodeURIComponent(date) : ""));
+      if (!$("shipDate").value) $("shipDate").value = SHIP.date;
+      renderShip();
+    } catch (e) {
+      $("shipLists").innerHTML = `<div class="card"><div class="empty">Gagal memuat: ${esc(e.message)}</div></div>`;
+    }
+    clearTimeout(shipTimer);
+    // Keep message statuses fresh while the tab is open (no re-render while a form is open).
+    shipTimer = setTimeout(() => { if (!$("p-ship").hidden && !$("shipLists").querySelector("form")) loadShip(); }, 60000);
+  }
+  $("shipDate").addEventListener("change", loadShip);
+  $("shipReload").addEventListener("click", loadShip);
+  $("shipToday").addEventListener("click", () => { $("shipDate").value = ""; loadShip(); });
+
+  // Konfigurasi: reminder settings.
+  $("remHour").innerHTML = '<option value="-1">Mati</option>' +
+    Array.from({ length: 13 }, (_, i) => i + 8).map((h) => `<option value="${h}">${String(h).padStart(2, "0")}.00</option>`).join("");
+  async function loadRemind() {
+    try {
+      const r = await api("/api/notify/dispatch");
+      $("remHour").value = String(r.remind.hour);
+      $("remNumbers").value = r.remind.numbers.map(localNo).join(", ");
+    } catch { /* database unavailable: leave the form empty */ }
+  }
+  $("saveRem").addEventListener("click", async () => {
+    const remindNumbers = $("remNumbers").value.split(/[,;\n]/).map((x) => x.trim()).filter(Boolean);
+    try {
+      await api("/api/notify/dispatch/settings", { method: "PUT", body: JSON.stringify({ remindHour: Number($("remHour").value), remindNumbers }) });
+      toast("Pengingat disimpan.");
+      loadRemind();
+    } catch (e) { toast(e.message + tokenHint()); }
+  });
+
   (async () => {
     try {
       CFG = await api("/api/notify/config");
       renderBanner(); renderConfig(); renderPipeline(); loadLive();
       api("/api/notify/chats?limit=1").then((r) => setChatBadge(r.unreadTotal)).catch(() => {});
+      api("/api/notify/dispatch").then((r) => {
+        const n = r.rows.filter((x) => (x.section === "today" && !x.departed_on && !x.tbd) || x.section === "overdue").length;
+        $("shipBadge").textContent = String(n); $("shipBadge").hidden = n === 0;
+      }).catch(() => {});
     } catch (e) {
       $("modeBanner").className = "banner err";
       $("modeBanner").textContent = "Gagal memuat konfigurasi: " + e.message;

@@ -18,6 +18,10 @@
 1. **Pesanan diterima**: SO received.
 2. **Mulai produksi**: production started (make-to-order only).
 3. **Pengiriman dijadwalkan**: DO created, quoting its scheduled date (pickups get "siap diambil").
+4. **Jadwal kirim berubah**: a delivery is delayed or its date changes (§20).
+5. **Barang dikirim**: the goods leave the factory (§20).
+
+Steps 4 and 5 come from staff marks on the **Pengiriman** tab, because the ERP never records the truck leaving or a same-day slip (§20).
 
 Later phases add delivery confirmation, CBD/COD payment nudges, and Tempo due-date reminders once paid status is available.
 
@@ -230,7 +234,9 @@ All additive; migrations run on boot. ✅ = built.
 | **MV1** | `so.created` | **Pesanan diterima** | New `1202` row (po_no), not deleted, `status_order` not cancelled | 10 min hold (configurable to 0). If a `do.created` for the SO is pending at release → **merged** "diterima & dijadwalkan" message (NTF-R2a) | All non-excluded SOs | **MVP** |
 | **MV2** | `production.requested` | **Mulai produksi** | `1236` row with `so_ms='SO'` and `so_no` = SO (97% filled); `wo_no` | 0 min (configurable) | ~4% of SOs | **MVP** |
 | **MV3** | `do.created` | **Pengiriman dijadwalkan** / **siap diambil** | New `1082` row for `so_no`, `cancel_order='No'`; date = `sj_date`; pickup if `cara_kirim` ~ "ambil"; items from `1205` | 0 min; cancel if `do.cancelled` before dispatch | One per DO | **MVP** |
-| — | `do.cancelled` | (internal) cancels a pending MV3; tells the rep if MV3 already went out | `cancel_order` flips to Yes / row deleted | — | 0.7% | MVP |
+| — | `do.cancelled` | (internal) cancels a pending MV3 / MV4 / MV5; tells the rep if MV3 already went out | `cancel_order` flips to Yes / row deleted | — | 0.7% | MVP |
+| **MV4** | `do.rescheduled` | **Jadwal kirim berubah** ("tertunda", new date or "akan dikabarkan") | Staff mark **Tunda** on the Pengiriman tab; or the DO's `sj_date` edited in Selaras (§20) | 0 min; only the DO's latest mark is sent; replaces an unsent MV3 | Any DO | **Built (§20)** |
+| **MV5** | `do.departed` | **Barang dikirim** ("sedang dalam perjalanan") | Staff mark **Berangkat** on the Pengiriman tab on the delivery day (§20). The ERP has no dispatch signal | 0 min; dropped if still unsent at the end of that day; no rep CC | Deliveries (`di Antar`) | **Built (§20)** |
 | M2b | `production.completed` | "Selesai diproduksi" (optional) | `1190` `status_automatic='Done'`, `production_date` set, via `request_id` | Merge with MV3 if within 24 h | ~4% | 3 |
 | M5 | `delivery.received` | **Diterima** | Not in the ERP. Needs a POD source: driver link/photo, or logistics fills `1082.received_date` | — | — | 3 |
 | M1 | `so.approved` | "Dikonfirmasi" | `approval_new` → Approved (unreliable, so not used for payment) | — | — | 3 |
@@ -363,6 +369,8 @@ Before the first send to a number, the gateway's `/check` runs (WhatsApp `IsOnWh
 - **Riwayat:** ledger with message bodies.
 
 **Built in WP-6 ✅** — tabs Live, Antrian, Shadow, Sales CC, Pelanggan (see §14 WP-6).
+
+**Pengiriman tab ✅ (2026-11-17)** — staff mark each surat jalan **Berangkat** or **Tunda**; see §20.
 
 **Pesan tab ✅ (2026-11-12)** — a WhatsApp-Web-style view of the notification number (`routes/notify-chat.ts`):
 - **Conversations:** one per phone number, newest first, searchable by name, number, SO or rep. It shows unread counts (and a badge on the tab), refreshes every 10 s, and marks a conversation read when opened.
@@ -638,6 +646,7 @@ DATABASE_URL=postgres://$USER@localhost:55432/leadscout_test npx vitest run
 | `soKey.test.ts` | WP-1 `po_no` join; duplicate headers; one-time re-pull |
 | `orderLane.test.ts` | Order lane: cursors, paging, failure isolation, lease, deleted rows; webhook (HMAC, re-read) |
 | `events.test.ts` | Each event rule, replay-safety, horizon, sweep, `so.late`, poll vs. webhook source |
+| `dispatchMarks.test.ts` | §20 wording (departed, delayed with/without date, earlier, never-told, pickup, reminder); Berangkat on the day only, no CC, refused early / recorded-only late / refused for pickups; dropped if still unsent next day; Tunda with CC; latest mark wins; a mark replaces an unsent step 3; undo before/after sending; Selaras `sj_date` edit (and one matching a staff delay ignored, sweep idempotent); afternoon reminder to rep and logistics, once a day |
 | `dispatcher.test.ts` | On / shadow / off; merge; DO cancelled before and after sending; unreachable; opt-out; shared number; exclusions; window; daily cap; stale events; mode change; retries; pause; kill switch; step off; release |
 | `waEvents.test.ts` | Receipts; STOP/MULAI; LID learning; shadow grading; reply forwarding; gateway state; pairing proxy; inbound photos (stored with the sniffed type, forwarded to the rep as a photo, dedupe on retry, "STOP" caption ignored, fake images refused) |
 | `notifyAdmin.test.ts` | Switches; outbox actions; overrides; shadow summary; pairing QR |
@@ -652,7 +661,7 @@ DATABASE_URL=postgres://$USER@localhost:55432/leadscout_test npx vitest run
 
 - Before merging, run the suite once against a **freshly created** database as well as a long-lived one. Row order and first-time migrations differ. The dispatcher's processing-order bug (fixed in `6d7d707`) failed only on a fresh database.
 
-Last full run: 604 passed on fresh and long-lived databases (Postgres 16); 245 passed without a database; 16 gateway tests passed with the race detector.
+Last full run (2026-11-17): 621 passed on fresh and long-lived databases (Postgres 16); 253 passed without a database; 16 gateway tests passed with the race detector.
 
 ### 19.6 Manual checks
 
@@ -666,6 +675,7 @@ Last full run: 604 passed on fresh and long-lived databases (Postgres 16); 245 p
 3. Reply **STOP**: you get the confirmation, and Antrian → Balasan masuk shows `opted_out`. Reply **MULAI** to undo it.
 
 **Shadow trial (two weeks):**
+- **Every morning:** logistics marks today's surat jalan on the Pengiriman tab (Berangkat / Tunda). In shadow mode the rep receives the would-be message, so the habit and the wording are both tested before customers see it.
 - **Daily:** Antrian → Ditahan (review shared numbers: release or cancel) and Gagal / tanpa nomor (fix numbers in Selaras, or set an override on Pelanggan).
 - Reps grade by replying **BENAR** / **SALAH** + reason. The Shadow tab shows % benar against the 99% gate, SALAH first.
 
@@ -690,6 +700,48 @@ Last full run: 604 passed on fresh and long-lived databases (Postgres 16); 245 p
 | Receipt `failed: not_on_whatsapp` | The number has no WhatsApp | Override with a WhatsApp number |
 | "📷 Foto tidak dapat ditampilkan" in Pesan | The photo was over 15 MB, failed to download from WhatsApp, or wasn't a real image | Ask the customer to resend; the rep was told |
 | Nothing planned after switching mode | By design: a new mode starts from now | Wait for the next ERP movement |
+| Pengiriman: "Pesan tidak dikirim: diganti tanda yang lebih baru" | A newer mark on the same DO replaced it before sending (`superseded`) | Expected; only the latest mark is sent |
+| Pengiriman: `stale_departure` | A Berangkat message was still waiting at the end of its day (gateway down, quiet hours, daily cap) | Nothing to do; "sedang dalam perjalanan" would no longer be true |
+| Pengiriman: "Dicatat saja" | Berangkat was marked after the delivery day | By design: recorded, the customer is not messaged |
+| Reminder not received | Reminders follow the live mode (none when `off`), go once per WIB day, and only to reps with a number | Check Konfigurasi → Pengingat pengiriman and Sales CC |
+
+---
+
+## 20. Dispatch: "Barang dikirim" and "Jadwal berubah" (built 2026-11-17)
+
+**Why.** At the factory, *dijadwalkan* (scheduled) and *dikirimkan* (sent) are two phases. The schedule can be set any time; whether the truck actually goes, and when, is only known on the morning of the delivery. MV3 covers the first phase. Customers also need to hear when the goods leave, and when a delivery slips.
+
+**What the ERP can and cannot tell us** (production mirror, 17 Nov 2026, counts only, via `GET /api/orders/do-timing`):
+
+| Question | Finding | Consequence |
+|---|---|---|
+| When is the DO created? | The day before `sj_date` for 90%, two days before for 8% | MV3 already arrives the day before; it is the plan, not the departure |
+| Does `sj_date` move when a delivery slips? | **0 edits** across ~3,000 DOs tracked since 12 Nov | No ERP signal for same-day delays |
+| Is `print_status = Printed` the departure? | Set mostly **13:00–15:00 the day before**; **35%** of past DOs never become Printed | No: it means "surat jalan prepared", and it is missing for a third |
+| `delivery_date`, `driver`, `no_kendaraan`, `received_date` | Always empty | No |
+| SO `estimate_delivery` as the schedule? | Equals the order date on **99%** of SOs | A default, not a promise; not used |
+| Cancel + re-issue | 22 DOs cancelled since September; 9 replaced by a later DO | Rare; already handled by `do.cancelled` + a new MV3 |
+
+**Decision (owner, 2026-11-17).** Staff confirm the departure in LeadScout. An unmarked delivery never messages the customer; staff get an afternoon reminder instead.
+
+**How it works.**
+- **Pengiriman tab** (`/notify`): today's deliveries (pickups excluded), with customer, address, rep and whether MV3 reached the customer. Also: unmarked from the 3 previous days, delayed without a date, and tomorrow (a delay known the evening before can be marked ahead). Buttons per row: **Berangkat**, **Tunda…** (new date, or "tanggal belum pasti"), **Batalkan tanda**. Bulk "Tandai terpilih Berangkat". The tab badge counts unmarked deliveries.
+- **Marks → events.** Each mark is a row in `notify_dispatch_marks` (append-only, who and when) and updates `notify_dispatch` (current state per DO: the date the customer was last given, or "belum pasti", and whether it departed). It inserts an `order_events` row with source `manual`: `do.departed` or `do.rescheduled`. The planner turns those into MV5 / MV4 like any other event, so shadow mode, the outbox, exclusions, opt-outs, the sending window and the daily cap all apply unchanged.
+- **Selaras edits.** The event sweep compares each upcoming DO's `sj_date` with the last date it saw (first: the `do.created` payload). A change becomes a `rescheduled` mark from source `selaras`. An edit to the date staff already gave the customer changes nothing.
+
+**Rules.**
+- **Berangkat** only on or after the delivery day. Marked on the day → message. Marked after the day → recorded only ("Dicatat saja"). A Berangkat message still unsent at the end of its WIB day is dropped (`stale_departure`): "sedang dalam perjalanan hari ini" would be false tomorrow.
+- **Tunda**: a new date from tomorrow on, or no date. On the new date the DO is due again and needs a fresh Berangkat. A date in the past by send time is dropped (`stale_change`).
+- **Only the latest mark is sent.** A mark undone or replaced before sending is cancelled (`superseded` / `undone`).
+- **MV3 gives way.** If a mark is made before the MV3 message went out, MV3 is cancelled and the mark's message carries the full delivery details (for MV4: "Jadwal pengiriman … sudah ditetapkan", not "tertunda").
+- **Undo** ("Batalkan tanda") restores the previous state, only while the message has not started sending. Selaras marks cannot be undone.
+- **Rep CC:** yes for MV4 (reps should know about delays); **no for MV5**: a copy of every departure, every morning, would bury the CCs that need attention. Reps see departures in Pesan and Riwayat.
+- **DO cancelled** in Selaras: pending MV4/MV5 rows are cancelled with MV3 (`do_cancelled`).
+- **Reminder:** once per WIB day at `dispatch_remind_hour` (default 13:00, set in Konfigurasi → Pengingat pengiriman, or off). It lists today's deliveries with no Berangkat or Tunda mark. Each rep gets their own deliveries; the logistics/admin numbers set there get the full list. The customer gets nothing. It follows the live mode (`[SHADOW]` prefix in shadow, nothing when `off`).
+
+**Volume.** About 35 deliveries a day (76% of ~1,400 DOs a month). MV5 adds roughly one customer message per delivery, sent in the morning and paced by the gateway (40/hour cap), so the last departures of a busy morning can reach customers up to an hour later. MV4 is rare.
+
+**Not built.** Driver links or photos as proof of delivery (M5, Phase 3). Marking from WhatsApp (e.g. "KIRIM DO-13222" to the system number); the owner chose the LeadScout tab for now. Free-text delay reasons to customers (left out on purpose: no unreviewed text reaches customers).
 
 ---
 
@@ -715,6 +767,13 @@ API: `GET {base}/table/{t}?col=val&col__gte=…&fields=…&order_by=…&limit=�
 - **MV2:** "…Pesanan *{SO}* saat ini sedang diproduksi di pabrik kami. Item: … Kami akan mengabari Anda kembali saat jadwal pengiriman sudah ditetapkan."
 - **MV3 (antar):** "…Pesanan *{SO}* telah dijadwalkan untuk dikirim. No. surat jalan: {sj} · Jadwal pengiriman: {Hari, tgl Bulan tahun} · [Alamat kirim] · Barang: … [Ini pengiriman sebagian; sisa pesanan menyusul.] Mohon periksa kondisi dan jumlah barang saat diterima."
 - **MV3 (ambil):** "…Pesanan *{SO}* sudah siap diambil mulai {tanggal} (No. DO {sj}). Barang: … Silakan koordinasikan waktu pengambilan dengan sales Anda."
+- **MV4 (Jadwal kirim berubah):**
+  - Later or unknown date: "…Mohon maaf, pengiriman pesanan *{SO}* yang dijadwalkan {tanggal lama} *tertunda*. No. surat jalan: {sj} · Jadwal baru: {tanggal} | Jadwal pengiriman yang baru akan kami kabarkan kembali. · Mohon maaf atas ketidaknyamanannya."
+  - Earlier date: "…Jadwal pengiriman pesanan *{SO}* berubah menjadi lebih awal. No. surat jalan · Jadwal sebelumnya · Jadwal baru."
+  - Customer never got a date for this DO: "…Jadwal pengiriman pesanan *{SO}* sudah ditetapkan. No. surat jalan · Jadwal pengiriman · [Alamat] · Barang" (no date: "…sedang kami siapkan untuk dikirim … Jadwal pengiriman akan kami kabarkan kembali.").
+  - Pickups say "pengambilan" and "No. DO".
+- **MV5 (Barang dikirim):** "…Pesanan *{SO}* sedang dalam perjalanan ke alamat Anda hari ini. No. surat jalan: {sj} · [Alamat kirim] · Barang: … [sebagian] · Mohon periksa kondisi dan jumlah barang saat diterima."
+- **Reminder (to reps / logistics):** "⏰ *Kabar Pesanan* — Pengiriman belum ditandai · Surat jalan berikut dijadwalkan dikirim hari ini ({tanggal}), tetapi belum ditandai *Berangkat* atau *Ditunda*: • {sj} — {SO} — {pelanggan} … Pelanggan belum menerima kabar pengiriman."
 - **Sales CC:** "📋 *Salinan Kabar Pesanan* — {langkah} · Pelanggan: {nama} ({nomor}) · SO … · — Pesan yang dikirim ke pelanggan — {teks}"
 - **Later:**
   - Diterima.
@@ -735,7 +794,8 @@ Moved to §19.1–19.3, so there is one table to keep current.
 | Shadow, replies | `GET /api/notify/shadow?days=`, `GET /api/notify/inbound` |
 | Pesan tab | `GET /api/notify/chats?q=`, `GET /api/notify/chats/:phone`, `POST /api/notify/chats/:phone/read`, `POST /api/notify/chats/:phone/reply` [token], `GET /api/notify/media/:id` |
 | Gateway | `POST /api/notify/wa-events` (gateway secret); `GET /api/notify/gateway/pair`, `GET /api/notify/gateway/pair-svg`, `POST /api/notify/gateway/pair-phone` [token] |
-| Order backbone | `GET /api/orders/events?so_no=&type=`, `GET /api/orders/sync-status`, `POST /api/erp/webhook` (HMAC) |
+| Pengiriman (§20) | `GET /api/notify/dispatch?date=`, `POST /api/notify/dispatch/mark` {doIds, action: departed\|delayed, date?} [token], `POST /api/notify/dispatch/undo` {doId} [token], `PUT /api/notify/dispatch/settings` {remindHour, remindNumbers} [token] |
+| Order backbone | `GET /api/orders/events?so_no=&type=`, `GET /api/orders/sync-status`, `GET /api/orders/do-timing` (aggregate DO timing, counts only) [token], `POST /api/erp/webhook` (HMAC) |
 | wa-gateway | `POST /send`, `POST /check`, `GET /health`, `GET /pair`, `POST /pair/phone`, `GET /healthz` — see `apps/wa-gateway/README.md` |
 
 ## Appendix E — Decision log
@@ -752,3 +812,5 @@ Moved to §19.1–19.3, so there is one table to keep current.
 | 2026-11-10 | Selaras is the single source of truth: send on ERP movement (webhook when available, 60 s poll until then); rep = Selaras sales on the SO, vertical-agnostic | Owner |
 | 2026-11-12 | Pesan tab on /notify: WhatsApp-style conversations; admins may reply, only to numbers that wrote in | Owner |
 | 2026-11-12 | The platform receives photos: stored, shown in Pesan, forwarded to the rep as photos | Owner |
+| 2026-11-17 | "Dijadwalkan" and "dikirimkan" are separate phases. Customers are told when goods leave and when a delivery slips (MV4, MV5) | Owner |
+| 2026-11-17 | Departure and delays are marked by staff on the Pengiriman tab (the ERP has no signal, §20); unmarked deliveries only trigger a staff reminder, never a customer message | Owner |

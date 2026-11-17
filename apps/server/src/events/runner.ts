@@ -13,6 +13,7 @@ import { config, hasDatabase } from "../config.js";
 import { getSql } from "../db/client.js";
 import { onOrderRows } from "../erp/orderSync.js";
 import { redactSecrets } from "../erp/selarasClient.js";
+import { sweepErpReschedules } from "../notify/dispatch.js";
 import { deriveForTouched, lateSweepDue, sweepEvents, sweepLate } from "./store.js";
 
 let unsubscribe: (() => void) | null = null;
@@ -27,6 +28,8 @@ export async function runEventSweepOnce(): Promise<{ inserted: number } | null> 
     const s = await sweepEvents(db);
     let inserted = s.inserted.length;
     if (await lateSweepDue(db, config.events.lateSweepMinutes)) inserted += (await sweepLate(db)).length;
+    // A DO's sj_date edited in Selaras after the customer was given it (PRD §20).
+    inserted += await sweepErpReschedules(db, new Date());
     if (inserted) console.log(`[events] sweep recorded ${inserted} new event(s).`);
     return { inserted };
   } catch (err) {

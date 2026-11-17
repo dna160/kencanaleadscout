@@ -16,7 +16,20 @@ export const EVENT_MILESTONE: Record<string, Milestone> = {
   "so.created": "so_received",
   "production.requested": "production_started",
   "do.created": "delivery_scheduled",
+  "do.rescheduled": "delivery_changed",
+  "do.departed": "delivery_departed",
 };
+
+/** Milestones whose subject is a DO (one message per surat jalan, or per mark). */
+export const DO_MILESTONES: readonly string[] = ["delivery_scheduled", "delivery_changed", "delivery_departed"];
+
+/** Rep reminder of today's unmarked surat jalan (internal, like the DO-cancelled notice). */
+export const DISPATCH_REMINDER = "dispatch_reminder";
+
+/** WIB calendar date (YYYY-MM-DD) of a real instant. */
+export function wibDate(now: Date): string {
+  return new Date(now.getTime() + 7 * 3_600_000).toISOString().slice(0, 10);
+}
 
 /** Internal rep-only notice (not a customer milestone). */
 export const DO_CANCELLED_NOTICE = "do_cancelled_notice";
@@ -131,6 +144,6 @@ export function erpAgeHours(occurredAt: Date | null, now: Date): number | null {
 }
 
 /** Default hold for a milestone, in minutes (PRD §5.0). */
-export function holdFor(milestone: Milestone, holds: Record<Milestone, number>): number {
+export function holdFor(milestone: Milestone, holds: Partial<Record<Milestone, number>>): number {
   return Math.max(0, holds[milestone] ?? 0);
 }

@@ -75,6 +75,8 @@ describe.skipIf(!hasDb)("notify admin API", async () => {
       { key: "so_received", enabled: true },
       { key: "production_started", enabled: false },
       { key: "delivery_scheduled", enabled: true },
+      { key: "delivery_changed", enabled: true },
+      { key: "delivery_departed", enabled: true },
     ]);
     expect(live).toHaveProperty("channel.mode");
     expect(live).toHaveProperty("lane.enabled");

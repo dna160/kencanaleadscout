@@ -136,6 +136,8 @@ describe.skipIf(!hasDb)("planner + dispatcher over the real schema", async () =>
       // production batch (20 per tick) could then leave OUR rows for the next
       // tick, which a test that dispatches once would read as "never sent".
       batch: 1000,
+      // The afternoon reminder reads every DO in the shared test database.
+      reminders: false,
       pauseReason: async () => null,
       log: { info: () => undefined, warn: () => undefined, error: () => undefined },
       ...over,

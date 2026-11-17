@@ -219,7 +219,7 @@ export async function notifyRoutes(app: FastifyInstance): Promise<void> {
         "SO ini tidak punya Request Produksi (dilayani dari stok). Di mode live, pesan langkah 2 TIDAK akan terkirim untuk SO ini.",
       );
     }
-    if (milestone === "delivery_scheduled" && !ctx.delivery) {
+    if (milestone.startsWith("delivery_") && !ctx.delivery) {
       warnings.push("SO ini belum punya Delivery Order. Pesan memakai nomor surat jalan & tanggal contoh.");
       ctx = { ...ctx, delivery: sample.delivery };
     }

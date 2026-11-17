@@ -56,6 +56,7 @@ import { startNotifyDispatcher, stopNotifyDispatcher } from "./notify/dispatcher
 import { waEventRoutes } from "./routes/wa-events.js";
 import { notifyAdminRoutes } from "./routes/notify-admin.js";
 import { notifyChatRoutes } from "./routes/notify-chat.js";
+import { notifyDispatchRoutes } from "./routes/notify-dispatch.js";
 import { startOrderSync, stopOrderSync } from "./erp/orderSync.js";
 import { erpWebhookRoutes } from "./routes/erp-webhook.js";
 import { notifyRoutes } from "./routes/notify.js";
@@ -154,6 +155,7 @@ async function main(): Promise<void> {
   await app.register(notifyAdminRoutes);
   // "Pesan" tab: WhatsApp-style conversations on the notification number, with admin replies.
   await app.register(notifyChatRoutes);
+  await app.register(notifyDispatchRoutes);
 
   // [A] Scraper APIs.
   await app.register(enrichRoutes);

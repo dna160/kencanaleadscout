@@ -169,4 +169,44 @@ export async function runNotifyMigrations(db: Sql): Promise<void> {
       updated_at   timestamptz not null default now()
     )
   `;
+
+  // ── Dispatch marks: "barang dikirim" / "ditunda" (PRD §20) ─────────────
+  // The ERP never records the truck leaving or a same-day slip, so staff mark
+  // each surat jalan in LeadScout. `notify_dispatch` is the current state per
+  // DO; `notify_dispatch_marks` is the append-only history (and the undo log).
+  await db`
+    create table if not exists notify_dispatch (
+      do_id         text primary key,
+      so_no         text,
+      sched_date    date,                     -- date the customer was last given; null = not yet known
+      tbd           boolean not null default false,
+      departed_on   date,                     -- WIB day staff marked it departed
+      erp_seen_date date,                     -- last sj_date seen in the mirror (detects ERP edits)
+      last_mark_id  bigint,
+      updated_by    text,
+      updated_at    timestamptz not null default now()
+    )
+  `;
+  await db`
+    create table if not exists notify_dispatch_marks (
+      id         bigserial primary key,
+      do_id      text not null,
+      so_no      text,
+      action     text not null check (action in ('departed', 'rescheduled')),
+      from_date  date,
+      to_date    date,
+      tbd        boolean not null default false,
+      source     text not null default 'staff' check (source in ('staff', 'selaras')),
+      marked_by  text,
+      marked_at  timestamptz not null default now(),
+      prev       jsonb,                       -- notify_dispatch row before this mark (for undo)
+      event_id   bigint,
+      undone_at  timestamptz,
+      undone_by  text
+    )
+  `;
+  await db`create index if not exists notify_dispatch_marks_do_idx on notify_dispatch_marks (do_id, id)`;
+  await db`alter table notify_settings add column if not exists dispatch_remind_hour    int not null default 13`;
+  await db`alter table notify_settings add column if not exists dispatch_remind_numbers text[] not null default '{}'`;
+  await db`alter table notify_settings add column if not exists dispatch_reminded_on    date`;
 }
