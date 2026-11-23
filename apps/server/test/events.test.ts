@@ -10,11 +10,9 @@ import {
   deriveEvents,
   deriveFromDo,
   deriveFromHeader,
-  deriveFromRequest,
   deriveLate,
   type DoFacts,
   type HeaderFacts,
-  type RequestFacts,
 } from "../src/events/derive.js";
 
 const OPTS = { cancelledStatuses: ["Cancelled", "Void", "Batal"] };
@@ -30,18 +28,9 @@ const header = (over: Partial<HeaderFacts> = {}): HeaderFacts => ({
   sales_name_id: "55",
   sales_name_text: "Free Antony",
   top_limit: "Cash before Delivery",
+  approval_new: "Approved",
   erp_created_at: new Date("2026-11-10T09:00:00Z"),
-  ...over,
-});
-const request = (over: Partial<RequestFacts> = {}): RequestFacts => ({
-  id: "9065",
-  so_no: "SO.26/12821",
-  so_ms: "SO",
-  wo_no: "WO.26/00041",
-  no_request: "REQNO-1",
-  tanggal_request: "2026-11-10",
-  erp_created_at: new Date("2026-11-10T10:00:00Z"),
-  deleted_at: null,
+  erp_updated_at: new Date("2026-11-10T11:00:00Z"),
   ...over,
 });
 const dOrder = (over: Partial<DoFacts> = {}): DoFacts => ({
@@ -55,35 +44,49 @@ const dOrder = (over: Partial<DoFacts> = {}): DoFacts => ({
   erp_created_at: new Date("2026-11-10T15:00:00Z"),
   erp_updated_at: new Date("2026-11-10T15:00:00Z"),
   deleted_at: null,
+  so_found: true,
+  so_status: "Wating",
+  so_created_at: new Date("2026-11-10T09:00:00Z"),
   ...over,
 });
+// Switch-over at 2026-11-10 08:00 WIB (01:00Z); mirror stamps are WIB digits stored as UTC.
+const BASE = { ...OPTS, confirmedSince: new Date("2026-11-10T01:00:00Z") };
 
 describe("derivation rules (pure)", () => {
-  it("so.created: keyed on po_no, carries routing facts, never a phone", () => {
-    const [e] = deriveFromHeader(header(), OPTS);
-    expect(e).toMatchObject({ event_key: "so.created:SO.26/12821", event_type: "so.created", so_no: "SO.26/12821", subject_ref: "75001" });
-    expect(e!.payload).toMatchObject({ customer_name: "FITRAH JAYA", sales_name_id: "55", top_limit: "Cash before Delivery" });
+  it("so.confirmed on Finance approval: keyed on po_no, aged from the approval edit, never a phone", () => {
+    const [e] = deriveFromHeader(header(), BASE);
+    expect(e).toMatchObject({ event_key: "so.confirmed:SO.26/12821", event_type: "so.confirmed", so_no: "SO.26/12821", subject_ref: "75001" });
+    expect(e!.occurred_at).toEqual(new Date("2026-11-10T11:00:00Z"));
+    expect(e!.payload).toMatchObject({ via: "approval", customer_name: "FITRAH JAYA", sales_name_id: "55", top_limit: "Cash before Delivery" });
     expect(JSON.stringify(e)).not.toMatch(/kontak|phone|08\d{2}/);
   });
-  it("so.created: nothing for a cancelled status (case-insensitive) or a missing SO number", () => {
-    expect(deriveFromHeader(header({ status_order: "batal" }), OPTS)).toEqual([]);
-    expect(deriveFromHeader(header({ po_no: null }), OPTS)).toEqual([]);
-    expect(deriveFromHeader(header({ po_no: "  " }), OPTS)).toEqual([]);
+  it("so.confirmed: nothing while Waiting, for a cancelled status, a missing SO number, or an SO from before the switch-over", () => {
+    expect(deriveFromHeader(header({ approval_new: "Waiting" }), BASE)).toEqual([]);
+    expect(deriveFromHeader(header({ approval_new: null }), BASE)).toEqual([]);
+    expect(deriveFromHeader(header({ approval_new: " approved " }), BASE)).toHaveLength(1);
+    expect(deriveFromHeader(header({ status_order: "batal" }), BASE)).toEqual([]);
+    expect(deriveFromHeader(header({ po_no: null }), BASE)).toEqual([]);
+    expect(deriveFromHeader(header({ po_no: "  " }), BASE)).toEqual([]);
+    // Created 07:59 WIB, one minute before the switch-over.
+    expect(deriveFromHeader(header({ erp_created_at: new Date("2026-11-10T07:59:00Z") }), BASE)).toEqual([]);
+    expect(deriveFromHeader(header({ erp_created_at: new Date("2026-11-10T08:00:00Z") }), BASE)).toHaveLength(1);
   });
-
-  it("production.requested: only so_ms = SO, keyed on SO + WO", () => {
-    expect(deriveFromRequest(request())[0]!.event_key).toBe("production.requested:SO.26/12821:WO.26/00041");
-    expect(deriveFromRequest(request({ wo_no: null }))[0]!.event_key).toBe("production.requested:SO.26/12821:req-9065");
-    expect(deriveFromRequest(request({ so_ms: "MS" }))).toEqual([]);
-    expect(deriveFromRequest(request({ so_no: null }))).toEqual([]);
-    expect(deriveFromRequest(request({ deleted_at: new Date() }))).toEqual([]);
+  it("so.confirmed from the DO when the DO comes first (164 CBD SOs shipped while 'Waiting'), same key", () => {
+    const e = deriveFromDo(dOrder(), BASE);
+    expect(e.map((x) => x.event_key)).toEqual(["so.confirmed:SO.26/12821", "do.created:KP/DO-13224/11/26"]);
+    expect(e[0]!.payload).toMatchObject({ via: "do", do_id: "77930" });
+    // Not when the SO is unknown, cancelled or from before the switch-over; never for a cancelled DO.
+    expect(deriveFromDo(dOrder({ so_found: false }), BASE).map((x) => x.event_type)).toEqual(["do.created"]);
+    expect(deriveFromDo(dOrder({ so_status: "Batal" }), BASE).map((x) => x.event_type)).toEqual(["do.created"]);
+    expect(deriveFromDo(dOrder({ so_created_at: new Date("2026-11-09T09:00:00Z") }), BASE).map((x) => x.event_type)).toEqual(["do.created"]);
+    expect(deriveFromDo(dOrder({ cancel_order: "Yes" }), BASE).map((x) => x.event_type)).toEqual(["do.cancelled"]);
   });
 
   it("do.created: keyed on no_sj, with sj_date and the pickup flag", () => {
-    const [e] = deriveFromDo(dOrder({ cara_kirim: "di Ambil" }));
+    const [e] = deriveFromDo(dOrder({ cara_kirim: "di Ambil", so_found: false }));
     expect(e).toMatchObject({ event_key: "do.created:KP/DO-13224/11/26", event_type: "do.created", so_no: "SO.26/12821" });
     expect(e!.payload).toMatchObject({ sj_date: "2026-11-11", pickup: true });
-    expect(deriveFromDo(dOrder())[0]!.payload).toMatchObject({ pickup: false });
+    expect(deriveFromDo(dOrder({ so_found: false }))[0]!.payload).toMatchObject({ pickup: false });
   });
   it("do.cancelled: on cancel_order = Yes or a deletion, never alongside do.created", () => {
     const [c] = deriveFromDo(dOrder({ cancel_order: "Yes" }));
@@ -96,7 +99,7 @@ describe("derivation rules (pure)", () => {
   it("a DO naming no SO is not created (nothing to route), but its cancellation is still a fact", () => {
     expect(deriveFromDo(dOrder({ so_no: null }))).toEqual([]);
     expect(deriveFromDo(dOrder({ so_no: null, cancel_order: "Yes" }))).toHaveLength(1);
-    expect(deriveFromDo(dOrder({ no_sj: null }))[0]!.event_key).toBe("do.created:id-77930");
+    expect(deriveFromDo(dOrder({ no_sj: null, so_found: false }))[0]!.event_key).toBe("do.created:id-77930");
   });
 
   it("so.late: keyed on the earliest passed ETA, so a further slip is a new fact", () => {
@@ -104,13 +107,14 @@ describe("derivation rules (pure)", () => {
   });
 
   it("deriving the same batch twice yields identical keys (replay-safe)", () => {
-    const input = { headers: [header(), header()], requests: [request()], dos: [dOrder(), dOrder({ id: "2", no_sj: "KP/DO-2", cancel_order: "Yes" })] };
-    const a = deriveEvents(input, OPTS).map((e) => e.event_key);
-    const b = deriveEvents(input, OPTS).map((e) => e.event_key);
+    const input = { headers: [header(), header()], dos: [dOrder(), dOrder({ id: "2", no_sj: "KP/DO-2", cancel_order: "Yes" })] };
+    const a = deriveEvents(input, BASE).map((e) => e.event_key);
+    const b = deriveEvents(input, BASE).map((e) => e.event_key);
     expect(a).toEqual(b);
+    // The approval and the DO both mean "confirmed": one event, the approval's (headers come first).
+    expect(deriveEvents(input, BASE).find((e) => e.event_type === "so.confirmed")!.payload).toMatchObject({ via: "approval" });
     expect(a).toEqual([
-      "so.created:SO.26/12821",
-      "production.requested:SO.26/12821:WO.26/00041",
+      "so.confirmed:SO.26/12821",
       "do.created:KP/DO-13224/11/26",
       "do.cancelled:KP/DO-2",
     ]);
@@ -145,11 +149,11 @@ describe.skipIf(!hasDb)("event store over the real schema", async () => {
     await db`update order_event_state set swept_until = null, late_swept_at = null where id = 1`;
     await db`update erp_order_sync_lease set owner = null, lease_until = null where id = 1`;
   }
-  async function insertHeader(id: string, poNo: string, createdDaysAgo = 0): Promise<void> {
+  async function insertHeader(id: string, poNo: string, createdDaysAgo = 0, approval = "Approved"): Promise<void> {
     await db`
-      insert into erp_so_header (id, po_no, so_number, customer_name_text, status_order, erp_created_at, kontak_penerima)
+      insert into erp_so_header (id, po_no, so_number, customer_name_text, status_order, erp_created_at, kontak_penerima, approval_new)
       values (${id}, ${poNo}, ${poNo}, ${"FITRAH JAYA"}, ${"Wating"},
-              now() - make_interval(days => ${createdDaysAgo}), ${"0812-8311-4455"})
+              now() - make_interval(days => ${createdDaysAgo}), ${"0812-8311-4455"}, ${approval})
     `;
   }
   async function insertDo(id: string, noSj: string, cancel = "No"): Promise<void> {
@@ -170,6 +174,8 @@ describe.skipIf(!hasDb)("event store over the real schema", async () => {
     await runErpStockMigrations(db);
     await runOrderMigrations(db);
     await runEventMigrations(db);
+    // Every suite's SOs count as created after the §21.1 switch-over.
+    await db`update order_event_state set confirmed_since = '2000-01-01' where id = 1`;
   }, 60_000);
   beforeEach(async () => {
     lane.resetOrderLaneForTests();
@@ -187,11 +193,20 @@ describe.skipIf(!hasDb)("event store over the real schema", async () => {
     const touched = { ...lane.emptyTouched(), so_header: [`${P}-h1`], do_header: [`${P}-d1`] };
     const first = await store.deriveForTouched(db, touched);
     const again = await store.deriveForTouched(db, touched);
-    expect(first.map((e) => e.event_type).sort()).toEqual(["do.created", "so.created"]);
+    expect(first.map((e) => e.event_type).sort()).toEqual(["do.created", "so.confirmed"]);
     expect(again).toEqual([]);
-    expect((await keysFor()).map((k) => k.event_key)).toEqual([`do.created:${P}/DO-1`, `so.created:${SO}`]);
-    const [ev] = await db`select payload from order_events where event_key = ${`so.created:${SO}`}`;
+    expect((await keysFor()).map((k) => k.event_key)).toEqual([`do.created:${P}/DO-1`, `so.confirmed:${SO}`]);
+    const [ev] = await db`select payload from order_events where event_key = ${`so.confirmed:${SO}`}`;
     expect(JSON.stringify(ev!.payload)).not.toContain("8311");
+  });
+
+  it("an SO waiting for Finance has no confirmation until it is approved; then exactly one", async () => {
+    await insertHeader(`${P}-h6`, `${P}/SO-6`, 0, "Waiting");
+    const t = { ...lane.emptyTouched(), so_header: [`${P}-h6`] };
+    expect(await store.deriveForTouched(db, t)).toEqual([]);
+    await db`update erp_so_header set approval_new = 'Approved', erp_updated_at = now() where id = ${`${P}-h6`}`;
+    expect((await store.deriveForTouched(db, t)).map((e) => e.event_key)).toEqual([`so.confirmed:${P}/SO-6`]);
+    expect(await store.deriveForTouched(db, t)).toEqual([]);
   });
 
   it("rows created before the horizon produce no events", async () => {
@@ -212,7 +227,7 @@ describe.skipIf(!hasDb)("event store over the real schema", async () => {
   it("the sweep catches rows written by either sync loop, once, and advances its watermark", async () => {
     await insertHeader(`${P}-h2`, `${P}/SO-2`); // as the stock sync would write it: no listener ran
     const s1 = await store.sweepEvents(db);
-    expect(s1.inserted.map((e) => e.event_key)).toContain(`so.created:${P}/SO-2`);
+    expect(s1.inserted.map((e) => e.event_key)).toContain(`so.confirmed:${P}/SO-2`);
     const s2 = await store.sweepEvents(db);
     expect(s2.inserted.filter((e) => e.event_key.includes(P))).toEqual([]);
     const [st] = await db<{ swept_until: Date }[]>`select swept_until from order_event_state where id = 1`;
@@ -260,7 +275,7 @@ describe.skipIf(!hasDb)("event store over the real schema", async () => {
     await lane.emitOrderRows(touched, db, quiet, "erp-mirror");
     expect(await keysFor()).toEqual([
       { event_key: `do.created:${P}/DO-4`, source: "erp-mirror" },
-      { event_key: `so.created:${P}/SO-4`, source: "erp-mirror" },
+      { event_key: `so.confirmed:${P}/SO-4`, source: "erp-mirror" },
     ]);
 
     erp.do_header = [{ ...erp.do_header![0]!, cancel_order: "Yes", updated_at: fmt(new Date()) }];
@@ -277,9 +292,9 @@ describe.skipIf(!hasDb)("event store over the real schema", async () => {
     await store.deriveForTouched(db, { ...lane.emptyTouched(), so_header: [`${P}-h5`] });
     const app = Fastify();
     await app.register(routes.orderEventRoutes);
-    const r = await app.inject({ method: "GET", url: `/api/orders/events?so_no=${encodeURIComponent(`${P}/SO-5`)}&type=so.created` });
+    const r = await app.inject({ method: "GET", url: `/api/orders/events?so_no=${encodeURIComponent(`${P}/SO-5`)}&type=so.confirmed` });
     expect(r.statusCode).toBe(200);
-    expect(r.json().rows.map((x: { event_key: string }) => x.event_key)).toEqual([`so.created:${P}/SO-5`]);
+    expect(r.json().rows.map((x: { event_key: string }) => x.event_key)).toEqual([`so.confirmed:${P}/SO-5`]);
     expect((await app.inject({ method: "GET", url: "/api/orders/events?type=nope" })).statusCode).toBe(400);
     expect((await app.inject({ method: "GET", url: "/api/orders/sync-status" })).statusCode).toBe(200);
   });

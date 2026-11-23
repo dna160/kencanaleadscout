@@ -68,11 +68,8 @@ describe("notification rules (pure)", () => {
     expect(outboxKey("on", "delivery_scheduled", "77930", "customer")).toBe("notify:on:delivery_scheduled:77930:customer");
     expect(outboxKey("shadow", "so_received", "SO.1", "customer")).not.toBe(outboxKey("on", "so_received", "SO.1", "customer"));
   });
-  it("merged step 3 says received AND scheduled; shadow wraps the exact customer text", () => {
+  it("shadow wraps the exact customer text", () => {
     const ctx = sampleContext(new Date("2026-11-10T03:00:00Z"), "Rahmanto", "0813-1111-2222");
-    expect(renderCustomerMessage("delivery_scheduled", ctx, { mergedReceived: true })).toContain(
-      "Pesanan Anda nomor *SO.26/UJI-0001* telah kami terima dan telah dijadwalkan untuk dikirim.",
-    );
     const text = renderCustomerMessage("so_received", ctx);
     const sh = renderShadow("so_received", "SO.1", "Di mode live: terkirim ke 0812-****-4455.", text);
     expect(sh.startsWith("[SHADOW]")).toBe(true);
@@ -126,7 +123,7 @@ describe.skipIf(!hasDb)("planner + dispatcher over the real schema", async () =>
       db,
       channel: ch,
       mode: "on",
-      holds: { so_received: 0, production_started: 0, delivery_scheduled: 0 },
+      holds: { so_received: 0, delivery_scheduled: 0 },
       fromHour: 0,
       untilHour: 24,
       dailyCap: 3,
@@ -160,16 +157,17 @@ describe.skipIf(!hasDb)("planner + dispatcher over the real schema", async () =>
   /** An SO in the mirror, with the rep's phone registered. Returns its SO number. */
   async function seedSo(
     tag: string,
-    o: { kontak?: string | null; customer?: string; customerId?: string; finalId?: string; createdHoursAgo?: number } = {},
+    o: { kontak?: string | null; customer?: string; customerId?: string; finalId?: string; createdHoursAgo?: number; approval?: string } = {},
   ): Promise<string> {
     const so = `${P}/${tag}`;
     const cid = o.customerId ?? `${P}-c-${tag}`;
     await db`
       insert into erp_so_header (id, po_no, so_number, customer_name_id, customer_final_id, customer_name_text,
-                                 sales_name_id, sales_name_text, penerima, kontak_penerima, status_order, erp_created_at)
+                                 sales_name_id, sales_name_text, penerima, kontak_penerima, status_order, erp_created_at,
+                                 approval_new)
       values (${`${P}-h-${tag}`}, ${so}, ${so}, ${cid}, ${o.finalId ?? cid}, ${o.customer ?? "FITRAH JAYA"},
               ${`${P}-rep`}, ${"Free Antony"}, ${"Bp. Panji"}, ${o.kontak === undefined ? phone() : o.kontak}, ${"Wating"},
-              now() + interval '7 hours' - make_interval(hours => ${o.createdHoursAgo ?? 0}))
+              now() + interval '7 hours' - make_interval(hours => ${o.createdHoursAgo ?? 0}), ${o.approval ?? "Approved"})
     `;
     await db`
       insert into erp_so_line (id, po_no, brand_text, warna_text, th, th_panel, qty_order, qty_balance, approval, sku_key)
@@ -198,6 +196,8 @@ describe.skipIf(!hasDb)("planner + dispatcher over the real schema", async () =>
       select milestone, recipient_role, status, cancel_reason, to_number, body, mode, meta
         from notify_ledger where so_no = ${so} order by id`;
   const sentTo = (n: string) => ch.sent.filter((m) => m.to === n);
+  /** Delivery messages only: a DO also confirms its SO first (PRD §21.1 b). */
+  const deliveryTo = (n: string) => sentTo(n).filter((m) => !m.text.includes("sudah kami konfirmasi"));
 
   beforeAll(async () => {
     const s = dbmod.getSql();
@@ -208,6 +208,8 @@ describe.skipIf(!hasDb)("planner + dispatcher over the real schema", async () =>
     await runOrderMigrations(db);
     await runEventMigrations(db);
     await runNotifyMigrations(db);
+    // Every suite's SOs count as created after the §21.1 switch-over.
+    await db`update order_event_state set confirmed_since = '2000-01-01' where id = 1`;
   }, 120_000);
   beforeEach(async () => {
     await cleanup();
@@ -230,7 +232,7 @@ describe.skipIf(!hasDb)("planner + dispatcher over the real schema", async () =>
     expect(r.paused).toBeNull();
     const toCustomer = sentTo("+6281291000001");
     expect(toCustomer).toHaveLength(1);
-    expect(toCustomer[0]!.text).toContain(`Pesanan Anda nomor *${so}* telah kami terima`);
+    expect(toCustomer[0]!.text).toContain(`Pesanan Anda nomor *${so}* sudah kami konfirmasi`);
     expect(toCustomer[0]!.text).toContain("nomor resmi notifikasi");
     expect(toCustomer[0]!.text).toContain("Free Antony (0813-7770-0001)");
     const cc = sentTo(e164(REP));
@@ -255,31 +257,65 @@ describe.skipIf(!hasDb)("planner + dispatcher over the real schema", async () =>
     expect(toRep).toHaveLength(1);
     expect(toRep[0]!.text.startsWith("[SHADOW]")).toBe(true);
     expect(toRep[0]!.text).toContain("Di mode live: terkirim ke 0812-****-0002");
-    expect(toRep[0]!.text).toContain(`telah kami terima`);
+    expect(toRep[0]!.text).toContain(`sudah kami konfirmasi`);
     expect((await ledger(so)).map((l) => [l.mode, l.recipient_role, l.status])).toEqual([["shadow", "customer", "sent"]]);
   });
 
-  it("step 1 still on hold when the DO lands ⇒ ONE merged message, step 1 cancelled as merged", async () => {
-    const d = deps({ holds: { so_received: 10, production_started: 0, delivery_scheduled: 0 } });
+  it("step 3 never goes before the SO's confirmation: it waits until 60 s after it", async () => {
+    const d = deps({ holds: { so_received: 10, delivery_scheduled: 0 } });
     await disp.syncMode(db, "on", new Date());
     const so = await seedSo("mg1", { kontak: "0812-9100-0003" });
     await derive(["mg1"]);
     const doId = await seedDo("mg1", so);
     await derive([], [doId]);
     await disp.dispatchOnce(d);
+    expect(sentTo("+6281291000003")).toEqual([]); // confirmation on its 10-min hold, step 3 behind it
+    const [mv1] = await db<{ due_at: Date }[]>`
+      select due_at from notify_ledger where so_no = ${so} and milestone = 'so_received' and recipient_role = 'customer'`;
+    const [mv3] = await db<{ due_at: Date; meta: Record<string, unknown> }[]>`
+      select due_at, meta from notify_ledger where so_no = ${so} and milestone = 'delivery_scheduled' and recipient_role = 'customer'`;
+    expect(mv3!.meta["deferred"]).toBe("awaiting_confirmation");
+    expect(mv3!.due_at.getTime()).toBe(mv1!.due_at.getTime() + 60_000);
+
+    const later = new Date(Date.now() + 12 * 60_000);
+    await disp.dispatchOnce(deps({ ...d, now: () => later }));
     const msgs = sentTo("+6281291000003");
-    expect(msgs).toHaveLength(1);
-    expect(msgs[0]!.text).toContain(`Pesanan Anda nomor *${so}* telah kami terima dan telah dijadwalkan untuk dikirim.`);
+    expect(msgs).toHaveLength(2);
+    expect(msgs[0]!.text).toContain("sudah kami konfirmasi");
+    expect(msgs[1]!.text).toContain("telah dijadwalkan untuk dikirim");
     const rows = await ledger(so);
-    expect(rows.filter((r) => r.milestone === "so_received").map((r) => [r.status, r.cancel_reason])).toEqual([
-      ["cancelled", "merged"],
-      ["cancelled", "merged"],
+    expect(rows.filter((r) => r.recipient_role === "customer").map((r) => [r.milestone, r.status])).toEqual([
+      ["so_received", "sent"],
+      ["delivery_scheduled", "sent"],
     ]);
-    expect(rows.filter((r) => r.milestone === "delivery_scheduled").every((r) => r.status === "sent")).toBe(true);
+  });
+
+  it("an SO already told under the old 'diterima' trigger is not confirmed again", async () => {
+    await disp.syncMode(db, "on", new Date());
+    const so = await seedSo("old1", { kontak: "0812-9100-0013" });
+    await db`
+      insert into notify_ledger (mode, milestone, so_no, recipient_role, to_number, body, channel, status, idempotency_key)
+      values ('live', 'so_received', ${so}, 'customer', '+6281291000013', 'lama', 'stub', 'sent',
+              ${`notify:on:so_received:${so}:customer`})`;
+    await derive(["old1"]);
+    await disp.dispatchOnce(deps());
+    expect(sentTo("+6281291000013")).toEqual([]);
+  });
+
+  it("an SO still waiting for Finance gets nothing until it is approved", async () => {
+    await disp.syncMode(db, "on", new Date());
+    const so = await seedSo("wt1", { kontak: "0812-9100-0014", approval: "Waiting" });
+    await derive(["wt1"]);
+    await disp.dispatchOnce(deps());
+    expect(sentTo("+6281291000014")).toEqual([]);
+    await db`update erp_so_header set approval_new = 'Approved', erp_updated_at = now() + interval '7 hours' where po_no = ${so}`;
+    await derive(["wt1"]);
+    await disp.dispatchOnce(deps());
+    expect(sentTo("+6281291000014").map((m) => m.text.includes("sudah kami konfirmasi"))).toEqual([true]);
   });
 
   it("a DO cancelled before sending is never announced; after sending, the rep is told", async () => {
-    const d = deps({ holds: { so_received: 0, production_started: 0, delivery_scheduled: 30 } });
+    const d = deps({ holds: { so_received: 0, delivery_scheduled: 30 } });
     await disp.syncMode(db, "on", new Date());
     const so = await seedSo("dc1", { kontak: "0812-9100-0004" });
     const doId = await seedDo("dc1", so);
@@ -290,20 +326,20 @@ describe.skipIf(!hasDb)("planner + dispatcher over the real schema", async () =>
     await disp.dispatchOnce(d);
     const rows = (await ledger(so)).filter((r) => r.milestone === "delivery_scheduled");
     expect(rows.map((r) => [r.status, r.cancel_reason])).toEqual([["cancelled", "do_cancelled"], ["cancelled", "do_cancelled"]]);
-    expect(sentTo("+6281291000004")).toEqual([]);
+    expect(deliveryTo("+6281291000004")).toEqual([]);
 
     // Second DO: sent first, then cancelled ⇒ rep notice, customer not re-messaged.
     const d2 = deps();
     const doId2 = await seedDo("dc2", so);
     await derive([], [doId2]);
     await disp.dispatchOnce(d2);
-    expect(sentTo("+6281291000004")).toHaveLength(1);
+    expect(deliveryTo("+6281291000004")).toHaveLength(1);
     await seedDo("dc2", so, "Yes");
     await derive([], [doId2]);
     await disp.dispatchOnce(d2);
     const notice = sentTo(e164(REP)).find((m) => m.text.includes("DO dibatalkan"));
     expect(notice?.text).toContain(`KP/DO-dc2`);
-    expect(sentTo("+6281291000004")).toHaveLength(1);
+    expect(deliveryTo("+6281291000004")).toHaveLength(1);
   });
 
   it("no number on the SO ⇒ customer row unreachable, the rep's CC says so", async () => {
@@ -384,7 +420,7 @@ describe.skipIf(!hasDb)("planner + dispatcher over the real schema", async () =>
     await disp.syncMode(db, "shadow", new Date());
     const so = await seedSo("mc1");
     await derive(["mc1"]);
-    await disp.planEvents(deps({ mode: "shadow", holds: { so_received: 60, production_started: 0, delivery_scheduled: 0 } }));
+    await disp.planEvents(deps({ mode: "shadow", holds: { so_received: 60, delivery_scheduled: 0 } }));
     expect((await ledger(so)).map((r) => [r.mode, r.status])).toEqual([["shadow", "pending"]]);
     const st = await disp.syncMode(db, "on", new Date());
     expect(st.changed).toBe(true);
@@ -412,7 +448,7 @@ describe.skipIf(!hasDb)("planner + dispatcher over the real schema", async () =>
 
   it("the kill switch pauses sending (rows wait); a step switched off is recorded as skipped", async () => {
     await disp.syncMode(db, "on", new Date());
-    await db`update notify_settings set kill_switch = true, milestones_enabled = '{"production_started": false}'::jsonb where id = 1`;
+    await db`update notify_settings set kill_switch = true, milestones_enabled = '{"delivery_scheduled": false}'::jsonb where id = 1`;
     const so = await seedSo("ks1", { kontak: "0812-9100-0009" });
     await derive(["ks1"]);
     const r = await disp.dispatchOnce(deps());
@@ -420,12 +456,11 @@ describe.skipIf(!hasDb)("planner + dispatcher over the real schema", async () =>
     expect(sentTo("+6281291000009")).toEqual([]);
     expect((await ledger(so)).every((l) => l.status === "pending")).toBe(true);
 
-    await db`
-      insert into order_events (event_key, event_type, so_no, subject_ref, occurred_at, payload)
-      values (${`production.requested:${so}:WO-X`}, 'production.requested', ${so}, 'r1', now() + interval '7 hours', '{}'::jsonb)`;
+    const doId = await seedDo("ks1", so);
+    await derive([], [doId]);
     await disp.planEvents(deps());
-    const prod = (await ledger(so)).filter((l) => l.milestone === "production_started");
-    expect(prod.map((l) => [l.status, l.cancel_reason])).toEqual([["skipped", "milestone_off"]]);
+    const step3 = (await ledger(so)).filter((l) => l.milestone === "delivery_scheduled");
+    expect(step3.map((l) => [l.status, l.cancel_reason])).toEqual([["skipped", "milestone_off"]]);
 
     await db`update notify_settings set kill_switch = false where id = 1`;
     await disp.dispatchOnce(deps());

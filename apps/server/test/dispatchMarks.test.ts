@@ -172,7 +172,9 @@ describe.skipIf(!hasDb)("dispatch marks over the real schema", async () => {
   const ledger = async (so: string) =>
     db<{ milestone: string; recipient_role: string; status: string; cancel_reason: string | null; body: string | null }[]>`
       select milestone, recipient_role, status, cancel_reason, body from notify_ledger where so_no = ${so} order by id`;
-  const sentTo = (n: string) => ch.sent.filter((m) => m.to === n);
+  // Delivery messages only: each DO also confirms its SO first (PRD §21.1 b), to
+  // the customer and (as a CC) to the rep; those are covered in dispatcher.test.ts.
+  const sentTo = (n: string) => ch.sent.filter((m) => m.to === n && !m.text.includes("sudah kami konfirmasi"));
 
   beforeAll(async () => {
     const s = dbmod.getSql();
@@ -183,6 +185,7 @@ describe.skipIf(!hasDb)("dispatch marks over the real schema", async () => {
     await runOrderMigrations(db);
     await runEventMigrations(db);
     await runNotifyMigrations(db);
+    await db`update order_event_state set confirmed_since = '2000-01-01' where id = 1`;
   }, 120_000);
   beforeEach(async () => {
     await cleanup();

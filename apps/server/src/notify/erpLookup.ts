@@ -25,7 +25,8 @@ export interface LookupResult {
   context: OrderContext;
   /** Masked ERP recipient phone (live-mode destination), e.g. "0812-****-4455". */
   erpRecipientPhoneMasked: string | null;
-  hasProductionRequest: boolean;
+  /** Finance approval on the SO header (`approval_new`): step 1 waits for it in live mode. */
+  approval: string | null;
   hasDeliveryOrder: boolean;
   paymentTerm: string | null;
   statusOrder: string | null;
@@ -68,17 +69,7 @@ export function soLineItem(r: Row): ItemLine {
   return {
     label: [label(r, "brand"), label(r, "warna"), spec].filter(Boolean).join(" "),
     qty: n(r["qty_order"]),
-  };
-}
-
-export function requestItem(r: Row): ItemLine {
-  // 1236: th_alu_skin ("Tebal") is the PANEL thickness; `alu` is the skin.
-  const panel = fmtThickness(r["th_alu_skin"]);
-  const skin = fmtThickness(r["alu"]);
-  const spec = [panel && `${panel}mm`, skin].filter(Boolean).join(" / ");
-  return {
-    label: [label(r, "sticker"), label(r, "warna"), spec].filter(Boolean).join(" "),
-    qty: n(r["qty_lembar"]),
+    parts: { product: label(r, "brand") || null, spec, colour: label(r, "warna") || null },
   };
 }
 
@@ -117,7 +108,7 @@ export async function lookupOrder(
     po_no: soNo,
     limit: "1",
     fields:
-      "po_no,po_date,customer_name,customer_name_text,penerima,kontak_penerima,alamat_kirim,sales_name,sales_name_text,top_limit,status_order",
+      "po_no,po_date,customer_name,customer_name_text,penerima,kontak_penerima,alamat_kirim,sales_name,sales_name_text,top_limit,status_order,approval_new",
   });
   if (!header) throw new ErpLookupError(404, `SO ${soNo} tidak ditemukan di Selaras.`);
 
@@ -126,13 +117,6 @@ export async function lookupOrder(
     limit: "200",
     fields: "brand,brand_text,warna,warna_text,th_alu_skin,total_thickness_acp,qty_order",
   });
-  const requests = (
-    await get("tbl_1236_DBRequestProduksiID", {
-      so_no: soNo,
-      limit: "100",
-      fields: "so_no,so_ms,wo_no,sticker,sticker_text,warna,warna_text,th_alu_skin,alu,qty_lembar,tanggal_request",
-    })
-  ).filter((r) => label(r, "so_ms").toUpperCase() === "SO");
   const dos = (
     await get("tbl_1082_SOLogisticPID", {
       so_no: soNo,
@@ -152,9 +136,6 @@ export async function lookupOrder(
     items: lines.map(soLineItem),
     salesName: opts.salesNameOverride || label(header, "sales_name") || null,
     salesWa: opts.salesWa,
-    production: requests.length
-      ? { woNo: t(requests[0]!["wo_no"]) || null, items: requests.map(requestItem) }
-      : null,
     delivery: latestDo
       ? {
           sjNo: t(latestDo["no_sj"]),
@@ -170,7 +151,7 @@ export async function lookupOrder(
   return {
     context,
     erpRecipientPhoneMasked: maskPhone(t(header["kontak_penerima"])),
-    hasProductionRequest: requests.length > 0,
+    approval: label(header, "approval_new") || null,
     hasDeliveryOrder: dos.length > 0,
     paymentTerm: label(header, "top_limit") || null,
     statusOrder,

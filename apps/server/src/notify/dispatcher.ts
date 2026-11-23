@@ -10,7 +10,7 @@
  * crashed claim is reclaimed after its lease, and the gateway dedupes on the
  * idempotency key), then for each row, at SEND time:
  *   1. re-reads the order from the mirror (pre-send recheck);
- *   2. merges step 1 into step 3 when the DO arrived during step 1's hold;
+ *   2. holds step 3 until the SO's confirmation (step 1) has gone out;
  *   3. applies exclusions, opt-out, the shared-number guard, the daily cap and
  *      the sending window;
  *   4. renders, sends through the configured channel, records the outcome.
@@ -407,9 +407,6 @@ async function processCustomer(deps: DispatchDeps, row: LedgerRow): Promise<void
   if (config.stock.cancelledStatuses.some((c) => c.toLowerCase() === (header.status_order ?? "").toLowerCase())) {
     return finish(deps, row, { status: "cancelled", cancel_reason: "so_cancelled" });
   }
-  if (m === "production_started" && !ctx.production) {
-    return finish(deps, row, { status: "cancelled", cancel_reason: "no_production_request" });
-  }
   if (isDelivery && (!doRow || doRow.deleted || (doRow.cancel_order ?? "").toLowerCase() === "yes" || !ctx.delivery)) {
     return finish(deps, row, { status: "cancelled", cancel_reason: "do_cancelled" });
   }
@@ -455,34 +452,19 @@ async function processCustomer(deps: DispatchDeps, row: LedgerRow): Promise<void
     }
   }
 
-  // 2. Merge step 1 into step 3 (whichever is processed first).
-  let mergedReceived = row.meta["mergedReceived"] === true;
-  if (m === "so_received") {
-    const [mv3] = await db<{ id: string }[]>`
-      select id::text from notify_ledger
-       where mode = ${lmode} and so_no = ${row.so_no} and milestone = 'delivery_scheduled'
-         and recipient_role = 'customer' and status = 'pending'
-       order by id limit 1
-    `;
-    if (mv3) {
-      await db`
-        update notify_ledger set meta = meta || '{"mergedReceived": true}'::jsonb where id = ${mv3.id}
-      `;
-      await db`
-        update notify_ledger set status = 'cancelled', cancel_reason = 'merged', leased_until = null
-         where mode = ${lmode} and so_no = ${row.so_no} and milestone = 'so_received' and status = 'pending'
-      `;
-      return finish(deps, row, { status: "cancelled", cancel_reason: "merged", meta: { mergedInto: mv3.id } });
-    }
-  } else if (m === "delivery_scheduled") {
-    const merged = await db`
-      update notify_ledger set status = 'cancelled', cancel_reason = 'merged', leased_until = null,
-             meta = meta || ${db.json({ mergedInto: row.id })}
+  // 2. Step 3 never goes before the SO's confirmation (PRD §21.1): while a
+  // confirmation for this SO is still waiting, step 3 waits until 60 s after it.
+  if (m === "delivery_scheduled") {
+    const [conf] = await db<{ due_at: Date | null }[]>`
+      select due_at from notify_ledger
        where mode = ${lmode} and so_no = ${row.so_no} and milestone = 'so_received'
-         and status in ('pending', 'sending') and id <> ${row.id}
-      returning id
+         and recipient_role = 'customer' and status in ('pending', 'sending') and id <> ${row.id}
+       order by due_at limit 1
     `;
-    if (merged.length) mergedReceived = true;
+    if (conf) {
+      const at = Math.max(deps.now().getTime() + 60_000, (conf.due_at?.getTime() ?? 0) + 60_000);
+      return defer(deps, row, new Date(at), "awaiting_confirmation");
+    }
   }
 
   // 3. Exclusions — silent in both modes (these customers are never messaged).
@@ -520,8 +502,8 @@ async function processCustomer(deps: DispatchDeps, row: LedgerRow): Promise<void
   const [contact] = phone
     ? await db<{ first_contacted_at: Date | null }[]>`select first_contacted_at from notify_contacts where phone_e164 = ${phone}`
     : [];
-  const text = renderCustomerMessage(m, ctx, { mergedReceived, change, introduce: Boolean(phone) && !contact?.first_contacted_at });
-  const meta = { mergedReceived, recipientSource: recipient.source, verdict: verdict.reason ?? "ok" };
+  const text = renderCustomerMessage(m, ctx, { change, introduce: Boolean(phone) && !contact?.first_contacted_at });
+  const meta = { recipientSource: recipient.source, verdict: verdict.reason ?? "ok" };
 
   // 5. Sending window (also protects reps' evenings in shadow mode).
   const wait = nextSendWindow(deps.now(), deps.fromHour, deps.untilHour);

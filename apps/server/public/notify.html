@@ -588,7 +588,7 @@
       const items = r.items.slice(0, 5).map((i) => `${esc(i.label)} × ${esc(i.qty)}`).join("<br>") || "(tidak ada baris)";
       box.innerHTML = `<b>${esc(r.soNo)}</b> · ${esc(r.customerName)} · status ${esc(r.statusOrder || "-")} · ${esc(r.paymentTerm || "-")}<br>
         Penerima: ${esc(r.recipientName || "-")} (${esc(r.erpRecipientPhoneMasked || "tanpa nomor")}) · Sales: ${esc(r.salesName || "-")}<br>
-        Produksi: ${r.production ? "ya, " + esc(r.production.woNo || "") : "tidak (dari stok)"} ·
+        Approval Finance: ${esc(r.approval || "-")} ·
         DO: ${r.delivery ? esc(r.delivery.sjNo) + " · " + esc(r.delivery.sjDate) + (r.delivery.pickup ? " · diambil" : " · diantar") : "belum ada"}<br>
         <span class="muted">${items}</span>`;
     } catch (e) {
@@ -626,7 +626,7 @@
 
   // ── WP-6: Live ─────────────────────────────────────────────────────────
   const fmtTime = (v) => v ? new Date(v).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" }) : "–";
-  const STEP = { so_received: "Pesanan diterima", production_started: "Mulai produksi", delivery_scheduled: "Pengiriman dijadwalkan",
+  const STEP = { so_received: "Pesanan dikonfirmasi", production_started: "Mulai produksi (lama)", delivery_scheduled: "Pengiriman dijadwalkan",
     delivery_changed: "Jadwal kirim berubah", delivery_departed: "Barang dikirim", dispatch_reminder: "Pengingat pengiriman (ke sales)",
     do_cancelled_notice: "DO dibatalkan (ke sales)", stop_ack: "Konfirmasi STOP", start_ack: "Konfirmasi MULAI",
     reply_forward: "Teruskan balasan", auto_reply: "Balasan otomatis", manual_reply: "Balasan admin" };

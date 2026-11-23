@@ -13,8 +13,10 @@ export type Role = "customer" | "sales_cc";
 
 /** Which event type starts which customer message. */
 export const EVENT_MILESTONE: Record<string, Milestone> = {
-  "so.created": "so_received",
-  "production.requested": "production_started",
+  // so.created and production.requested (before 2026-11-23) are no longer
+  // planned: the first message waits for Finance approval, and production is
+  // not messaged at all (PRD §21.1, §21.2).
+  "so.confirmed": "so_received",
   "do.created": "delivery_scheduled",
   "do.rescheduled": "delivery_changed",
   "do.departed": "delivery_departed",

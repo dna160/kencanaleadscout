@@ -39,4 +39,8 @@ export async function runEventMigrations(db: Sql): Promise<void> {
     )
   `;
   await db`insert into order_event_state (id) values (1) on conflict (id) do nothing`;
+  // PRD §21.1: the switch-over from "SO created" to "SO confirmed by Finance".
+  // Stamped once; SOs created before it never get a confirmation message.
+  await db`alter table order_event_state add column if not exists confirmed_since timestamptz`;
+  await db`update order_event_state set confirmed_since = now() where id = 1 and confirmed_since is null`;
 }

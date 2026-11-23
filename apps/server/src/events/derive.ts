@@ -5,11 +5,16 @@
  * deterministic `event_key`, so deriving the same rows twice yields the same
  * keys and the store's `on conflict (event_key) do nothing` makes replays free.
  *
- *   so.created            new SO header (po_no), not cancelled          key so.created:{po_no}
- *   production.requested  1236 row with so_ms = 'SO' and an SO number   key production.requested:{so_no}:{wo_no|request id}
+ *   so.confirmed          SO approved by Finance (approval_new) OR a    key so.confirmed:{po_no}
+ *                         live DO appears first (PRD §21.1); whichever
+ *                         comes first, SOs from before the switch-over excluded
  *   do.created            1082 row, not cancelled, not deleted           key do.created:{no_sj|id}
  *   do.cancelled          1082 row with cancel_order = Yes, or deleted   key do.cancelled:{no_sj|id}
  *   so.late               live SO lines whose ETA has passed             key so.late:{po_no}:{earliest eta}
+ *
+ * Production (1236) is no longer an event (PRD §21.2); the table stays mirrored.
+ * `so.created` / `production.requested` rows from before 2026-11-23 stay in the
+ * log as history and are no longer planned.
  *
  * Payloads hold business facts for display and routing, never phone numbers:
  * consumers that need the recipient read it from the mirror at send time, so a
@@ -17,8 +22,7 @@
  */
 
 export type EventType =
-  | "so.created"
-  | "production.requested"
+  | "so.confirmed"
   | "do.created"
   | "do.cancelled"
   | "so.late"
@@ -47,18 +51,9 @@ export interface HeaderFacts {
   sales_name_id: string | null;
   sales_name_text: string | null;
   top_limit: string | null;
+  approval_new: string | null;
   erp_created_at: Date | null;
-}
-
-export interface RequestFacts {
-  id: string;
-  so_no: string | null;
-  so_ms: string | null;
-  wo_no: string | null;
-  no_request: string | null;
-  tanggal_request: string | null;
-  erp_created_at: Date | null;
-  deleted_at: Date | null;
+  erp_updated_at: Date | null;
 }
 
 export interface DoFacts {
@@ -72,6 +67,10 @@ export interface DoFacts {
   erp_created_at: Date | null;
   erp_updated_at: Date | null;
   deleted_at: Date | null;
+  /** The DO's SO header, when mirrored (for the DO-first confirmation, §21.1 b). */
+  so_found?: boolean | null;
+  so_status?: string | null;
+  so_created_at?: Date | null;
 }
 
 export interface LateFacts {
@@ -85,6 +84,24 @@ export interface LateFacts {
 export interface DeriveOptions {
   /** SO `status_order` values that mean cancelled (same list as the stock views). */
   cancelledStatuses: readonly string[];
+  /**
+   * The switch-over to approval-based confirmations (a real instant). SOs
+   * created before it never get one: they were handled under the old trigger.
+   * Null = no baseline (tests of the pure rules).
+   */
+  confirmedSince?: Date | null;
+}
+
+const WIB_MS = 7 * 3_600_000;
+
+/** Header created before the switch-over? Mirror timestamps are WIB digits stored as UTC (A18). */
+function beforeSwitchOver(createdAt: Date | null | undefined, opts: DeriveOptions): boolean {
+  if (!opts.confirmedSince || !createdAt) return false;
+  return createdAt.getTime() - WIB_MS < opts.confirmedSince.getTime();
+}
+
+export function isApproved(approval: string | null | undefined): boolean {
+  return (approval ?? "").trim().toLowerCase() === "approved";
 }
 
 const norm = (s: string | null | undefined): string => (s ?? "").trim().toLowerCase();
@@ -102,18 +119,23 @@ export function isPickup(caraKirim: string | null): boolean {
   return /ambil/i.test(caraKirim ?? "");
 }
 
+/** (a) Finance approved the SO: the normal path to the confirmation message. */
 export function deriveFromHeader(h: HeaderFacts, opts: DeriveOptions): EventDraft[] {
   const poNo = h.po_no?.trim();
   if (!poNo) return []; // no SO number ⇒ nothing can key or route it
   if (isCancelledStatus(h.status_order, opts)) return [];
+  if (!isApproved(h.approval_new)) return [];
+  if (beforeSwitchOver(h.erp_created_at, opts)) return [];
   return [
     {
-      event_key: `so.created:${poNo}`,
-      event_type: "so.created",
+      event_key: `so.confirmed:${poNo}`,
+      event_type: "so.confirmed",
       so_no: poNo,
       subject_ref: h.id,
-      occurred_at: h.erp_created_at,
+      // The approval is the movement, so its age is measured from the last edit.
+      occurred_at: h.erp_updated_at ?? h.erp_created_at,
       payload: {
+        via: "approval",
         header_id: h.id,
         po_date: h.po_date,
         customer_name_id: h.customer_name_id,
@@ -128,24 +150,7 @@ export function deriveFromHeader(h: HeaderFacts, opts: DeriveOptions): EventDraf
   ];
 }
 
-export function deriveFromRequest(r: RequestFacts): EventDraft[] {
-  const soNo = r.so_no?.trim();
-  if (!soNo || r.deleted_at) return [];
-  if (norm(r.so_ms) !== "so") return []; // MS / O / TRIAL are make-to-stock, not a customer order
-  const wo = r.wo_no?.trim() || null;
-  return [
-    {
-      event_key: `production.requested:${soNo}:${wo ?? `req-${r.id}`}`,
-      event_type: "production.requested",
-      so_no: soNo,
-      subject_ref: r.id,
-      occurred_at: r.erp_created_at,
-      payload: { request_id: r.id, wo_no: wo, no_request: r.no_request, tanggal_request: r.tanggal_request },
-    },
-  ];
-}
-
-export function deriveFromDo(d: DoFacts): EventDraft[] {
+export function deriveFromDo(d: DoFacts, opts: DeriveOptions = { cancelledStatuses: [] }): EventDraft[] {
   const ref = d.no_sj?.trim() || `id-${d.id}`;
   const soNo = d.so_no?.trim() || null;
   const payload = {
@@ -168,7 +173,21 @@ export function deriveFromDo(d: DoFacts): EventDraft[] {
     ];
   }
   if (!soNo) return []; // a DO that names no SO cannot be routed to anyone
-  return [
+  const out: EventDraft[] = [];
+  // (b) A live DO before Finance approval (164 CBD SOs shipped while still
+  // "Waiting"): confirm first, so "dijadwalkan" never arrives unannounced.
+  // Same key as the approval path, so whichever comes first is the one.
+  if (d.so_found && !isCancelledStatus(d.so_status ?? null, opts) && !beforeSwitchOver(d.so_created_at, opts)) {
+    out.push({
+      event_key: `so.confirmed:${soNo}`,
+      event_type: "so.confirmed",
+      so_no: soNo,
+      subject_ref: d.id,
+      occurred_at: d.do_created_at ?? d.erp_created_at,
+      payload: { via: "do", do_id: d.id, no_sj: d.no_sj },
+    });
+  }
+  out.push(
     {
       event_key: `do.created:${ref}`,
       event_type: "do.created",
@@ -177,7 +196,8 @@ export function deriveFromDo(d: DoFacts): EventDraft[] {
       occurred_at: d.do_created_at ?? d.erp_created_at,
       payload,
     },
-  ];
+  );
+  return out;
 }
 
 export function deriveLate(l: LateFacts): EventDraft {
@@ -194,7 +214,6 @@ export function deriveLate(l: LateFacts): EventDraft {
 
 export interface DeriveInput {
   headers?: readonly HeaderFacts[];
-  requests?: readonly RequestFacts[];
   dos?: readonly DoFacts[];
   late?: readonly LateFacts[];
 }
@@ -206,8 +225,7 @@ export function deriveEvents(input: DeriveInput, opts: DeriveOptions): EventDraf
     for (const d of drafts) if (!out.has(d.event_key)) out.set(d.event_key, d);
   };
   for (const h of input.headers ?? []) add(deriveFromHeader(h, opts));
-  for (const r of input.requests ?? []) add(deriveFromRequest(r));
-  for (const d of input.dos ?? []) add(deriveFromDo(d));
+  for (const d of input.dos ?? []) add(deriveFromDo(d, opts));
   for (const l of input.late ?? []) add([deriveLate(l)]);
   return [...out.values()];
 }

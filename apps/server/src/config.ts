@@ -510,7 +510,6 @@ export const config = {
     /** Hold before release, minutes (PRD §5.0): absorbs SOs deleted/edited right after entry. */
     holdMinutes: {
       so_received: intOrZero("NOTIFY_HOLD_MV1_MIN", 10),
-      production_started: intOrZero("NOTIFY_HOLD_MV2_MIN", 0),
       delivery_scheduled: intOrZero("NOTIFY_HOLD_MV3_MIN", 0),
     },
     /** Customer messages per phone per WIB day; the rest wait for the next day. */

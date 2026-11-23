@@ -12,7 +12,11 @@ import { getSql } from "../db/client.js";
 import { isOrderLaneEnabled, orderLaneStatus } from "../erp/orderSync.js";
 import { config } from "../config.js";
 
-const TYPES = new Set(["so.created", "production.requested", "do.created", "do.cancelled", "so.late"]);
+// so.created / production.requested stay queryable as history (before 2026-11-23).
+const TYPES = new Set([
+  "so.confirmed", "do.created", "do.cancelled", "do.rescheduled", "do.departed", "so.late",
+  "so.created", "production.requested",
+]);
 
 export async function orderEventRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/orders/events", async (req, reply) => {

@@ -160,7 +160,7 @@ export async function notifyRoutes(app: FastifyInstance): Promise<void> {
         recipientName: r.context.recipientName,
         salesName: r.context.salesName,
         items: r.context.items,
-        production: r.context.production,
+        approval: r.approval,
         delivery: r.context.delivery,
         erpRecipientPhoneMasked: r.erpRecipientPhoneMasked,
         paymentTerm: r.paymentTerm,
@@ -214,9 +214,9 @@ export async function notifyRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const sample = sampleContext(nowWib(), salesName, salesWa);
-    if (milestone === "production_started" && ctx.source === "erp" && !ctx.production) {
+    if (milestone === "so_received" && lookup && lookup.approval?.trim().toLowerCase() !== "approved") {
       warnings.push(
-        "SO ini tidak punya Request Produksi (dilayani dari stok). Di mode live, pesan langkah 2 TIDAK akan terkirim untuk SO ini.",
+        "SO ini belum disetujui Finance (approval Waiting). Di mode live, pesan konfirmasi baru terkirim saat Finance menyetujui, atau saat DO pertama dibuat.",
       );
     }
     if (milestone.startsWith("delivery_") && !ctx.delivery) {

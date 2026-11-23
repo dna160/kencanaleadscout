@@ -117,25 +117,8 @@ async function soItems(db: AnySql, soNo: string): Promise<ItemLine[]> {
   return rows.map((r: { brand: string | null; warna: string | null; th_panel: unknown; th: unknown; qty: unknown }) => ({
     label: itemLabel(r.brand, r.warna, r.th_panel, r.th),
     qty: num(r.qty),
+    parts: { product: r.brand, spec: itemLabel(null, null, r.th_panel, r.th), colour: r.warna },
   }));
-}
-
-async function productionItems(db: AnySql, soNo: string): Promise<{ woNo: string | null; items: ItemLine[] } | null> {
-  const rows = await db<{ wo_no: string | null; brand: string | null; warna: string | null; th_panel: unknown; th_skin: unknown; qty: unknown }[]>`
-    select wo_no, coalesce(brand_text, brand) as brand, coalesce(warna_text, warna) as warna, th_panel, th_skin,
-           qty_lembar as qty
-      from erp_request_produksi
-     where so_no = ${soNo} and upper(coalesce(so_ms, '')) = 'SO' and deleted_at is null
-     order by id
-  `;
-  if (!rows.length) return null;
-  return {
-    woNo: rows[0]!.wo_no,
-    items: rows.map((r: { brand: string | null; warna: string | null; th_panel: unknown; th_skin: unknown; qty: unknown }) => ({
-      label: itemLabel(r.brand, r.warna, r.th_panel, r.th_skin),
-      qty: num(r.qty),
-    })),
-  };
 }
 
 /** What THIS DO carries (1205 joined to the SO line for its product), else the SO's items. */
@@ -169,7 +152,6 @@ export async function loadLiveOrder(db: AnySql, soNo: string, doId: string | nul
   if (!header) return null;
   const rep = await loadRep(db, header);
   const items = await soItems(db, soNo);
-  const production = await productionItems(db, soNo);
 
   let doRow: LiveDo | null = null;
   let delivery: OrderContext["delivery"] = null;
@@ -199,7 +181,6 @@ export async function loadLiveOrder(db: AnySql, soNo: string, doId: string | nul
     items: deliveryItems.length ? deliveryItems : items,
     salesName: rep.name,
     salesWa: rep.phone ? localDisplay(rep.phone) : null,
-    production,
     delivery,
     source: "erp",
   };

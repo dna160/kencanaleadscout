@@ -65,7 +65,7 @@ describe.skipIf(!hasDb)("notify admin API", async () => {
     expect((await app.inject({ method: "PUT", url: "/api/notify/live", payload: { killSwitch: true } })).statusCode).toBe(401);
     const put = await app.inject({
       method: "PUT", url: "/api/notify/live", headers: TOKEN,
-      payload: { killSwitch: true, milestones: { production_started: false, bogus: false } },
+      payload: { killSwitch: true, milestones: { delivery_changed: false, production_started: true, bogus: false } },
     });
     expect(put.statusCode).toBe(200);
     const live = (await app.inject({ method: "GET", url: "/api/notify/live" })).json();
@@ -73,9 +73,8 @@ describe.skipIf(!hasDb)("notify admin API", async () => {
     expect(live.switchesSetBy).toContain("Rina (Sales Admin)");
     expect(live.milestones).toEqual([
       { key: "so_received", enabled: true },
-      { key: "production_started", enabled: false },
       { key: "delivery_scheduled", enabled: true },
-      { key: "delivery_changed", enabled: true },
+      { key: "delivery_changed", enabled: false },
       { key: "delivery_departed", enabled: true },
     ]);
     expect(live).toHaveProperty("channel.mode");

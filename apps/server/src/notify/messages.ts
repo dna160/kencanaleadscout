@@ -15,7 +15,6 @@
 
 export const MILESTONES = [
   "so_received",
-  "production_started",
   "delivery_scheduled",
   "delivery_changed",
   "delivery_departed",
@@ -30,6 +29,12 @@ export interface ItemLine {
   /** e.g. "ALCOPAN GLOSSY WHITE 4mm / 0.21" */
   label: string;
   qty: number;
+  /**
+   * The same item split up, when known: the confirmation lists items as
+   * "{produk} {tebal} {warna}" (PRD §21.1). `spec` is "4mm / 0.21" (panel mm,
+   * then the aluminium skin), already corrected for the 1203 column names.
+   */
+  parts?: { product: string | null; spec: string; colour: string | null };
 }
 
 export interface OrderContext {
@@ -40,10 +45,6 @@ export interface OrderContext {
   items: ItemLine[];
   salesName: string | null;
   salesWa: string | null;
-  production: {
-    woNo: string | null;
-    items: ItemLine[];
-  } | null;
   delivery: {
     sjNo: string;
     /** YYYY-MM-DD, the DO's `sj_date` (scheduled date). */
@@ -60,7 +61,7 @@ export interface OrderContext {
  * Recorded on every ledger row (PRD §8). Bump when wording changes, so a
  * complaint about a message can be traced to the exact template that sent it.
  */
-export const TEMPLATE_VERSION = "2026-11-17.1";
+export const TEMPLATE_VERSION = "2026-11-23.1";
 
 export const FOOTER = "_Balas STOP untuk berhenti menerima notifikasi pesanan._";
 export const SIGNATURE = "— PT Kencana Panelindo";
@@ -83,6 +84,21 @@ export function formatDateId(iso: string): string {
 
 function fmtQty(n: number): string {
   return Number.isInteger(n) ? String(n) : n.toLocaleString("id-ID", { maximumFractionDigits: 2 });
+}
+
+/** "ALCOPAN 4mm / 0.21 GLOSSY WHITE": product, thickness, colour (PRD §21.1). */
+export function confirmLabel(i: ItemLine): string {
+  if (!i.parts) return i.label;
+  return [i.parts.product, i.parts.spec, i.parts.colour].filter((x) => x && x.trim()).join(" ") || i.label;
+}
+
+/** Numbered list for the confirmation: up to `max` lines, then "+N item lainnya". */
+export function formatItemsNumbered(items: ItemLine[], max = 15): string {
+  if (items.length === 0) return "(rincian barang menyusul)";
+  const shown = items.slice(0, max).map((i, n) => `${n + 1}. ${confirmLabel(i)}, ${fmtQty(i.qty)} lembar`);
+  const rest = items.length - max;
+  if (rest > 0) shown.push(`+${rest} item lainnya`);
+  return shown.join("\n");
 }
 
 /** Bullet list, at most `max` lines, then "dan N item lainnya". */
@@ -114,11 +130,6 @@ const INTRO =
 export interface RenderOptions {
   /** Prepend the one-time introduction (first message ever sent to this number). */
   introduce?: boolean;
-  /**
-   * Step 3 only: the SO's "received" message never went out because the DO
-   * arrived while it was still on hold, so this one says both (PRD §7 MV1 merge).
-   */
-  mergedReceived?: boolean;
   /**
    * delivery_changed only. `from`: the date the customer was last given (null
    * when no date was known); `to`: the new date (null = not yet known).
@@ -179,12 +190,10 @@ export function renderCustomerMessage(m: Milestone, ctx: OrderContext, opts: Ren
   if (opts.introduce) parts.push(INTRO);
 
   if (m === "so_received") {
-    parts.push(`Pesanan Anda nomor *${ctx.soNo}* telah kami terima dan sedang diproses.`);
-    parts.push(`Ringkasan:\n${formatItems(ctx.items)}`);
-  } else if (m === "production_started") {
-    const items = ctx.production?.items.length ? ctx.production.items : ctx.items;
-    parts.push(`Pesanan *${ctx.soNo}* saat ini sedang diproduksi di pabrik kami.`);
-    parts.push(`Item:\n${formatItems(items)}`);
+    // Sent on Finance approval (PRD §21.1). "Dikonfirmasi", never "dibayar":
+    // COD and Tempo orders have not paid yet.
+    parts.push(`Pesanan Anda nomor *${ctx.soNo}* sudah kami konfirmasi dan saat ini sedang kami proses.`);
+    parts.push(`Item yang dipesan:\n${formatItemsNumbered(ctx.items)}`);
     parts.push("Kami akan mengabari Anda kembali saat jadwal pengiriman sudah ditetapkan.");
   } else if (m === "delivery_changed") {
     const d = ctx.delivery;
@@ -203,9 +212,7 @@ export function renderCustomerMessage(m: Milestone, ctx: OrderContext, opts: Ren
   } else {
     const d = ctx.delivery;
     if (!d) throw new Error("delivery_scheduled needs ctx.delivery");
-    const lead = opts.mergedReceived
-      ? `Pesanan Anda nomor *${ctx.soNo}* telah kami terima dan`
-      : `Pesanan *${ctx.soNo}*`;
+    const lead = `Pesanan *${ctx.soNo}*`;
     if (d.pickup) {
       parts.push(`${lead} sudah siap diambil mulai ${formatDateId(d.sjDate)} (No. DO ${d.sjNo}).`);
       parts.push(`Barang:\n${formatItems(ctx.items)}`);
@@ -250,7 +257,7 @@ export function renderSalesCc(
  * Human-readable trigger rules, shown on /notify so the tester can see exactly
  * what fires each message in live mode. Source: docs/ontology/SELARAS-ONTOLOGY.md
  * (verified sweep 2026-11-10) and PRD §5.0 / §7. Hold defaults follow PRD
- * Appendix C (NOTIFY_HOLD_MV1_MIN / _MV2_MIN / _MV3_MIN = 10 / 0 / 0).
+ * Appendix C (NOTIFY_HOLD_MV1_MIN / _MV3_MIN = 10 / 0).
  */
 export const MILESTONE_INFO: Record<
   Milestone,
@@ -258,26 +265,14 @@ export const MILESTONE_INFO: Record<
 > = {
   so_received: {
     step: 1,
-    label: "Pesanan diterima",
-    labelEn: "SO received",
+    label: "Pesanan dikonfirmasi",
+    labelEn: "SO confirmed",
     trigger:
-      "A new SO header appears in Selaras (tbl_1202_SOSalesOrderNID, keyed on po_no) and is not deleted or cancelled. Detected by the 60 s fast poll (or a Selaras webhook once available).",
-    hold: "10 minutes (configurable to 0). Absorbs SOs deleted or edited right after entry. If a DO for the SO is pending at release, this merges with step 3.",
-    coverage: "Every SO (~1,300/month). Marketplace SOs (tbl_1368) and related parties are excluded.",
+      "Finance approves the SO (tbl_1202 approval_new = Approved), or a live Delivery Order appears first while approval is still Waiting (164 CBD SOs shipped unapproved in the sweep). Whichever comes first; once per SO.",
+    hold: "10 minutes (configurable to 0). The step-3 message for the same SO always waits until this one has gone out (+60 s).",
+    coverage: "Every non-excluded SO created after the switch-over (2026-11-23). SOs already told under the old 'diterima' trigger are not told again.",
     notes:
-      "No approval or payment logic in the MVP; 'diproses' stays true even while Finance approval is still Waiting.",
-  },
-  production_started: {
-    step: 2,
-    label: "Mulai produksi",
-    labelEn: "Production started",
-    trigger:
-      "A Request Produksi row (tbl_1236) with so_ms = 'SO' and so_no = this SO. The WO number comes from wo_no.",
-    hold: "None by default (configurable).",
-    coverage:
-      "Only make-to-order SOs, ~4% of SOs (109 of 2,636 in 60 days). Stock-served orders skip this step.",
-    notes:
-      "Do not use approval_factory_manager / status_request (always 'Waiting'). Optional follow-up later: tbl_1190 status_automatic = Done.",
+      "CBD, COD and Tempo alike. Wording says 'dikonfirmasi', never 'dibayar': payment status lives in Accurate, not Selaras.",
   },
   delivery_scheduled: {
     step: 3,
@@ -327,12 +322,11 @@ export function sampleContext(today: Date, salesName: string | null, salesWa: st
     customerName: "TOKO CONTOH JAYA",
     recipientName: "Budi",
     items: [
-      { label: "ALCOPAN GLOSSY WHITE 4mm / 0.21", qty: 10 },
-      { label: "TAJIMA PRIME LIGHT SILVER 3mm / 0.10", qty: 25 },
+      { label: "ALCOPAN GLOSSY WHITE 4mm / 0.21", qty: 10, parts: { product: "ALCOPAN", spec: "4mm / 0.21", colour: "GLOSSY WHITE" } },
+      { label: "TAJIMA PRIME LIGHT SILVER 3mm / 0.10", qty: 25, parts: { product: "TAJIMA PRIME", spec: "3mm / 0.10", colour: "LIGHT SILVER" } },
     ],
     salesName,
     salesWa,
-    production: { woNo: `WO.${yy}/UJI`, items: [{ label: "ALCOPAN GLOSSY WHITE 4mm / 0.21", qty: 10 }] },
     delivery: { sjNo: `KP/DO-UJI/${mm}/${yy}`, sjDate: ymd(tomorrow), pickup: false, address: null, partial: false },
     source: "sample",
   };

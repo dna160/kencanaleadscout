@@ -25,7 +25,6 @@ import {
   type EventSource,
   type HeaderFacts,
   type LateFacts,
-  type RequestFacts,
 } from "./derive.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -34,6 +33,15 @@ type AnySql = any;
 export interface StoreOptions {
   horizonDays: number;
   cancelledStatuses: readonly string[];
+  /** Switch-over to approval-based confirmations; read from order_event_state when absent. */
+  confirmedSince?: Date | null;
+}
+
+/** The stored switch-over instant (PRD §21.1), unless the caller fixed one. */
+async function withBaseline(db: AnySql, opts: StoreOptions): Promise<StoreOptions> {
+  if (opts.confirmedSince !== undefined) return opts;
+  const [r] = await db<{ confirmed_since: Date | null }[]>`select confirmed_since from order_event_state where id = 1`;
+  return { ...opts, confirmedSince: r?.confirmed_since ?? null };
 }
 
 export function defaultStoreOptions(): StoreOptions {
@@ -70,13 +78,19 @@ export async function insertEvents(db: AnySql, drafts: readonly EventDraft[], so
 
 const HEADER_COLS = `
   id, po_no, to_char(po_date, 'YYYY-MM-DD') as po_date, status_order, customer_name_id, customer_name_text,
-  customer_final_id, sales_name_id, sales_name_text, top_limit, erp_created_at`;
-const REQUEST_COLS = `
-  id, so_no, so_ms, wo_no, no_request, to_char(tanggal_request, 'YYYY-MM-DD') as tanggal_request,
-  erp_created_at, deleted_at`;
+  customer_final_id, sales_name_id, sales_name_text, top_limit, approval_new, erp_created_at, erp_updated_at`;
+// The DO's own columns, plus its SO header's status and creation time (for the
+// DO-first confirmation, PRD §21.1 b).
 const DO_COLS = `
-  id, so_no, no_sj, to_char(sj_date, 'YYYY-MM-DD') as sj_date, do_created_at, cara_kirim, cancel_order,
-  erp_created_at, erp_updated_at, deleted_at`;
+  d.id, d.so_no, d.no_sj, to_char(d.sj_date, 'YYYY-MM-DD') as sj_date, d.do_created_at, d.cara_kirim, d.cancel_order,
+  d.erp_created_at, d.erp_updated_at, d.deleted_at,
+  (h.po_no is not null) as so_found, h.status_order as so_status,
+  coalesce(h.erp_created_at, h.po_date::timestamptz) as so_created_at`;
+const DO_FROM = `
+  erp_do_header d
+  left join lateral (
+    select po_no, status_order, erp_created_at, po_date from erp_so_header
+     where po_no = d.so_no order by erp_updated_at desc nulls last, id desc limit 1) h on true`;
 
 /**
  * Rows created inside the horizon. A row with no creation date at all is kept:
@@ -84,10 +98,8 @@ const DO_COLS = `
  */
 const HEADER_FRESH = `(coalesce(erp_created_at, po_date::timestamptz) is null
                       or coalesce(erp_created_at, po_date::timestamptz) >= now() - make_interval(days => $HORIZON))`;
-const REQUEST_FRESH = `(coalesce(erp_created_at, tanggal_request::timestamptz) is null
-                       or coalesce(erp_created_at, tanggal_request::timestamptz) >= now() - make_interval(days => $HORIZON))`;
-const DO_FRESH = `(coalesce(do_created_at, erp_created_at, sj_date::timestamptz) is null
-                  or coalesce(do_created_at, erp_created_at, sj_date::timestamptz) >= now() - make_interval(days => $HORIZON))`;
+const DO_FRESH = `(coalesce(d.do_created_at, d.erp_created_at, d.sj_date::timestamptz) is null
+                  or coalesce(d.do_created_at, d.erp_created_at, d.sj_date::timestamptz) >= now() - make_interval(days => $HORIZON))`;
 
 function fresh(predicate: string, horizonDays: number): string {
   // Validated integer, so splicing is safe (the same rule migrateErpStock uses).
@@ -103,15 +115,9 @@ async function loadByIds(db: AnySql, touched: OrderTouched, opts: StoreOptions):
       [touched.so_header],
     ) as HeaderFacts[];
   }
-  if (touched.request_produksi.length) {
-    input.requests = await db.unsafe(
-      `select ${REQUEST_COLS} from erp_request_produksi where id = any($1) and ${fresh(REQUEST_FRESH, opts.horizonDays)}`,
-      [touched.request_produksi],
-    ) as RequestFacts[];
-  }
   if (touched.do_header.length) {
     input.dos = await db.unsafe(
-      `select ${DO_COLS} from erp_do_header where id = any($1) and ${fresh(DO_FRESH, opts.horizonDays)}`,
+      `select ${DO_COLS} from ${DO_FROM} where d.id = any($1) and ${fresh(DO_FRESH, opts.horizonDays)}`,
       [touched.do_header],
     ) as DoFacts[];
   }
@@ -123,8 +129,9 @@ export async function deriveForTouched(
   db: AnySql,
   touched: OrderTouched,
   source: EventSource = "erp-mirror",
-  opts: StoreOptions = defaultStoreOptions(),
+  base: StoreOptions = defaultStoreOptions(),
 ): Promise<InsertedEvent[]> {
+  const opts = await withBaseline(db, base);
   const input = await loadByIds(db, touched, opts);
   return insertEvents(db, deriveEvents(input, opts), source);
 }
@@ -140,7 +147,8 @@ export interface SweepResult {
   sweptUntil: Date;
 }
 
-export async function sweepEvents(db: AnySql, opts: StoreOptions = defaultStoreOptions()): Promise<SweepResult> {
+export async function sweepEvents(db: AnySql, base: StoreOptions = defaultStoreOptions()): Promise<SweepResult> {
+  const opts = await withBaseline(db, base);
   const [state] = await db<{ swept_until: Date | null; now: Date }[]>`
     select swept_until, now() as now from order_event_state where id = 1
   `;
@@ -154,20 +162,16 @@ export async function sweepEvents(db: AnySql, opts: StoreOptions = defaultStoreO
     `select ${HEADER_COLS} from erp_so_header where synced_at >= $1 and ${fresh(HEADER_FRESH, opts.horizonDays)}`,
     [since],
   )) as HeaderFacts[];
-  const requests = (await db.unsafe(
-    `select ${REQUEST_COLS} from erp_request_produksi where synced_at >= $1 and ${fresh(REQUEST_FRESH, opts.horizonDays)}`,
-    [since],
-  )) as RequestFacts[];
   const dos = (await db.unsafe(
-    `select ${DO_COLS} from erp_do_header where synced_at >= $1 and ${fresh(DO_FRESH, opts.horizonDays)}`,
+    `select ${DO_COLS} from ${DO_FROM} where d.synced_at >= $1 and ${fresh(DO_FRESH, opts.horizonDays)}`,
     [since],
   )) as DoFacts[];
 
-  const inserted = await insertEvents(db, deriveEvents({ headers, requests, dos }, opts), "erp-mirror");
+  const inserted = await insertEvents(db, deriveEvents({ headers, dos }, opts), "erp-mirror");
   // A deleted SO header is removed from the mirror, so it can't be swept; that
-  // is fine — so.created is never retracted, and WP-4 rechecks before sending.
+  // is fine — so.confirmed is never retracted, and WP-4 rechecks before sending.
   await db`update order_event_state set swept_until = ${startedAt} where id = 1`;
-  return { scanned: headers.length + requests.length + dos.length, inserted, sweptUntil: startedAt };
+  return { scanned: headers.length + dos.length, inserted, sweptUntil: startedAt };
 }
 
 // ── so.late ──────────────────────────────────────────────────────────────────
