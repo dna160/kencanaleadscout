@@ -83,7 +83,7 @@ const HEADER_COLS = `
 // DO-first confirmation, PRD §21.1 b).
 const DO_COLS = `
   d.id, d.so_no, d.no_sj, to_char(d.sj_date, 'YYYY-MM-DD') as sj_date, d.do_created_at, d.cara_kirim, d.cancel_order,
-  d.erp_created_at, d.erp_updated_at, d.deleted_at,
+  d.erp_created_at, d.erp_updated_at, d.deleted_at, d.driver, d.no_kendaraan, d.delivery_date,
   (h.po_no is not null) as so_found, h.status_order as so_status,
   coalesce(h.erp_created_at, h.po_date::timestamptz) as so_created_at`;
 const DO_FROM = `

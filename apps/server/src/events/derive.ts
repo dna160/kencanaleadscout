@@ -10,6 +10,8 @@
  *                         comes first, SOs from before the switch-over excluded
  *   do.created            1082 row, not cancelled, not deleted           key do.created:{no_sj|id}
  *   do.cancelled          1082 row with cancel_order = Yes, or deleted   key do.cancelled:{no_sj|id}
+ *   do.departed           live 'di Antar' DO whose no_kendaraan, driver   key do.departed:{do id}
+ *                         or delivery_date got filled (PRD §21.3)
  *   so.late               live SO lines whose ETA has passed             key so.late:{po_no}:{earliest eta}
  *
  * Production (1236) is no longer an event (PRD §21.2); the table stays mirrored.
@@ -27,7 +29,7 @@ export type EventType =
   | "do.cancelled"
   | "so.late"
   | "do.rescheduled" // staff mark or Selaras sj_date edit (notify/dispatch.ts)
-  | "do.departed"; // staff mark (notify/dispatch.ts)
+  | "do.departed"; // XTable departure fields (here), or an old staff mark (before 2026-11-23)
 export type EventSource = "erp-mirror" | "erp-webhook" | "manual";
 
 export interface EventDraft {
@@ -69,6 +71,10 @@ export interface DoFacts {
   deleted_at: Date | null;
   /** The DO's SO header, when mirrored (for the DO-first confirmation, §21.1 b). */
   so_found?: boolean | null;
+  /** Filled by the warehouse as the truck leaves (PRD §21.3). */
+  driver?: string | null;
+  no_kendaraan?: string | null;
+  delivery_date?: Date | null;
   so_status?: string | null;
   so_created_at?: Date | null;
 }
@@ -197,7 +203,42 @@ export function deriveFromDo(d: DoFacts, opts: DeriveOptions = { cancelledStatus
       payload,
     },
   );
+  const departure = deriveDeparture(d, soNo);
+  if (departure) out.push(departure);
   return out;
+}
+
+const filled = (v: string | null | undefined): boolean => Boolean(v && v.trim() && v.trim() !== "-");
+
+/**
+ * Step 2 "sedang dikirim" (PRD §21.3): the warehouse fills the vehicle, the
+ * driver or the delivery date on a live delivery DO as the truck leaves. Once
+ * per DO (later edits keep the same key). Filled after the delivery day =
+ * a backfill: recorded, never sent. Pickups never depart.
+ */
+export function deriveDeparture(d: DoFacts, soNo: string): EventDraft | null {
+  if (isPickup(d.cara_kirim)) return null;
+  if (!filled(d.no_kendaraan) && !filled(d.driver) && !d.delivery_date) return null;
+  // The mirror's updated_at holds WIB wall-clock digits, so its UTC date is the WIB day.
+  const seenOn = (d.erp_updated_at ?? d.erp_created_at)?.toISOString().slice(0, 10) ?? null;
+  return {
+    event_key: `do.departed:${d.id}`,
+    event_type: "do.departed",
+    so_no: soNo,
+    subject_ref: d.no_sj?.trim() || `id-${d.id}`,
+    occurred_at: d.erp_updated_at,
+    payload: {
+      do_id: d.id,
+      no_sj: d.no_sj,
+      sj_date: d.sj_date,
+      no_kendaraan: filled(d.no_kendaraan) ? d.no_kendaraan!.trim() : null,
+      driver: filled(d.driver) ? d.driver!.trim() : null,
+      delivery_date: d.delivery_date ? d.delivery_date.toISOString() : null,
+      source: "xtable",
+      marked_on: seenOn,
+      backfill: Boolean(seenOn && d.sj_date && seenOn > d.sj_date),
+    },
+  };
 }
 
 export function deriveLate(l: LateFacts): EventDraft {

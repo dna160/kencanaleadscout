@@ -1,16 +1,14 @@
 /**
- * Kabar Pesanan — dispatch marks: "barang dikirim" and "jadwal berubah" (PRD §20).
+ * Kabar Pesanan — the Pengiriman tab: schedule changes (PRD §20, §21.3, §21.5).
  *
- * The ERP records when a surat jalan is CREATED (the day before delivery, 90%)
- * but never when the truck actually leaves or when a delivery slips on the day:
- * delivery_date, driver and vehicle are always empty, print_status is set the
- * afternoon before (and never on a third of DOs), and sj_date was not edited
- * once across 3,000 tracked DOs. So staff mark each delivery on the Pengiriman
- * tab, and every mark becomes an order event the planner turns into a message:
+ * "Sedang dikirim" comes from XTable since 2026-11-23: the warehouse fills the
+ * vehicle / driver on the DO as the truck leaves (events/derive.ts,
+ * do.departed). The staff "Berangkat" button of §20 is gone; departures it
+ * recorded before then stay as history (`departed_on`, marks with action
+ * 'departed'). What staff still mark here is a change of date:
  *
- *   Berangkat  → do.departed    → delivery_departed  ("sedang dalam perjalanan")
- *   Ditunda    → do.rescheduled → delivery_changed   ("tertunda", new date or TBD)
- *   Selaras edits sj_date       → do.rescheduled (source selaras), same message
+ *   Tunda                 → do.rescheduled → delivery_changed ("tertunda", new date or TBD)
+ *   Selaras edits sj_date → do.rescheduled (source selaras), same message
  *
  * `notify_dispatch` holds the current state per DO (the date the customer was
  * last given, departed or not); `notify_dispatch_marks` is the history, and
@@ -25,6 +23,10 @@ import { wibDate } from "./rules.js";
 type AnySql = Sql | any;
 
 const SENT = ["sent", "queued", "stubbed"];
+
+/** The truck has left according to XTable (PRD §21.3), on an erp_do_header row. */
+export const DEPARTED_SQL =
+  "coalesce(nullif(trim(no_kendaraan), ''), nullif(trim(driver), '')) is not null or delivery_date is not null";
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
 export class DispatchError extends Error {
@@ -49,7 +51,7 @@ export interface DispatchState {
 
 export interface MarkInput {
   doId: string;
-  action: "departed" | "rescheduled";
+  action: "rescheduled";
   /** rescheduled: the new date, or null when it is not known yet (staff only). */
   toDate?: string | null;
   source: "staff" | "selaras";
@@ -80,19 +82,20 @@ const STATE_COLS = `do_id, so_no, to_char(sched_date, 'YYYY-MM-DD') as sched_dat
 export async function markDispatch(db: AnySql, input: MarkInput): Promise<MarkResult> {
   const { doId, action, source, now } = input;
   const today = wibDate(now);
-  if (action === "rescheduled" && input.toDate != null && !ISO.test(input.toDate)) {
+  // "Berangkat" was a staff mark until 2026-11-23; departure now comes from XTable (§21.3).
+  if (action !== "rescheduled") throw new DispatchError("Tanda Berangkat sudah tidak dipakai: isi No. kendaraan / sopir di XTable.");
+  if (input.toDate != null && !ISO.test(input.toDate)) {
     throw new DispatchError("Tanggal baru harus berformat YYYY-MM-DD.");
   }
   return db.begin(async (tx: AnySql) => {
-    const [d] = await tx<{ id: string; so_no: string | null; no_sj: string | null; sj_date: string | null; cara_kirim: string | null; live: boolean }[]>`
-      select id, so_no, no_sj, to_char(sj_date, 'YYYY-MM-DD') as sj_date, cara_kirim,
-             (deleted_at is null and lower(coalesce(cancel_order, '')) <> 'yes') as live
+    const [d] = await tx<{ id: string; so_no: string | null; no_sj: string | null; sj_date: string | null; live: boolean; left: boolean }[]>`
+      select id, so_no, no_sj, to_char(sj_date, 'YYYY-MM-DD') as sj_date,
+             (deleted_at is null and lower(coalesce(cancel_order, '')) <> 'yes') as live,
+             (${tx.unsafe(DEPARTED_SQL)}) as left
         from erp_do_header where id = ${doId}
     `;
     if (!d) throw new DispatchError("Surat jalan tidak ditemukan.", 404);
     if (!d.live) throw new DispatchError(`${d.no_sj ?? doId} sudah dibatalkan atau dihapus di Selaras.`, 409);
-    const pickup = /ambil/i.test(d.cara_kirim ?? "");
-    if (action === "departed" && pickup) throw new DispatchError(`${d.no_sj ?? doId} diambil sendiri oleh pelanggan, bukan dikirim.`);
 
     const baseline = source === "selaras" ? (input.baseline ?? input.toDate ?? d.sj_date) : d.sj_date;
     const inserted = await tx`
@@ -112,28 +115,13 @@ export async function markDispatch(db: AnySql, input: MarkInput): Promise<MarkRe
     let notify = true;
     let note: string | null = null;
 
-    if (action === "departed") {
-      if (st.departed_on) throw new DispatchError(`${d.no_sj ?? doId} sudah ditandai berangkat (${st.departed_on}).`, 409);
-      if (!st.tbd && st.sched_date && st.sched_date > today) {
-        throw new DispatchError(`${d.no_sj ?? doId} dijadwalkan ${st.sched_date}, belum hari ini. Pakai "Tunda" bila jadwalnya berubah.`, 409);
-      }
-      // Marked late (the delivery day has passed): recorded, but "sedang dalam
-      // perjalanan hari ini" would no longer be true, so no message.
-      if (!st.tbd && st.sched_date && st.sched_date < today) {
-        notify = false;
-        note = "Dicatat saja: hari pengirimannya sudah lewat, pelanggan tidak dikabari.";
-      }
-      await tx`
-        update notify_dispatch set departed_on = ${today}, updated_by = ${input.by}, updated_at = now()
-         where do_id = ${doId}
-      `;
-    } else {
-      if (st.departed_on) {
+    {
+      if (st.departed_on || d.left) {
         if (source === "selaras") {
           await tx`update notify_dispatch set erp_seen_date = ${input.toDate ?? null} where do_id = ${doId}`;
           return { doId, markId: null, notify: false, note: "already departed" };
         }
-        throw new DispatchError(`${d.no_sj ?? doId} sudah ditandai berangkat; jadwalnya tidak bisa diubah lagi.`, 409);
+        throw new DispatchError(`${d.no_sj ?? doId} sudah berangkat; jadwalnya tidak bisa diubah lagi.`, 409);
       }
       to = input.toDate ?? null;
       if (to === null && source === "selaras") throw new DispatchError("Selaras edit without a date.", 500);
@@ -163,7 +151,7 @@ export async function markDispatch(db: AnySql, input: MarkInput): Promise<MarkRe
     const markId = mark!.id;
     let eventId: string | null = null;
     if (notify && d.so_no) {
-      const type = action === "departed" ? "do.departed" : "do.rescheduled";
+      const type = "do.rescheduled";
       const [ev] = await insertEvents(
         tx,
         [
@@ -281,6 +269,10 @@ export interface DispatchRow {
   eff_date: string | null;
   tbd: boolean;
   departed_on: string | null;
+  vehicle: string | null;
+  driver: string | null;
+  dep_status: string | null;
+  dep_reason: string | null;
   section: "today" | "overdue" | "tbd" | "upcoming";
   last_action: string | null;
   last_source: string | null;
@@ -304,8 +296,17 @@ export async function listDispatch(db: AnySql, date: string): Promise<DispatchRo
       select d.id as do_id, d.no_sj, d.so_no, d.sj_date,
              coalesce(s.tbd, false) as tbd,
              case when s.do_id is null then d.sj_date when s.tbd then null else s.sched_date end as eff_date,
-             s.departed_on, s.last_mark_id
+             -- XTable departure (§21.3): the WIB day the fields were seen (mirror stamps are WIB digits).
+             coalesce(s.departed_on,
+                      case when coalesce(nullif(trim(d.no_kendaraan), ''), nullif(trim(d.driver), '')) is not null
+                                or d.delivery_date is not null
+                           then coalesce(dep.seen_on, (d.erp_updated_at at time zone 'UTC')::date) end) as departed_on,
+             nullif(trim(d.no_kendaraan), '') as vehicle, nullif(trim(d.driver), '') as driver,
+             s.last_mark_id
         from erp_do_header d
+        left join lateral (
+          select (e.payload->>'marked_on')::date as seen_on from order_events e
+           where e.event_key = 'do.departed:' || d.id) dep on true
         left join notify_dispatch s on s.do_id = d.id
        where d.deleted_at is null and lower(coalesce(d.cancel_order, '')) <> 'yes'
          and coalesce(d.cara_kirim, '') !~* 'ambil'
@@ -322,7 +323,8 @@ export async function listDispatch(db: AnySql, date: string): Promise<DispatchRo
     select sec.do_id, sec.no_sj, sec.so_no, h.customer_name_text as customer, h.alamat_kirim as address,
            h.sales_name_text as sales, to_char(sec.sj_date, 'YYYY-MM-DD') as sj_date,
            to_char(sec.eff_date, 'YYYY-MM-DD') as eff_date, sec.tbd,
-           to_char(sec.departed_on, 'YYYY-MM-DD') as departed_on, sec.section,
+           to_char(sec.departed_on, 'YYYY-MM-DD') as departed_on, sec.vehicle, sec.driver, sec.section,
+           dmsg.status as dep_status, dmsg.cancel_reason as dep_reason,
            m.action as last_action, m.source as last_source, to_char(m.to_date, 'YYYY-MM-DD') as last_to,
            m.marked_by as last_by, m.marked_at as last_at, (m.event_id is not null) as last_has_event,
            msg.status as msg_status, msg.cancel_reason as msg_reason, told.status as told_status
@@ -340,13 +342,18 @@ export async function listDispatch(db: AnySql, date: string): Promise<DispatchRo
          where subject_ref = sec.do_id and milestone = 'delivery_scheduled' and recipient_role = 'customer'
            and mode in ('live', 'shadow')
          order by id desc limit 1) told on true
+      left join lateral (
+        select status, cancel_reason from notify_ledger
+         where subject_ref = sec.do_id and milestone = 'delivery_departed' and recipient_role = 'customer'
+           and mode in ('live', 'shadow')
+         order by id desc limit 1) dmsg on true
      where sec.section is not null
      order by case sec.section when 'today' then 0 when 'overdue' then 1 when 'tbd' then 2 else 3 end,
               sec.departed_on is not null, h.customer_name_text, sec.no_sj
   `;
 }
 
-/** Today's deliveries nobody has marked: what the afternoon reminder lists. */
+/** Today's deliveries with no departure in XTable and no Tunda: what the 13:00 reminder lists. */
 export interface UnmarkedRow {
   do_id: string;
   no_sj: string | null;
@@ -368,6 +375,7 @@ export async function unmarkedToday(db: AnySql, today: string): Promise<Unmarked
        and coalesce(d.cara_kirim, '') !~* 'ambil' and d.so_no is not null
        and (case when s.do_id is null then d.sj_date when s.tbd then null else s.sched_date end) = ${today}::date
        and s.departed_on is null
+       and coalesce(nullif(trim(d.no_kendaraan), ''), nullif(trim(d.driver), '')) is null and d.delivery_date is null
      order by h.customer_name_text, d.no_sj
   `;
 }

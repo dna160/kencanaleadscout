@@ -140,6 +140,7 @@
   .ship-row .acts{grid-column:2;display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
   .ship-row form{grid-column:2;display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px;padding:10px;border:1px dashed var(--line);border-radius:10px;background:#fafbfc}
   .ship-row form input[type=date]{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:10px;min-height:40px}
+  select.sel{font:inherit;padding:10px 12px;border:1px solid var(--line);border-radius:10px;min-height:var(--tap);background:#fff}
   .chip.ok{background:var(--ok-bg);color:var(--ok-ink)}
   .chip.warn{background:var(--warn-bg);color:var(--warn-ink)}
   .chip.bad{background:var(--neg-bg);color:var(--neg-ink)}
@@ -275,7 +276,7 @@
         <button class="btn ghost sm" id="shipReload" type="button">Muat ulang</button>
       </h2>
       <div class="body">
-        <p style="margin:0 0 6px;font-size:13px;line-height:1.5">Setiap pagi, tandai setiap surat jalan: <b>Berangkat</b> saat barang keluar, atau <b>Tunda</b> bila jadwalnya bergeser. Pelanggan langsung dikabari. Surat jalan yang <b>tidak ditandai tidak mengirim apa pun</b> ke pelanggan.</p>
+        <p style="margin:0 0 6px;font-size:13px;line-height:1.5"><b>1 · Dijadwalkan</b> terkirim saat DO dibuat. <b>2 · Sedang dikirim</b> terkirim otomatis saat gudang mengisi <b>No. kendaraan / sopir</b> pada DO di XTable. Bila jadwal bergeser, ubah tanggal DO di XTable, atau tandai <b>Tunda</b> di sini.</p>
         <p class="muted" id="shipNote" style="margin:0"></p>
         <div class="kv" id="shipKv" style="margin-top:10px"></div>
       </div>
@@ -400,18 +401,33 @@
       <div class="body" id="chanBody"></div>
     </div>
     <div class="card">
-      <h2>Pengingat pengiriman</h2>
-      <div class="body">
-        <div class="row">
-          <label class="fld" style="flex:0 0 160px;min-width:140px">Jam pengingat (WIB)
-            <select id="remHour" style="font:inherit;padding:10px 12px;border:1px solid var(--line);border-radius:10px;min-height:var(--tap);background:#fff"></select>
-          </label>
-          <label class="fld">Nomor logistik / admin (opsional, pisahkan dengan koma)
-            <input id="remNumbers" type="text" inputmode="tel" autocomplete="off" placeholder="0812-…, 0813-…" />
-          </label>
-          <button class="btn primary" id="saveRem" type="button">Simpan</button>
+      <h2>Pengiriman &amp; balasan</h2>
+      <div class="body" id="dlvCfg">
+        <p style="margin:0 0 6px;font-weight:700;font-size:13px">Sumber "Sedang dikirim"</p>
+        <label class="chk"><input type="checkbox" id="cfgXtable" /> Dari XTable: saat gudang mengisi No. kendaraan / sopir pada DO</label>
+        <div class="row" style="align-items:center">
+          <label class="chk" style="flex:1"><input type="checkbox" id="cfgMorning" /> Sementara: kabari "dijadwalkan dikirim hari ini" pada pagi hari pengiriman</label>
+          <label class="fld" style="flex:0 0 120px;min-width:110px">Jam<select id="cfgMorningHour" class="sel"></select></label>
         </div>
-        <p class="muted" style="margin:8px 0 0">Sekali sehari pada jam ini, surat jalan hari ini yang belum ditandai <b>Berangkat</b> atau <b>Tunda</b> dikirim ke sales masing-masing dan ke nomor di atas. Pelanggan tidak menerima apa pun dari pengingat ini.</p>
+        <p style="margin:14px 0 6px;font-weight:700;font-size:13px">Kontak</p>
+        <div class="grid">
+          <label class="fld">Sales Admin<input id="cfgAdmin" type="tel" inputmode="tel" autocomplete="off" placeholder="0812-…" /><small>Cadangan bila sales belum punya nomor; salinan permintaan ubah jadwal; pengingat.</small></label>
+          <label class="fld">Gudang<input id="cfgWarehouse" type="tel" inputmode="tel" autocomplete="off" placeholder="0812-…" /><small>Pengingat bila truk belum tercatat berangkat.</small></label>
+          <label class="fld">Eskalasi komplain (opsional)<input id="cfgEscalation" type="tel" inputmode="tel" autocomplete="off" placeholder="0812-…" /><small>Mis. supervisor sales.</small></label>
+        </div>
+        <p style="margin:14px 0 6px;font-weight:700;font-size:13px">Pengingat</p>
+        <div class="row">
+          <label class="fld" style="flex:0 0 160px;min-width:140px">Jam pengingat (WIB)<select id="remHour" class="sel"></select></label>
+          <label class="fld">Nomor tambahan (opsional, pisahkan dengan koma)<input id="remNumbers" type="text" inputmode="tel" autocomplete="off" placeholder="0812-…, 0813-…" /></label>
+        </div>
+        <p class="muted" style="margin:4px 0 0">Sekali sehari pada jam ini, surat jalan hari ini yang belum tercatat berangkat (dan tidak ditunda) dikirim ke Sales Admin, gudang, dan nomor tambahan. Pelanggan tidak menerima apa pun dari pengingat ini.</p>
+        <p style="margin:14px 0 6px;font-weight:700;font-size:13px">Balasan pelanggan</p>
+        <div class="row" style="align-items:center">
+          <label class="chk" style="flex:1"><input type="checkbox" id="cfgAgent" /> Agen memilah balasan (komplain, ubah jadwal, …) dan meneruskannya ke sales dengan ringkasan</label>
+          <label class="fld" style="flex:0 0 140px;min-width:120px">Tunggu (detik)<input id="cfgDebounce" type="text" inputmode="numeric" /></label>
+        </div>
+        <p class="muted" style="margin:4px 0 0" id="cfgAgentNote">Mati = balasan diteruskan apa adanya, seperti sebelumnya.</p>
+        <div style="margin-top:12px"><button class="btn primary" id="saveRem" type="button">Simpan</button></div>
       </div>
     </div>
     <div class="card">
@@ -626,8 +642,9 @@
 
   // ── WP-6: Live ─────────────────────────────────────────────────────────
   const fmtTime = (v) => v ? new Date(v).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" }) : "–";
-  const STEP = { so_received: "Pesanan dikonfirmasi", production_started: "Mulai produksi (lama)", delivery_scheduled: "Pengiriman dijadwalkan",
-    delivery_changed: "Jadwal kirim berubah", delivery_departed: "Barang dikirim", dispatch_reminder: "Pengingat pengiriman (ke sales)",
+  const STEP = { so_received: "Pesanan dikonfirmasi", production_started: "Mulai produksi (lama)", delivery_scheduled: "1 · Dijadwalkan",
+    delivery_today: "Dikirim hari ini (08:00)", delivery_changed: "Jadwal berubah", delivery_departed: "2 · Sedang dikirim",
+    dispatch_reminder: "Pengingat pengiriman (ke admin)",
     do_cancelled_notice: "DO dibatalkan (ke sales)", stop_ack: "Konfirmasi STOP", start_ack: "Konfirmasi MULAI",
     reply_forward: "Teruskan balasan", auto_reply: "Balasan otomatis", manual_reply: "Balasan admin" };
   const MODE_TEXT = { off: "MATI — tidak ada pesan", shadow: "SHADOW — hanya ke sales", on: "LIVE — ke pelanggan + CC sales" };
@@ -1091,38 +1108,44 @@
   let shipTimer = null;
   const SENT_ST = ["sent", "queued", "stubbed"];
 
-  function msgLine(r) {
-    if (!r.last_action) {
-      return r.told_status && SENT_ST.includes(r.told_status) ? "Jadwal sudah dikabarkan ke pelanggan." : "";
-    }
-    if (SHIP.mode === "off") return "Mode MATI: tanda dicatat, tidak ada pesan.";
-    if (!r.last_has_event) return "Dicatat saja (hari pengirimannya sudah lewat), pelanggan tidak dikabari.";
-    const st = r.msg_status;
+  function msgStatus(st, reason) {
     const who = SHIP.mode === "shadow" ? "sales (shadow)" : "pelanggan";
+    if (SHIP.mode === "off") return "Mode MATI: tidak ada pesan.";
     if (!st || st === "pending" || st === "sending") return `Pesan ke ${who} menunggu dikirim…`;
     if (SENT_ST.includes(st)) return `Pesan terkirim ke ${who}.`;
     if (st === "held") return "Pesan ditahan untuk ditinjau (Antrian).";
     if (st === "unreachable") return "Pelanggan tidak punya nomor WhatsApp di SO.";
-    return `Pesan tidak dikirim: ${reasonText[r.msg_reason] || r.msg_reason || st}.`;
+    return `Pesan tidak dikirim: ${reasonText[reason] || reason || st}.`;
+  }
+
+  function msgLine(r) {
+    if (r.departed_on && (r.vehicle || r.driver || r.dep_status)) return "Sedang dikirim — " + msgStatus(r.dep_status, r.dep_reason);
+    if (r.last_action === "rescheduled") {
+      if (!r.last_has_event) return "Dicatat saja, pelanggan tidak dikabari.";
+      return "Jadwal berubah — " + msgStatus(r.msg_status, r.msg_reason);
+    }
+    return r.told_status && SENT_ST.includes(r.told_status) ? "Jadwal sudah dikabarkan ke pelanggan." : "";
   }
 
   function statusChip(r) {
-    if (r.departed_on) return `<span class="chip ok">Berangkat${r.last_by ? " · " + esc(r.last_by) : ""}</span>`;
+    if (r.departed_on) {
+      const truck = [r.vehicle, r.driver].filter(Boolean).join(" · ");
+      return `<span class="chip ok">2 · Sedang dikirim${truck ? " · " + esc(truck) : ""}</span>`;
+    }
     if (r.tbd) return '<span class="chip bad">Ditunda · tanggal belum pasti</span>';
-    if (r.section === "overdue") return `<span class="chip bad">Belum ditandai · ${esc(shipDay(r.eff_date))}</span>`;
+    if (r.section === "overdue") return `<span class="chip bad">Belum tercatat berangkat · ${esc(shipDay(r.eff_date))}</span>`;
     if (r.section === "upcoming") return '<span class="chip info">Besok</span>';
-    if (r.last_action === "rescheduled") return `<span class="chip warn">Dijadwalkan ulang${r.last_source === "selaras" ? " (Selaras)" : ""}</span>`;
-    return '<span class="chip warn">Belum ditandai</span>';
+    if (r.last_action === "rescheduled") return `<span class="chip warn">Jadwal berubah${r.last_source === "selaras" ? " (XTable)" : ""}</span>`;
+    return '<span class="chip warn">1 · Dijadwalkan · belum berangkat</span>';
   }
 
   function shipRow(r) {
-    const canDepart = !r.departed_on && (r.section === "today" || r.section === "overdue" || r.section === "tbd");
     const canDelay = !r.departed_on;
-    const canUndo = r.last_action && r.last_source === "staff" && !SENT_ST.includes(r.msg_status) && r.msg_status !== "sending";
-    const moved = r.sj_date && r.eff_date && r.sj_date !== r.eff_date ? ` · Selaras: ${esc(shipDay(r.sj_date))}` : "";
+    const canUndo = r.last_action === "rescheduled" && r.last_source === "staff" && !SENT_ST.includes(r.msg_status) && r.msg_status !== "sending";
+    const moved = r.sj_date && r.eff_date && r.sj_date !== r.eff_date ? ` · XTable: ${esc(shipDay(r.sj_date))}` : "";
     const line = msgLine(r);
     return `<div class="ship-row" data-do="${esc(r.do_id)}">
-      <div class="cb">${canDepart ? `<input type="checkbox" data-pick="${esc(r.do_id)}" aria-label="Pilih ${esc(r.no_sj)}" />` : ""}</div>
+      <div class="cb"></div>
       <div>
         <div class="top"><span class="sj">${esc(r.no_sj || r.do_id)} <span class="muted">· ${esc(r.so_no || "")}</span></span>${statusChip(r)}</div>
         <div class="sub"><b>${esc(r.customer || "–")}</b>${r.address ? " — " + esc(r.address) : ""}</div>
@@ -1130,7 +1153,6 @@
         ${line ? `<div class="sub muted">${esc(line)}</div>` : ""}
       </div>
       <div class="acts">
-        ${canDepart ? `<button class="btn primary sm" type="button" data-depart="${esc(r.do_id)}">Berangkat</button>` : ""}
         ${canDelay ? `<button class="btn ghost sm" type="button" data-delay="${esc(r.do_id)}">Tunda…</button>` : ""}
         ${canUndo ? `<button class="btn warn sm" type="button" data-undo="${esc(r.do_id)}">Batalkan tanda</button>` : ""}
       </div>
@@ -1149,7 +1171,7 @@
       const r = await api("/api/notify/dispatch/mark", { method: "POST", body: JSON.stringify({ doIds: ids, action, date }) });
       const bad = r.results.filter((x) => !x.ok);
       const notes = r.results.filter((x) => x.ok && x.note).map((x) => x.note);
-      toast(bad.length ? `${r.results.length - bad.length} berhasil, ${bad.length} gagal: ${bad[0].error}` : notes[0] || (action === "departed" ? "Ditandai berangkat." : "Jadwal disimpan."));
+      toast(bad.length ? `${r.results.length - bad.length} berhasil, ${bad.length} gagal: ${bad[0].error}` : notes[0] || "Jadwal disimpan.");
     } catch (e) { toast(e.message + tokenHint()); }
     loadShip();
   }
@@ -1185,45 +1207,35 @@
     const isToday = SHIP.date === SHIP.today;
     $("shipKv").innerHTML = `
       <div><div class="k">Jadwal ${isToday ? "hari ini" : esc(shipDay(SHIP.date))}</div><div class="v">${today.length}</div></div>
-      <div><div class="k">Berangkat</div><div class="v">${today.filter((r) => r.departed_on).length}</div></div>
-      <div><div class="k">Belum ditandai</div><div class="v">${open.length}</div></div>
+      <div><div class="k">Sedang dikirim</div><div class="v">${today.filter((r) => r.departed_on).length}</div></div>
+      <div><div class="k">Belum berangkat</div><div class="v">${open.length}</div></div>
       <div><div class="k">Ditunda, tanggal belum pasti</div><div class="v">${tbd.length}</div></div>`;
-    const rem = SHIP.remind;
-    $("shipNote").textContent = (SHIP.mode === "on" ? "Mode LIVE: setiap tanda langsung mengabari pelanggan (dan sales untuk penundaan)."
-      : SHIP.mode === "shadow" ? "Mode SHADOW: tanda dicatat; contoh pesannya hanya dikirim ke sales."
-      : "Mode MATI: tanda dicatat, tidak ada pesan yang dikirim.") +
-      (rem.hour >= 0 ? ` Pengingat untuk yang belum ditandai: pukul ${String(rem.hour).padStart(2, "0")}.00 WIB.` : " Pengingat dimatikan.") +
+    const st = SHIP.settings || {};
+    const hh = (h) => String(h).padStart(2, "0") + ".00";
+    $("shipNote").textContent = (SHIP.mode === "on" ? "Mode LIVE: pelanggan dikabari (sales mendapat salinan untuk perubahan jadwal)."
+      : SHIP.mode === "shadow" ? "Mode SHADOW: contoh pesannya hanya dikirim ke sales."
+      : "Mode MATI: tidak ada pesan yang dikirim.") +
+      (st.departFromXtable === false ? " \"Sedang dikirim\" dari XTable dimatikan." : "") +
+      (st.morningNotice ? ` Pesan pagi "dikirim hari ini": pukul ${hh(st.morningHour)}.` : "") +
+      (st.remindHour >= 0 ? ` Pengingat yang belum berangkat: pukul ${hh(st.remindHour)} WIB.` : " Pengingat dimatikan.") +
       " Pengambilan sendiri (di Ambil) tidak masuk daftar ini.";
     const badge = $("shipBadge");
     if (isToday) { badge.textContent = String(open.length + overdue.length); badge.hidden = open.length + overdue.length === 0; }
 
-    const card = (title, list, bulk) => !list.length ? "" : `<div class="card"><h2>${title} <span class="muted">(${list.length})</span></h2>
-      ${bulk ? `<div class="ship-bulk"><label class="chk" style="min-height:auto"><input type="checkbox" data-all="${bulk}" /> Pilih semua yang belum ditandai</label>
-        <button class="btn primary sm" type="button" data-bulk="${bulk}">Tandai terpilih Berangkat</button></div>` : ""}
-      <div data-list="${bulk || ""}">${list.map(shipRow).join("")}</div></div>`;
-    const html = card(isToday ? "Jadwal hari ini" : `Jadwal ${esc(shipDay(SHIP.date))}`, today, "today") +
-      card("Belum ditandai, hari sebelumnya", overdue, "") +
-      card("Ditunda, tanggal belum pasti", tbd, "tbd") +
-      card("Besok (bisa ditunda dari sekarang)", up, "");
+    const card = (title, list) => !list.length ? "" : `<div class="card"><h2>${title} <span class="muted">(${list.length})</span></h2>
+      <div>${list.map(shipRow).join("")}</div></div>`;
+    const html = card(isToday ? "Jadwal hari ini" : `Jadwal ${esc(shipDay(SHIP.date))}`, today) +
+      card("Belum tercatat berangkat, hari sebelumnya", overdue) +
+      card("Ditunda, tanggal belum pasti", tbd) +
+      card("Besok (bisa ditunda dari sekarang)", up);
     $("shipLists").innerHTML = html || `<div class="card"><div class="empty">Tidak ada surat jalan untuk ${esc(shipDay(SHIP.date))}.</div></div>`;
 
-    $("shipLists").querySelectorAll("[data-depart]").forEach((b) => b.addEventListener("click", () => {
-      if (shipConfirm(1, "Tandai berangkat")) shipMark([b.dataset.depart], "departed");
-    }));
     $("shipLists").querySelectorAll("[data-delay]").forEach((b) => b.addEventListener("click", () => openDelay(b.closest(".ship-row"), b.dataset.delay)));
     $("shipLists").querySelectorAll("[data-undo]").forEach((b) => b.addEventListener("click", async () => {
       if (!confirm("Batalkan tanda terakhir untuk surat jalan ini? Pesannya (yang belum terkirim) ikut dibatalkan.")) return;
       try { await api("/api/notify/dispatch/undo", { method: "POST", body: JSON.stringify({ doId: b.dataset.undo }) }); toast("Tanda dibatalkan."); }
       catch (e) { toast(e.message + tokenHint()); }
       loadShip();
-    }));
-    $("shipLists").querySelectorAll("[data-all]").forEach((a) => a.addEventListener("change", () => {
-      a.closest(".card").querySelectorAll("[data-pick]").forEach((c) => { c.checked = a.checked; });
-    }));
-    $("shipLists").querySelectorAll("[data-bulk]").forEach((b) => b.addEventListener("click", () => {
-      const ids = [...b.closest(".card").querySelectorAll("[data-pick]:checked")].map((c) => c.dataset.pick);
-      if (!ids.length) return toast("Pilih surat jalan dulu.");
-      if (shipConfirm(ids.length, "Tandai berangkat")) shipMark(ids, "departed");
     }));
   }
 
@@ -1244,21 +1256,39 @@
   $("shipReload").addEventListener("click", loadShip);
   $("shipToday").addEventListener("click", () => { $("shipDate").value = ""; loadShip(); });
 
-  // Konfigurasi: reminder settings.
+  // Konfigurasi: delivery and reply settings.
   $("remHour").innerHTML = '<option value="-1">Mati</option>' +
     Array.from({ length: 13 }, (_, i) => i + 8).map((h) => `<option value="${h}">${String(h).padStart(2, "0")}.00</option>`).join("");
+  $("cfgMorningHour").innerHTML = Array.from({ length: 6 }, (_, i) => i + 6).map((h) => `<option value="${h}">${String(h).padStart(2, "0")}.00</option>`).join("");
   async function loadRemind() {
     try {
-      const r = await api("/api/notify/dispatch");
-      $("remHour").value = String(r.remind.hour);
-      $("remNumbers").value = r.remind.numbers.map(localNo).join(", ");
+      const st = (await api("/api/notify/dispatch")).settings;
+      $("remHour").value = String(st.remindHour);
+      $("remNumbers").value = st.remindNumbers.map(localNo).join(", ");
+      $("cfgXtable").checked = st.departFromXtable;
+      $("cfgMorning").checked = st.morningNotice;
+      $("cfgMorningHour").value = String(st.morningHour);
+      $("cfgAdmin").value = st.salesAdminNumber ? localNo(st.salesAdminNumber) : "";
+      $("cfgWarehouse").value = st.warehouseNumber ? localNo(st.warehouseNumber) : "";
+      $("cfgEscalation").value = st.escalationNumber ? localNo(st.escalationNumber) : "";
+      $("cfgAgent").checked = st.replyAgent;
+      $("cfgDebounce").value = String(st.replyDebounceS);
+      $("cfgAgentNote").textContent = (CFG && CFG.replyAgentAvailable === false)
+        ? "Agen belum aktif di server (ANTHROPIC_API_KEY belum diisi): balasan diteruskan apa adanya, seperti sebelumnya."
+        : "Mati = balasan diteruskan apa adanya, seperti sebelumnya.";
     } catch { /* database unavailable: leave the form empty */ }
   }
   $("saveRem").addEventListener("click", async () => {
     const remindNumbers = $("remNumbers").value.split(/[,;\n]/).map((x) => x.trim()).filter(Boolean);
+    const body = {
+      remindHour: Number($("remHour").value), remindNumbers,
+      departFromXtable: $("cfgXtable").checked, morningNotice: $("cfgMorning").checked, morningHour: Number($("cfgMorningHour").value),
+      salesAdminNumber: $("cfgAdmin").value, warehouseNumber: $("cfgWarehouse").value, escalationNumber: $("cfgEscalation").value,
+      replyAgent: $("cfgAgent").checked, replyDebounceS: Number($("cfgDebounce").value || 90),
+    };
     try {
-      await api("/api/notify/dispatch/settings", { method: "PUT", body: JSON.stringify({ remindHour: Number($("remHour").value), remindNumbers }) });
-      toast("Pengingat disimpan.");
+      await api("/api/notify/dispatch/settings", { method: "PUT", body: JSON.stringify(body) });
+      toast("Pengaturan disimpan.");
       loadRemind();
     } catch (e) { toast(e.message + tokenHint()); }
   });

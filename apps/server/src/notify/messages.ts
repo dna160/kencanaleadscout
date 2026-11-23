@@ -16,8 +16,9 @@
 export const MILESTONES = [
   "so_received",
   "delivery_scheduled",
-  "delivery_changed",
+  "delivery_today",
   "delivery_departed",
+  "delivery_changed",
 ] as const;
 export type Milestone = (typeof MILESTONES)[number];
 
@@ -137,6 +138,8 @@ export interface RenderOptions {
    * this DO, so the message gives the full delivery details instead.
    */
   change?: { from: string | null; to: string | null; told: boolean };
+  /** delivery_departed: what the warehouse filled in XTable (PRD §21.3); each shown only if filled. */
+  departure?: { vehicle: string | null; driver: string | null };
 }
 
 /** "2026-11-11" + n days, as YYYY-MM-DD. */
@@ -199,11 +202,24 @@ export function renderCustomerMessage(m: Milestone, ctx: OrderContext, opts: Ren
     const d = ctx.delivery;
     const change = opts.change ?? { from: d?.sjDate ?? null, to: d?.sjDate ? addDaysIso(d.sjDate, 1) : null, told: true };
     parts.push(...deliveryChanged(ctx, change));
+  } else if (m === "delivery_today") {
+    // PRD §21.3 interim, at 08:00 on the delivery day. Says when, never that the truck has left.
+    const d = ctx.delivery;
+    if (!d) throw new Error("delivery_today needs ctx.delivery");
+    parts.push(`Pesanan *${ctx.soNo}* dijadwalkan dikirim hari ini.`);
+    const lines = [`No. surat jalan: ${d.sjNo}`];
+    if (d.address) lines.push(`Alamat kirim: ${d.address}`);
+    parts.push(lines.join("\n"));
   } else if (m === "delivery_departed") {
     const d = ctx.delivery;
     if (!d) throw new Error("delivery_departed needs ctx.delivery");
-    parts.push(`Pesanan *${ctx.soNo}* sedang dalam perjalanan ke alamat Anda hari ini.`);
+    parts.push(`Pesanan *${ctx.soNo}* sedang dalam perjalanan ke alamat Anda.`);
     const lines = [`No. surat jalan: ${d.sjNo}`];
+    const truck = [
+      opts.departure?.vehicle ? `Kendaraan: ${opts.departure.vehicle}` : null,
+      opts.departure?.driver ? `Sopir: ${opts.departure.driver}` : null,
+    ].filter(Boolean).join(" · ");
+    if (truck) lines.push(truck);
     if (d.address) lines.push(`Alamat kirim: ${d.address}`);
     parts.push(lines.join("\n"));
     parts.push(`Barang:\n${formatItems(ctx.items)}`);
@@ -275,8 +291,8 @@ export const MILESTONE_INFO: Record<
       "CBD, COD and Tempo alike. Wording says 'dikonfirmasi', never 'dibayar': payment status lives in Accurate, not Selaras.",
   },
   delivery_scheduled: {
-    step: 3,
-    label: "Pengiriman dijadwalkan",
+    step: 2,
+    label: "1 · Dijadwalkan",
     labelEn: "Delivery scheduled",
     trigger:
       "A new Delivery Order (tbl_1082_SOLogisticPID) for this so_no, cancel_order = No. The scheduled date is sj_date (the DO is created the day before in 90% of cases).",
@@ -286,28 +302,37 @@ export const MILESTONE_INFO: Record<
     notes:
       "delivery_date, driver, no_kendaraan and received_date are never filled in the ERP, so they are never used.",
   },
-  delivery_changed: {
-    step: 4,
-    label: "Jadwal kirim berubah",
-    labelEn: "Delivery delayed / rescheduled",
+  delivery_today: {
+    step: 3,
+    label: "Dikirim hari ini (08:00)",
+    labelEn: "Delivery today (interim)",
     trigger:
-      "Staff mark a surat jalan 'Ditunda' on the Pengiriman tab (new date, or date not yet known), or the DO's sj_date is edited in Selaras.",
-    hold: "None. Only the latest mark is sent: a mark undone or replaced before sending is cancelled.",
-    coverage:
-      "Any DO the customer was given a date for. If the step-3 message was never sent, this one gives the full delivery details instead.",
-    notes:
-      "Selaras never edited sj_date in 3,000 tracked DOs (Nov 2026), so staff marks are the main source. The rep gets a CC.",
+      "At 08:00 WIB on the delivery day, for every live 'di Antar' DO due today that has not departed yet. The interim until the warehouse fills the vehicle / driver in XTable (PRD §21.3). Switch in Konfigurasi → Sumber 'Sedang dikirim'.",
+    hold: "None. Re-checked at send time: skipped if the DO is cancelled, its date moved, it already departed, or a reschedule request is open.",
+    coverage: "Deliveries due today. Never says the truck has left.",
+    notes: "No rep CC.",
   },
   delivery_departed: {
-    step: 5,
-    label: "Barang dikirim",
+    step: 4,
+    label: "2 · Sedang dikirim",
     labelEn: "Goods dispatched",
     trigger:
-      "Staff mark a surat jalan 'Berangkat' on the Pengiriman tab, on its delivery day. The ERP has no dispatch signal (print_status is set the afternoon before, and a third of DOs are never printed).",
-    hold: "None. Sent only on the day it was marked; a message still waiting at the end of that day is dropped.",
-    coverage: "Delivered orders (cara_kirim 'di Antar'). Pickups are not on the list.",
+      "In XTable, the warehouse fills no_kendaraan, driver or delivery_date on a live 'di Antar' DO (tbl_1082) as the truck leaves. Once per DO. The ERP had no other departure signal (PRD §21.3).",
+    hold: "None. Filled after the delivery day = recorded, not sent; a message still waiting at the end of its day is dropped.",
+    coverage: "Deliveries (cara_kirim 'di Antar'). Pickups never get it.",
     notes:
-      "No rep CC (the rep sees it in Pesan / Riwayat). An unmarked delivery never messages the customer: staff get a reminder in the afternoon instead.",
+      "Shows the vehicle and driver when filled. No rep CC. An unfilled delivery never messages the customer: Sales Admin and the warehouse get a 13:00 reminder instead.",
+  },
+  delivery_changed: {
+    step: 5,
+    label: "Jadwal berubah",
+    labelEn: "Delivery rescheduled",
+    trigger:
+      "The DO's sj_date is edited in XTable, or staff mark 'Tunda' on the Pengiriman tab (new date, or date not yet known).",
+    hold: "None. Only the latest Tunda mark is sent: a mark undone or replaced before sending is cancelled.",
+    coverage:
+      "Any DO the customer was given a date for. If the step-1 delivery message was never sent, this one gives the full delivery details instead.",
+    notes: "The rep gets a CC.",
   },
 };
 
@@ -361,7 +386,7 @@ export function renderDoCancelledNotice(soNo: string, sjNo: string, customerName
   ].join("\n\n");
 }
 
-/** To the rep / logistics admin: today's surat jalan nobody has marked yet. */
+/** To Sales Admin / the warehouse: today's surat jalan with no departure recorded in XTable. */
 export function renderDispatchReminder(
   dateIso: string,
   rows: { sjNo: string; soNo: string; customer: string }[],
@@ -371,9 +396,9 @@ export function renderDispatchReminder(
   const lines = rows.slice(0, max).map((r) => `• ${r.sjNo} — ${r.soNo} — ${r.customer}`);
   if (rows.length > max) lines.push(`• dan ${rows.length - max} lainnya`);
   return [
-    `${shadow ? "[SHADOW] " : ""}⏰ *Kabar Pesanan* — Pengiriman belum ditandai`,
-    `Surat jalan berikut dijadwalkan dikirim hari ini (${formatDateId(dateIso)}), tetapi belum ditandai *Berangkat* atau *Ditunda*:`,
+    `${shadow ? "[SHADOW] " : ""}⏰ *Kabar Pesanan* — Pengiriman belum tercatat berangkat`,
+    `Surat jalan berikut dijadwalkan dikirim hari ini (${formatDateId(dateIso)}), tetapi No. kendaraan / sopir belum diisi di XTable:`,
     lines.join("\n"),
-    "Pelanggan belum menerima kabar pengiriman. Mohon pastikan statusnya ditandai di LeadScout › Kabar Pesanan › Pengiriman.",
+    "Pelanggan belum menerima kabar \"sedang dikirim\". Bila truk sudah berangkat, mohon isi No. kendaraan dan sopir pada DO di XTable. Bila jadwalnya bergeser, ubah tanggal DO di XTable atau tandai Tunda di LeadScout › Kabar Pesanan › Pengiriman.",
   ].join("\n\n");
 }

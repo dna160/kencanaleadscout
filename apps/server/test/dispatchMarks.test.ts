@@ -15,13 +15,22 @@ describe("dispatch messages (pure)", () => {
   const ctx = sampleContext(new Date("2026-11-17T03:00:00Z"), "Rahmanto", "0813-1111-2222");
   const d = ctx.delivery!; // sjDate 2026-11-18
 
-  it("departed: on its way today, with the surat jalan, items and the check-on-arrival line", () => {
-    const t = renderCustomerMessage("delivery_departed", ctx);
-    expect(t).toContain(`Pesanan *${ctx.soNo}* sedang dalam perjalanan ke alamat Anda hari ini.`);
-    expect(t).toContain(`No. surat jalan: ${d.sjNo}`);
+  it("departed: on its way, with the vehicle and driver from XTable when filled, items and the check-on-arrival line", () => {
+    const t = renderCustomerMessage("delivery_departed", ctx, { departure: { vehicle: "B 9012 KCN", driver: "Pak Udin" } });
+    expect(t).toContain(`Pesanan *${ctx.soNo}* sedang dalam perjalanan ke alamat Anda.`);
+    expect(t).toContain(`No. surat jalan: ${d.sjNo}\nKendaraan: B 9012 KCN · Sopir: Pak Udin`);
+    expect(renderCustomerMessage("delivery_departed", ctx, { departure: { vehicle: null, driver: "Pak Udin" } })).toContain("\nSopir: Pak Udin");
+    expect(renderCustomerMessage("delivery_departed", ctx)).not.toMatch(/Kendaraan|Sopir/);
     expect(t).toContain("ALCOPAN GLOSSY WHITE 4mm / 0.21 × 10 lembar");
     expect(t).toContain("Mohon periksa kondisi");
     expect(t).toContain("Balas STOP");
+  });
+
+  it("08:00 notice says 'dijadwalkan dikirim hari ini', never that the truck has left", () => {
+    const t = renderCustomerMessage("delivery_today", ctx);
+    expect(t).toContain(`Pesanan *${ctx.soNo}* dijadwalkan dikirim hari ini.`);
+    expect(t).toContain(`No. surat jalan: ${d.sjNo}`);
+    expect(t).not.toMatch(/perjalanan|berangkat/);
   });
 
   it("changed: delayed to a new date, delayed with no date yet, and moved earlier", () => {
@@ -65,7 +74,8 @@ describe("dispatch messages (pure)", () => {
   it("reminder lists today's unmarked surat jalan, capped at 25 lines", () => {
     const rows = Array.from({ length: 27 }, (_, i) => ({ sjNo: `KP/DO-${i}`, soNo: `SO.${i}`, customer: "TOKO" }));
     const t = renderDispatchReminder("2026-11-17", rows, false);
-    expect(t).toContain("Pengiriman belum ditandai");
+    expect(t).toContain("belum tercatat berangkat");
+    expect(t).toContain("No. kendaraan / sopir belum diisi di XTable");
     expect(t).toContain("Selasa, 17 November 2026");
     expect(t).toContain("• KP/DO-0 — SO.0 — TOKO");
     expect(t).toContain("• dan 2 lainnya");
@@ -131,6 +141,7 @@ describe.skipIf(!hasDb)("dispatch marks over the real schema", async () => {
     await db`delete from notify_ledger where so_no like ${`${P}%`} or to_number in (${REP}, ${ADMIN})`;
     await db`delete from notify_dispatch_marks where do_id like ${`${P}%`}`;
     await db`delete from notify_dispatch where do_id like ${`${P}%`}`;
+    await db`delete from notify_do_holds where do_id like ${`${P}%`}`;
     await db`delete from order_events where so_no like ${`${P}%`}`;
     await db`delete from erp_so_line where id like ${`${P}%`}`;
     await db`delete from erp_so_header where id like ${`${P}%`}`;
@@ -140,7 +151,9 @@ describe.skipIf(!hasDb)("dispatch marks over the real schema", async () => {
     await db`delete from notify_contacts where phone_e164 like '+6281292%'`;
     await db`
       update notify_settings set live_mode = null, kill_switch = false, milestones_enabled = '{}'::jsonb,
-             dispatch_remind_hour = 13, dispatch_remind_numbers = '{}', dispatch_reminded_on = null
+             dispatch_remind_hour = 13, dispatch_remind_numbers = '{}', dispatch_reminded_on = null,
+             depart_from_xtable = true, depart_morning_notice = true, morning_notice_hour = 8, morning_noticed_on = null,
+             sales_admin_number = null, warehouse_number = null
        where id = 1`;
   }
 
@@ -167,8 +180,17 @@ describe.skipIf(!hasDb)("dispatch marks over the real schema", async () => {
     await store.deriveForTouched(db, { ...lane.emptyTouched(), do_header: [doId] });
     return { so, doId, phone: `+62${phone.slice(1)}`, sjNo };
   }
-  const mark = (doId: string, action: "departed" | "rescheduled", toDate: string | null = null, now = new Date()) =>
+  const mark = (doId: string, action: "rescheduled", toDate: string | null = null, now = new Date()) =>
     marks.markDispatch(db, { doId, action, toDate, source: "staff", by: "Tester", now });
+  /** The warehouse fills the DO in XTable as the truck leaves; the lane re-reads it (WIB digits as UTC). */
+  async function depart(doId: string, f: { vehicle?: string | null; driver?: string | null; daysLate?: number } = {}): Promise<void> {
+    await db`
+      update erp_do_header set no_kendaraan = ${f.vehicle === undefined ? "B 9012 KCN" : f.vehicle},
+             driver = ${f.driver === undefined ? "Pak Udin" : f.driver},
+             erp_updated_at = now() + interval '7 hours' + make_interval(days => ${f.daysLate ?? 0}), synced_at = now()
+       where id = ${doId}`;
+    await store.deriveForTouched(db, { ...lane.emptyTouched(), do_header: [doId] });
+  }
   const ledger = async (so: string) =>
     db<{ milestone: string; recipient_role: string; status: string; cancel_reason: string | null; body: string | null }[]>`
       select milestone, recipient_role, status, cancel_reason, body from notify_ledger where so_no = ${so} order by id`;
@@ -200,48 +222,88 @@ describe.skipIf(!hasDb)("dispatch marks over the real schema", async () => {
     await dbmod.closeDatabase();
   });
 
-  it("Berangkat on the day: the customer hears it is on its way; no rep CC for this one", async () => {
+  it("vehicle / driver filled in XTable on the day: 'sedang dikirim' with them, no rep CC; a re-edit never resends", async () => {
     const o = await seed("dep1", today());
-    await disp.dispatchOnce(deps()); // step 3: scheduled (customer + CC)
+    await disp.dispatchOnce(deps()); // step 1 · dijadwalkan (customer + CC)
     expect(sentTo(o.phone)).toHaveLength(1);
-    const r = await mark(o.doId, "departed");
-    expect(r.notify).toBe(true);
+    await depart(o.doId);
     await disp.dispatchOnce(deps());
     const msgs = sentTo(o.phone);
     expect(msgs).toHaveLength(2);
-    expect(msgs[1]!.text).toContain("sedang dalam perjalanan ke alamat Anda hari ini");
-    expect(msgs[1]!.text).toContain(`No. surat jalan: ${o.sjNo}`);
-    expect(msgs[1]!.text).not.toContain("nomor resmi notifikasi"); // introduced once, in step 3
-    expect(sentTo(REP)).toHaveLength(1); // only step 3's CC
+    expect(msgs[1]!.text).toContain("sedang dalam perjalanan ke alamat Anda.");
+    expect(msgs[1]!.text).toContain(`No. surat jalan: ${o.sjNo}\nKendaraan: B 9012 KCN · Sopir: Pak Udin`);
+    expect(msgs[1]!.text).not.toContain("nomor resmi notifikasi"); // introduced once, in step 1
+    expect(sentTo(REP)).toHaveLength(1); // only step 1's CC
     const rows = await ledger(o.so);
     expect(rows.filter((x) => x.milestone === "delivery_departed").map((x) => [x.recipient_role, x.status])).toEqual([["customer", "sent"]]);
 
-    await expect(mark(o.doId, "departed")).rejects.toThrow(/sudah ditandai berangkat/);
-    await expect(mark(o.doId, "rescheduled", plus(1))).rejects.toThrow(/tidak bisa diubah/);
-    await expect(marks.undoDispatch(db, o.doId, "Tester")).rejects.toThrow(/sudah terkirim/);
+    await depart(o.doId, { vehicle: "B 1111 ZZ" }); // corrected plate: same DO, no second message
+    await disp.dispatchOnce(deps());
+    expect(sentTo(o.phone)).toHaveLength(2);
+    await expect(mark(o.doId, "rescheduled", plus(1))).rejects.toThrow(/sudah berangkat/);
+    const list = await marks.listDispatch(db, today());
+    expect(list.find((x) => x.do_id === o.doId)).toMatchObject({ departed_on: today(), vehicle: "B 1111 ZZ", dep_status: "sent" });
   });
 
-  it("Berangkat is refused before the delivery day, and recorded without a message after it", async () => {
-    const early = await seed("dep2", plus(1));
-    await expect(mark(early.doId, "departed")).rejects.toThrow(/belum hari ini/);
+  it("filled after the delivery day = backfill, recorded not sent; pickups and cancelled DOs never depart", async () => {
     const late = await seed("dep3", plus(-1));
-    const r = await mark(late.doId, "departed");
-    expect(r.notify).toBe(false);
-    expect(r.note).toMatch(/sudah lewat/);
+    await depart(late.doId);
+    await disp.dispatchOnce(deps());
+    const row = (await ledger(late.so)).find((x) => x.milestone === "delivery_departed")!;
+    expect([row.status, row.cancel_reason]).toEqual(["skipped", "backfill"]);
+    expect(sentTo(late.phone).some((m) => m.text.includes("perjalanan"))).toBe(false);
+
     const pick = await seed("dep4", today(), { pickup: true });
-    await expect(mark(pick.doId, "departed")).rejects.toThrow(/diambil sendiri/);
+    await depart(pick.doId);
+    const cancelled = await seed("dep6", today());
+    await db`update erp_do_header set cancel_order = 'Yes' where id = ${cancelled.doId}`;
+    await depart(cancelled.doId);
+    const [n] = await db<{ n: number }[]>`
+      select count(*)::int as n from order_events where event_type = 'do.departed' and so_no in (${pick.so}, ${cancelled.so})`;
+    expect(n!.n).toBe(0);
+  });
+
+  it("only the driver filled is enough; the XTable source can be switched off (recorded as skipped)", async () => {
+    const o = await seed("dep7", today());
+    await db`update notify_settings set depart_from_xtable = false where id = 1`;
+    await depart(o.doId, { vehicle: null, driver: "Pak Udin" });
+    await disp.dispatchOnce(deps());
+    const row = (await ledger(o.so)).find((x) => x.milestone === "delivery_departed")!;
+    expect([row.status, row.cancel_reason]).toEqual(["skipped", "source_off"]);
   });
 
   it("a departure still waiting at the end of its day is dropped, not sent tomorrow", async () => {
     const o = await seed("dep5", today());
     await disp.dispatchOnce(deps());
-    await mark(o.doId, "departed");
+    await depart(o.doId);
     await disp.planEvents(deps()); // planned today, but not sent (say, the gateway was down)
     const tomorrow = new Date(Date.now() + 86_400_000);
     await disp.dispatchOnce(deps({ now: () => tomorrow }));
     const row = (await ledger(o.so)).find((x) => x.milestone === "delivery_departed")!;
     expect([row.status, row.cancel_reason]).toEqual(["cancelled", "stale_departure"]);
     expect(sentTo(o.phone)).toHaveLength(1);
+  });
+
+  it("08:00 notice: today's undeparted deliveries once; skipped at send time if departed, moved or on hold", async () => {
+    const a = await seed("mn1", today());
+    const b = await seed("mn2", today());
+    const c = await seed("mn3", today());
+    const gone = await seed("mn4", today());
+    await depart(gone.doId); // left before 08:00: no morning message
+    await disp.dispatchOnce(deps()); // step 1 for all, departure for `gone`
+    await db`update notify_settings set morning_notice_hour = 0 where id = 1`;
+    await disp.planMorningNotices(deps({ reminders: true }));
+    expect(await disp.planMorningNotices(deps({ reminders: true }))).toBe(0); // once a day
+    await mark(b.doId, "rescheduled", plus(1)); // moved before it went out
+    await db`insert into notify_do_holds (do_id, so_no) values (${c.doId}, ${c.so})`; // reschedule request open
+    await disp.dispatchOnce(deps());
+    const morning = async (so: string) =>
+      (await ledger(so)).filter((x) => x.milestone === "delivery_today").map((x) => [x.status, x.cancel_reason]);
+    expect(await morning(a.so)).toEqual([["sent", null]]);
+    expect(sentTo(a.phone).some((m) => m.text.includes("dijadwalkan dikirim hari ini"))).toBe(true);
+    expect(await morning(b.so)).toEqual([["cancelled", "date_moved"]]);
+    expect(await morning(c.so)).toEqual([["cancelled", "reschedule_hold"]]);
+    expect(await morning(gone.so)).toEqual([]);
   });
 
   it("Ditunda with a new date: 'tertunda' + the new date to the customer, CC to the rep", async () => {
@@ -255,12 +317,11 @@ describe.skipIf(!hasDb)("dispatch marks over the real schema", async () => {
     expect(msgs[1]!.text).toContain("Jadwal baru:");
     const cc = sentTo(REP);
     expect(cc).toHaveLength(2);
-    expect(cc[1]!.text).toContain("Jadwal kirim berubah");
+    expect(cc[1]!.text).toContain("Jadwal berubah");
 
     // On the new day it is due again, and can then depart.
     const st = await marks.listDispatch(db, plus(2));
     expect(st.find((x) => x.do_id === o.doId)?.section).toBe("today");
-    await expect(mark(o.doId, "departed")).rejects.toThrow(/belum hari ini/);
   });
 
   it("only the latest mark goes out: a second delay before sending replaces the first", async () => {
@@ -325,22 +386,23 @@ describe.skipIf(!hasDb)("dispatch marks over the real schema", async () => {
     expect(n2!.n).toBe(2);
   });
 
-  it("afternoon reminder: today's unmarked deliveries to the rep and the logistics number, once a day", async () => {
+  it("13:00 reminder: deliveries with no departure in XTable go to Sales Admin and the warehouse, not reps, once a day", async () => {
     const a = await seed("rem1", today());
     const b = await seed("rem2", today());
-    await mark(b.doId, "departed");
-    await db`update notify_settings set dispatch_remind_hour = 0, dispatch_remind_numbers = ${[ADMIN]} where id = 1`;
+    await depart(b.doId);
+    await db`
+      update notify_settings set dispatch_remind_hour = 0, depart_morning_notice = false,
+             sales_admin_number = ${ADMIN}, warehouse_number = ${REP} where id = 1`;
     await disp.dispatchOnce(deps({ reminders: true }));
-    const rep = sentTo(REP).filter((m) => m.text.includes("belum ditandai"));
-    expect(rep).toHaveLength(1);
-    expect(rep[0]!.text).toContain(a.sjNo);
-    expect(rep[0]!.text).not.toContain(b.sjNo);
-    const admin = sentTo(ADMIN);
-    expect(admin).toHaveLength(1);
-    expect(admin[0]!.text).toContain(a.sjNo);
+    for (const n of [ADMIN, REP]) {
+      const r = sentTo(n).filter((m) => m.text.includes("belum tercatat berangkat"));
+      expect(r).toHaveLength(1);
+      expect(r[0]!.text).toContain(a.sjNo);
+      expect(r[0]!.text).not.toContain(b.sjNo);
+    }
     // The customer is not told anything about the unmarked one.
     expect(sentTo(a.phone).every((m) => !m.text.includes("tertunda") && !m.text.includes("perjalanan"))).toBe(true);
     await disp.dispatchOnce(deps({ reminders: true }));
-    expect(sentTo(ADMIN)).toHaveLength(1);
+    expect(sentTo(ADMIN).filter((m) => m.text.includes("belum tercatat berangkat"))).toHaveLength(1);
   });
 });

@@ -23,7 +23,7 @@ export const EVENT_MILESTONE: Record<string, Milestone> = {
 };
 
 /** Milestones whose subject is a DO (one message per surat jalan, or per mark). */
-export const DO_MILESTONES: readonly string[] = ["delivery_scheduled", "delivery_changed", "delivery_departed"];
+export const DO_MILESTONES: readonly string[] = ["delivery_scheduled", "delivery_today", "delivery_changed", "delivery_departed"];
 
 /** Rep reminder of today's unmarked surat jalan (internal, like the DO-cancelled notice). */
 export const DISPATCH_REMINDER = "dispatch_reminder";

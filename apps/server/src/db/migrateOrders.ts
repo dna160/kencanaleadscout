@@ -34,6 +34,13 @@ export async function runOrderMigrations(db: Sql): Promise<void> {
     )
   `;
   await db`create index if not exists erp_do_header_so_idx on erp_do_header (so_no)`;
+  // PRD §21.3: the warehouse fills these as the truck leaves ("sedang dikirim").
+  // Empty on every DO before 2026-11-23, so no re-pull is needed: a DO is
+  // re-read when that edit bumps its updated_at.
+  await db`alter table erp_do_header add column if not exists driver        text`;
+  await db`alter table erp_do_header add column if not exists no_kendaraan  text`;
+  await db`alter table erp_do_header add column if not exists delivery_date timestamptz`;
+  await db`alter table erp_do_header add column if not exists received_date timestamptz`;
   await db`create index if not exists erp_do_header_sj_idx on erp_do_header (no_sj)`;
 
   await db`

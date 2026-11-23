@@ -74,8 +74,9 @@ describe.skipIf(!hasDb)("notify admin API", async () => {
     expect(live.milestones).toEqual([
       { key: "so_received", enabled: true },
       { key: "delivery_scheduled", enabled: true },
-      { key: "delivery_changed", enabled: false },
+      { key: "delivery_today", enabled: true },
       { key: "delivery_departed", enabled: true },
+      { key: "delivery_changed", enabled: false },
     ]);
     expect(live).toHaveProperty("channel.mode");
     expect(live).toHaveProperty("lane.enabled");

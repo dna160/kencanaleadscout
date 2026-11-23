@@ -209,4 +209,36 @@ export async function runNotifyMigrations(db: Sql): Promise<void> {
   await db`alter table notify_settings add column if not exists dispatch_remind_hour    int not null default 13`;
   await db`alter table notify_settings add column if not exists dispatch_remind_numbers text[] not null default '{}'`;
   await db`alter table notify_settings add column if not exists dispatch_reminded_on    date`;
+
+  // PRD §21.3: "sedang dikirim" from XTable, and the 08:00 interim notice.
+  await db`alter table notify_settings add column if not exists depart_from_xtable    boolean not null default true`;
+  await db`alter table notify_settings add column if not exists depart_morning_notice boolean not null default true`;
+  await db`alter table notify_settings add column if not exists morning_notice_hour   int not null default 8`;
+  await db`alter table notify_settings add column if not exists morning_noticed_on    date`;
+  // Konfigurasi contacts (PRD §21.3, §21.4): reminders, fallbacks, escalation.
+  await db`alter table notify_settings add column if not exists sales_admin_number text`;
+  await db`alter table notify_settings add column if not exists warehouse_number   text`;
+  await db`alter table notify_settings add column if not exists escalation_number  text`;
+  // PRD §21.4: the reply agent (needs ANTHROPIC_API_KEY; off = forward as before).
+  await db`alter table notify_settings add column if not exists reply_agent      boolean not null default true`;
+  await db`alter table notify_settings add column if not exists reply_debounce_s int not null default 90`;
+
+  // PRD §21.5: a customer asked to move a delivery. While a hold is open, the
+  // predictive messages for that DO (08:00 notice, an unsent step 3) wait.
+  await db`
+    create table if not exists notify_do_holds (
+      id             bigserial primary key,
+      do_id          text not null,
+      so_no          text,
+      reason         text not null default 'ubah_jadwal',
+      requested_date date,
+      inbound_id     bigint,
+      opened_at      timestamptz not null default now(),
+      reminded_at    timestamptz,
+      resolved_at    timestamptz,
+      resolved_by    text,
+      resolution     text check (resolution in ('sj_date_changed', 'tunda', 'kept', 'do_cancelled'))
+    )
+  `;
+  await db`create unique index if not exists notify_do_holds_open_idx on notify_do_holds (do_id) where resolved_at is null`;
 }

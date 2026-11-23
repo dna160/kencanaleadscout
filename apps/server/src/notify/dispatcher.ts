@@ -165,8 +165,8 @@ export async function planEvents(deps: DispatchDeps, limit = 500): Promise<numbe
   const lmode = ledgerMode(mode);
   const [s] = await db<{ planned_event_id: string }[]>`select planned_event_id::text from notify_settings where id = 1`;
   const after = Number(s?.planned_event_id ?? 0);
-  const [sw] = await db<{ milestones_enabled: Record<string, boolean> }[]>`
-    select milestones_enabled from notify_settings where id = 1`;
+  const [sw] = await db<{ milestones_enabled: Record<string, boolean>; depart_from_xtable: boolean }[]>`
+    select milestones_enabled, depart_from_xtable from notify_settings where id = 1`;
   const enabled = (m: string) => sw?.milestones_enabled?.[m] !== false;
   const events = await db<EventRow[]>`
     select id::text, event_type, so_no, subject_ref, occurred_at, payload
@@ -194,14 +194,19 @@ export async function planEvents(deps: DispatchDeps, limit = 500): Promise<numbe
     const age = erpAgeHours(e.occurred_at, now);
     // A step switched off on /notify is recorded as skipped (audit), never sent.
     const off = !enabled(milestone);
-    const stale = off || (age !== null && age > deps.maxEventAgeHours);
+    // "Sedang dikirim" from XTable (PRD §21.3): a field filled after the
+    // delivery day is a backfill, and the source can be switched off.
+    const xtable = e.payload["source"] === "xtable";
+    const backfill = xtable && e.payload["backfill"] === true;
+    const sourceOff = xtable && sw?.depart_from_xtable === false;
+    const stale = off || backfill || sourceOff || (age !== null && age > deps.maxEventAgeHours);
     const due = new Date(now.getTime() + holdFor(milestone, deps.holds) * 60_000);
-    const base = { milestone, so_no: e.so_no, event_id: eid, subject_ref: doId, meta: markId ? e.payload : {} };
+    const base = { milestone, so_no: e.so_no, event_id: eid, subject_ref: doId, meta: doId ? e.payload : {} };
     rows.push({
       ...base,
       recipient_role: "customer",
       status: stale ? "skipped" : "pending",
-      cancel_reason: off ? "milestone_off" : stale ? "stale_event" : null,
+      cancel_reason: off ? "milestone_off" : backfill ? "backfill" : sourceOff ? "source_off" : stale ? "stale_event" : null,
       idempotency_key: outboxKey(mode, milestone, subject, "customer"),
       due_at: due,
     });
@@ -420,10 +425,18 @@ async function processCustomer(deps: DispatchDeps, row: LedgerRow): Promise<void
     const [ds] = await db<{ last_mark_id: string | null }[]>`
       select last_mark_id::text from notify_dispatch where do_id = ${row.subject_ref}`;
     const markId = row.meta["mark_id"] != null ? String(row.meta["mark_id"]) : null;
+    const xtable = row.meta["source"] === "xtable";
     if (m === "delivery_scheduled") {
       if (ds?.last_mark_id) return finish(deps, row, { status: "cancelled", cancel_reason: "superseded" });
+    } else if (m === "delivery_today") {
+      const why = await morningNoticeBlocked(db, row, wibDate(deps.now()));
+      if (why) return finish(deps, row, { status: "cancelled", cancel_reason: why });
     } else {
-      if (!markId || ds?.last_mark_id !== markId) return finish(deps, row, { status: "cancelled", cancel_reason: "superseded" });
+      // A staff mark is sent only while it is the DO's latest; an XTable
+      // departure is a fact about the truck, never replaced by a mark.
+      if (!xtable && (!markId || ds?.last_mark_id !== markId)) {
+        return finish(deps, row, { status: "cancelled", cancel_reason: "superseded" });
+      }
       const today = wibDate(deps.now());
       if (m === "delivery_departed" && row.meta["marked_on"] !== today) {
         return finish(deps, row, { status: "cancelled", cancel_reason: "stale_departure" });
@@ -502,7 +515,11 @@ async function processCustomer(deps: DispatchDeps, row: LedgerRow): Promise<void
   const [contact] = phone
     ? await db<{ first_contacted_at: Date | null }[]>`select first_contacted_at from notify_contacts where phone_e164 = ${phone}`
     : [];
-  const text = renderCustomerMessage(m, ctx, { change, introduce: Boolean(phone) && !contact?.first_contacted_at });
+  const departure =
+    m === "delivery_departed"
+      ? { vehicle: (row.meta["no_kendaraan"] as string | null) ?? null, driver: (row.meta["driver"] as string | null) ?? null }
+      : undefined;
+  const text = renderCustomerMessage(m, ctx, { change, departure, introduce: Boolean(phone) && !contact?.first_contacted_at });
   const meta = { recipientSource: recipient.source, verdict: verdict.reason ?? "ok" };
 
   // 5. Sending window (also protects reps' evenings in shadow mode).
@@ -576,6 +593,80 @@ async function processNotice(deps: DispatchDeps, row: LedgerRow): Promise<void> 
   await send(deps, row, rep.phone, text);
 }
 
+// ── 08:00 "dikirim hari ini" (PRD §21.3 interim) ────────────────────────────
+
+/**
+ * While the warehouse habit of filling the vehicle / driver takes hold: once
+ * per WIB day at `morning_notice_hour`, every delivery due today that has not
+ * departed is told "dijadwalkan dikirim hari ini". It never claims the truck
+ * has left. Re-checked at send time (morningNoticeBlocked).
+ */
+export async function planMorningNotices(deps: DispatchDeps): Promise<number> {
+  const { db, mode } = deps;
+  if (mode === "off" || !deps.reminders) return 0;
+  const now = deps.now();
+  const today = wibDate(now);
+  const [s] = await db<{ on: boolean; hour: number }[]>`
+    select depart_morning_notice as on, morning_notice_hour as hour from notify_settings where id = 1`;
+  if (!s?.on || wibHour(now) < s.hour) return 0;
+  const claimed = await db`
+    update notify_settings set morning_noticed_on = ${today}::date
+     where id = 1 and morning_noticed_on is distinct from ${today}::date
+    returning id`;
+  if (!claimed.length) return 0;
+  const dos = await db<{ do_id: string; so_no: string }[]>`
+    select d.id as do_id, d.so_no
+      from erp_do_header d
+      left join notify_dispatch s on s.do_id = d.id
+     where d.deleted_at is null and lower(coalesce(d.cancel_order, '')) <> 'yes'
+       and coalesce(d.cara_kirim, '') !~* 'ambil' and d.so_no is not null
+       and (case when s.do_id is null then d.sj_date when s.tbd then null else s.sched_date end) = ${today}::date
+       and s.departed_on is null
+       and coalesce(nullif(trim(d.no_kendaraan), ''), nullif(trim(d.driver), '')) is null and d.delivery_date is null
+  `;
+  if (!dos.length) return 0;
+  const lmode = ledgerMode(mode);
+  const rows = dos.map((d: { do_id: string; so_no: string }) => ({
+    mode: lmode,
+    milestone: "delivery_today",
+    so_no: d.so_no,
+    recipient_role: "customer",
+    status: "pending",
+    idempotency_key: outboxKey(mode, "delivery_today", `${d.do_id}:${today}`, "customer"),
+    subject_ref: d.do_id,
+    due_at: now,
+    channel: deps.channel.mode,
+    context_source: "erp",
+    meta: db.json({ date: today }),
+  }));
+  await db`
+    insert into notify_ledger ${db(rows, "mode", "milestone", "so_no", "recipient_role", "status", "idempotency_key",
+      "subject_ref", "due_at", "channel", "context_source", "meta")}
+    on conflict (idempotency_key) do nothing
+  `;
+  return rows.length;
+}
+
+/** Why a morning notice must not go out any more, or null. */
+async function morningNoticeBlocked(db: AnySql, row: LedgerRow, today: string): Promise<string | null> {
+  if (row.meta["date"] !== today) return "stale_event";
+  const [d] = await db<{ eff: string | null; departed: boolean; held: boolean; told_departed: boolean }[]>`
+    select to_char(case when s.do_id is null then h.sj_date when s.tbd then null else s.sched_date end, 'YYYY-MM-DD') as eff,
+           (s.departed_on is not null or coalesce(nullif(trim(h.no_kendaraan), ''), nullif(trim(h.driver), '')) is not null
+             or h.delivery_date is not null) as departed,
+           exists (select 1 from notify_do_holds o where o.do_id = h.id and o.resolved_at is null) as held,
+           exists (select 1 from notify_ledger l where l.subject_ref = h.id and l.milestone = 'delivery_departed'
+                    and l.status not in ('cancelled', 'skipped')) as told_departed
+      from erp_do_header h left join notify_dispatch s on s.do_id = h.id
+     where h.id = ${row.subject_ref}
+  `;
+  if (!d) return "do_cancelled";
+  if (d.departed || d.told_departed) return "already_departed";
+  if (d.held) return "reschedule_hold";
+  if (d.eff !== today) return "date_moved";
+  return null;
+}
+
 // ── Afternoon reminder of unmarked deliveries (PRD §20) ─────────────────────
 
 /**
@@ -589,8 +680,10 @@ export async function planReminders(deps: DispatchDeps): Promise<number> {
   if (mode === "off" || !deps.reminders) return 0;
   const now = deps.now();
   const today = wibDate(now);
-  const [s] = await db<{ hour: number; numbers: string[] }[]>`
-    select dispatch_remind_hour as hour, dispatch_remind_numbers as numbers from notify_settings where id = 1`;
+  const [s] = await db<{ hour: number; numbers: string[]; admin: string | null; warehouse: string | null }[]>`
+    select dispatch_remind_hour as hour, dispatch_remind_numbers as numbers,
+           sales_admin_number as admin, warehouse_number as warehouse
+      from notify_settings where id = 1`;
   if (!s || s.hour < 0 || s.hour > 23 || wibHour(now) < s.hour) return 0;
   const claimed = await db`
     update notify_settings set dispatch_reminded_on = ${today}::date
@@ -607,14 +700,9 @@ export async function planReminders(deps: DispatchDeps): Promise<number> {
     for (const r of list) if (!cur.includes(r)) cur.push(r);
     byPhone.set(phone, cur);
   };
-  for (const n of s.numbers ?? []) add(n, rows);
-  const reps = new Map<string, string | null>();
-  for (const r of rows) {
-    const key = r.sales_name_id ?? "";
-    if (!reps.has(key)) reps.set(key, r.sales_name_id ? (await loadRep(db, r)).phone : null);
-    const p = reps.get(key);
-    if (p) add(p, [r]);
-  }
+  // PRD §21.3: Sales Admin and the warehouse contact, plus any extra numbers.
+  for (const n of [s.admin, s.warehouse, ...(s.numbers ?? [])]) if (n) add(n, rows);
+  if (!byPhone.size) return 0;
   const lmode = ledgerMode(mode);
   const planned = [...byPhone.entries()].map(([phone, list]) => ({
     mode: lmode,
@@ -677,7 +765,7 @@ async function processRow(deps: DispatchDeps, row: LedgerRow): Promise<void> {
 export async function dispatchOnce(deps: DispatchDeps): Promise<DispatchResult> {
   if (deps.mode === "off") return { paused: "off", planned: 0, processed: 0 };
   await syncMode(deps.db, deps.mode, deps.now());
-  const planned = (await planEvents(deps)) + (await planReminders(deps));
+  const planned = (await planEvents(deps)) + (await planMorningNotices(deps)) + (await planReminders(deps));
   const [ks] = await deps.db<{ kill_switch: boolean }[]>`select kill_switch from notify_settings where id = 1`;
   const paused = ks?.kill_switch ? "kill_switch" : await deps.pauseReason(deps.db, deps.channel);
   if (paused) return { paused, planned, processed: 0 };

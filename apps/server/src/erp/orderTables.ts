@@ -9,8 +9,10 @@
  *
  * Field meanings are the VERIFIED ones (docs/ontology/SELARAS-ONTOLOGY.md,
  * sweep 2026-11-10), including the traps:
- *   - 1082 `sj_date` is the SCHEDULED date; `delivery_date`, `received_date`,
- *     `driver`, `no_kendaraan` are never filled and are not mirrored.
+ *   - 1082 `sj_date` is the SCHEDULED date. `delivery_date`, `received_date`,
+ *     `driver`, `no_kendaraan` were never filled up to 2026-11-23; from then on
+ *     the warehouse fills the vehicle / driver (and delivery date) as the truck
+ *     leaves, which is the "sedang dikirim" signal (PRD §21.3). Mirrored.
  *   - 1236 `th_alu_skin` is labelled "Tebal" and holds the PANEL thickness;
  *     `alu` holds the skin. Mirrored as `th_panel` / `th_skin` so nobody has to
  *     remember that.
@@ -61,6 +63,11 @@ export interface DoHeaderRow extends OrderRowBase {
   customer_name_text: string | null;
   total_lembar: number | null;
   total_m2: number | null;
+  /** Filled by the warehouse at departure (PRD §21.3); labels when they are lookups. */
+  driver: string | null;
+  no_kendaraan: string | null;
+  delivery_date: Date | null;
+  received_date: Date | null;
 }
 
 export interface DoLineRow extends OrderRowBase {
@@ -155,6 +162,10 @@ export function adaptDoHeaderRow(raw: unknown): DoHeaderRow | null {
     customer_name_text: asText(pick(row, "customer_name_label", "customer_name_text")),
     total_lembar: asNumber(pick(row, "total_lembar")),
     total_m2: asNumber(pick(row, "total_m2")),
+    driver: label(row, "driver"),
+    no_kendaraan: label(row, "no_kendaraan"),
+    delivery_date: asTimestamp(pick(row, "delivery_date")),
+    received_date: asTimestamp(pick(row, "received_date")),
   };
 }
 
@@ -230,7 +241,8 @@ export const ORDER_MIRROR: { [K in OrderTable]: { table: string; columns: readon
     columns: [
       "id", "so_no", "no_sj", "sj_date", "do_created_at", "cara_kirim", "cancel_order", "print_status",
       "top", "top_days", "due_date", "invoice_no", "customer_name_id", "customer_name_text",
-      "total_lembar", "total_m2", "erp_created_at", "erp_updated_at", "deleted_at",
+      "total_lembar", "total_m2", "driver", "no_kendaraan", "delivery_date", "received_date",
+      "erp_created_at", "erp_updated_at", "deleted_at",
     ],
   },
   do_line: {
