@@ -149,6 +149,11 @@ export async function markDispatch(db: AnySql, input: MarkInput): Promise<MarkRe
       returning id::text
     `;
     const markId = mark!.id;
+    // PRD §21.5: a new date for the DO answers an open reschedule request.
+    await tx`
+      update notify_do_holds set resolved_at = now(), resolved_by = ${input.by},
+             resolution = ${source === "selaras" ? "sj_date_changed" : "tunda"}
+       where do_id = ${doId} and resolved_at is null`;
     let eventId: string | null = null;
     if (notify && d.so_no) {
       const type = "do.rescheduled";
@@ -225,6 +230,12 @@ export async function undoDispatch(db: AnySql, doId: string, by: string | null):
  */
 export async function sweepErpReschedules(db: AnySql, now: Date): Promise<number> {
   const today = wibDate(now);
+  // A cancelled or deleted DO closes its reschedule request (PRD §21.5).
+  await db`
+    update notify_do_holds o set resolved_at = now(), resolved_by = 'Selaras', resolution = 'do_cancelled'
+      from erp_do_header d
+     where o.do_id = d.id and o.resolved_at is null
+       and (d.deleted_at is not null or lower(coalesce(d.cancel_order, '')) = 'yes')`;
   const rows = await db<{ id: string; sj: string; seen: string | null }[]>`
     select d.id, to_char(d.sj_date, 'YYYY-MM-DD') as sj,
            to_char(coalesce(s.erp_seen_date, (e.payload->>'sj_date')::date), 'YYYY-MM-DD') as seen
@@ -273,6 +284,9 @@ export interface DispatchRow {
   driver: string | null;
   dep_status: string | null;
   dep_reason: string | null;
+  /** An open customer request to move this delivery (PRD §21.5). */
+  hold_id: string | null;
+  hold_requested: string | null;
   section: "today" | "overdue" | "tbd" | "upcoming";
   last_action: string | null;
   last_source: string | null;
@@ -327,7 +341,8 @@ export async function listDispatch(db: AnySql, date: string): Promise<DispatchRo
            dmsg.status as dep_status, dmsg.cancel_reason as dep_reason,
            m.action as last_action, m.source as last_source, to_char(m.to_date, 'YYYY-MM-DD') as last_to,
            m.marked_by as last_by, m.marked_at as last_at, (m.event_id is not null) as last_has_event,
-           msg.status as msg_status, msg.cancel_reason as msg_reason, told.status as told_status
+           msg.status as msg_status, msg.cancel_reason as msg_reason, told.status as told_status,
+           hold.id as hold_id, to_char(hold.requested_date, 'YYYY-MM-DD') as hold_requested
       from sec
       left join lateral (
         select customer_name_text, alamat_kirim, sales_name_text from erp_so_header
@@ -347,6 +362,8 @@ export async function listDispatch(db: AnySql, date: string): Promise<DispatchRo
          where subject_ref = sec.do_id and milestone = 'delivery_departed' and recipient_role = 'customer'
            and mode in ('live', 'shadow')
          order by id desc limit 1) dmsg on true
+      left join lateral (
+        select id::text, requested_date from notify_do_holds where do_id = sec.do_id and resolved_at is null limit 1) hold on true
      where sec.section is not null
      order by case sec.section when 'today' then 0 when 'overdue' then 1 when 'tbd' then 2 else 3 end,
               sec.departed_on is not null, h.customer_name_text, sec.no_sj
@@ -378,4 +395,14 @@ export async function unmarkedToday(db: AnySql, today: string): Promise<Unmarked
        and coalesce(nullif(trim(d.no_kendaraan), ''), nullif(trim(d.driver), '')) is null and d.delivery_date is null
      order by h.customer_name_text, d.no_sj
   `;
+}
+
+// ── Reschedule holds (PRD §21.5) ─────────────────────────────────────────────
+
+/** "Tetap sesuai jadwal": the rep declined the request; nothing is sent, the hold closes. */
+export async function keepSchedule(db: AnySql, holdId: string, by: string | null): Promise<void> {
+  const rows = await db`
+    update notify_do_holds set resolved_at = now(), resolved_by = ${by}, resolution = 'kept'
+     where id = ${holdId} and resolved_at is null returning id`;
+  if (!rows.length) throw new DispatchError("Permintaan ini sudah ditutup.", 409);
 }

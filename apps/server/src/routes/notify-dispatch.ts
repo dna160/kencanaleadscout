@@ -4,6 +4,7 @@
  * GET  /api/notify/dispatch?date=YYYY-MM-DD   deliveries for that WIB day (default today)
  * POST /api/notify/dispatch/mark              {doIds[], action: delayed, date?}            [token]
  * POST /api/notify/dispatch/undo              {doId}                                       [token]
+ * POST /api/notify/holds/:id/keep            "Tetap sesuai jadwal": close a reschedule request [token]
  * PUT  /api/notify/dispatch/settings          partial: reminder, departure source, contacts, reply agent [token]
  *
  * Writes record who acted from `x-notify-actor` (the name typed on /notify).
@@ -12,7 +13,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { normalizeNumber } from "@kencana/core";
 import { config } from "../config.js";
 import { getSql } from "../db/client.js";
-import { DispatchError, listDispatch, markDispatch, undoDispatch } from "../notify/dispatch.js";
+import { DispatchError, keepSchedule, listDispatch, markDispatch, undoDispatch } from "../notify/dispatch.js";
 import { wibDate } from "../notify/rules.js";
 
 function authorized(req: FastifyRequest, reply: FastifyReply): boolean {
@@ -98,6 +99,22 @@ export async function notifyDispatchRoutes(app: FastifyInstance): Promise<void> 
       const r = await undoDispatch(db, doId, actor(req));
       req.log.info({ actor: actor(req), doId }, "dispatch mark undone");
       return { ok: true, ...r };
+    } catch (err) {
+      if (err instanceof DispatchError) return reply.code(err.statusCode).send({ error: err.message });
+      throw err;
+    }
+  });
+
+  app.post("/api/notify/holds/:id/keep", async (req, reply) => {
+    if (!authorized(req, reply)) return;
+    const db = getSql();
+    if (!db) return reply.code(503).send({ error: "Database tidak tersedia." });
+    const id = (req.params as { id: string }).id;
+    if (!/^\d+$/.test(id)) return reply.code(400).send({ error: "id tidak valid." });
+    try {
+      await keepSchedule(db, id, actor(req));
+      req.log.info({ actor: actor(req), holdId: id }, "reschedule request kept");
+      return { ok: true };
     } catch (err) {
       if (err instanceof DispatchError) return reply.code(err.statusCode).send({ error: err.message });
       throw err;

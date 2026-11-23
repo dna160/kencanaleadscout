@@ -8,7 +8,7 @@
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { Channel, OutboundMessage, SendResult } from "../src/notify/channel.js";
-import { addDaysIso, renderCustomerMessage, renderDispatchReminder, sampleContext } from "../src/notify/messages.js";
+import { addDaysIso, formatDateId, renderCustomerMessage, renderDispatchReminder, sampleContext } from "../src/notify/messages.js";
 import { wibDate } from "../src/notify/rules.js";
 
 describe("dispatch messages (pure)", () => {
@@ -408,5 +408,98 @@ describe.skipIf(!hasDb)("dispatch marks over the real schema", async () => {
     expect(sentTo(a.phone).every((m) => !m.text.includes("tertunda") && !m.text.includes("perjalanan"))).toBe(true);
     await disp.dispatchOnce(deps({ reminders: true }));
     expect(sentTo(ADMIN).filter((m) => m.text.includes("belum tercatat berangkat"))).toHaveLength(1);
+  });
+  // ── PRD §21.5: reschedule requests ──────────────────────────────────────────
+  const openHold = (o: { doId: string; so: string }, requested: string | null = null) =>
+    db`insert into notify_do_holds (do_id, so_no, requested_date) values (${o.doId}, ${o.so}, ${requested}::date)`;
+  const holdOf = async (doId: string) =>
+    (await db<{ resolution: string | null; open: boolean }[]>`
+      select resolution, resolved_at is null as open from notify_do_holds where do_id = ${doId} order by id desc limit 1`)[0];
+
+  it("an open request holds the unsent step-1 message; Tunda answers it with the full schedule and closes the hold", async () => {
+    const o = await seed("h1", plus(1));
+    await openHold(o, plus(3));
+    await disp.dispatchOnce(deps());
+    expect(sentTo(o.phone)).toEqual([]);
+    const [mv3] = await db<{ status: string; meta: Record<string, unknown> }[]>`
+      select status, meta from notify_ledger where so_no = ${o.so} and milestone = 'delivery_scheduled' and recipient_role = 'customer'`;
+    expect([mv3!.status, mv3!.meta["deferred"]]).toEqual(["pending", "reschedule_hold"]);
+    await mark(o.doId, "rescheduled", plus(3));
+    expect(await holdOf(o.doId)).toEqual({ resolution: "tunda", open: false });
+    await disp.dispatchOnce(deps({ now: () => new Date(Date.now() + 16 * 60_000) }));
+    const msgs = sentTo(o.phone);
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0]!.text).toContain("sudah ditetapkan");
+    expect(msgs[0]!.text).toContain(`Jadwal pengiriman: ${formatDateId(plus(3))}`);
+  });
+
+  it("an XTable sj_date edit closes the request; 'Tetap sesuai jadwal' closes it with nothing sent; a cancelled DO closes it", async () => {
+    const a = await seed("h2", plus(1));
+    await disp.dispatchOnce(deps());
+    await openHold(a);
+    await db`update erp_do_header set sj_date = ${plus(4)}::date where id = ${a.doId}`;
+    await marks.sweepErpReschedules(db, new Date());
+    expect(await holdOf(a.doId)).toEqual({ resolution: "sj_date_changed", open: false });
+
+    const b = await seed("h3", plus(1));
+    await openHold(b);
+    const [h] = await db<{ id: string }[]>`select id::text from notify_do_holds where do_id = ${b.doId}`;
+    const before = ch.sent.length;
+    await marks.keepSchedule(db, h!.id, "Tester");
+    expect(await holdOf(b.doId)).toEqual({ resolution: "kept", open: false });
+    await expect(marks.keepSchedule(db, h!.id, "Tester")).rejects.toThrow(/sudah ditutup/);
+    expect(ch.sent.length).toBe(before);
+
+    const c = await seed("h4", plus(1));
+    await openHold(c);
+    await db`update erp_do_header set cancel_order = 'Yes' where id = ${c.doId}`;
+    await marks.sweepErpReschedules(db, new Date());
+    expect(await holdOf(c.doId)).toEqual({ resolution: "do_cancelled", open: false });
+  });
+
+  it("a departure is never held: the plate filled in XTable is told even with a request open", async () => {
+    const o = await seed("h5", today());
+    await disp.dispatchOnce(deps());
+    await openHold(o, plus(2));
+    await depart(o.doId);
+    await disp.dispatchOnce(deps());
+    expect(sentTo(o.phone).some((m) => m.text.includes("sedang dalam perjalanan"))).toBe(true);
+  });
+
+  it("16:00 the day before: the rep and Sales Admin are reminded once; not before", async () => {
+    await db`update notify_settings set dispatch_remind_hour = -1, depart_morning_notice = false, sales_admin_number = ${ADMIN} where id = 1`;
+    const o = await seed("h6", plus(2));
+    await openHold(o, plus(5));
+    const at = (iso: string) => () => new Date(iso);
+    const dayBefore = plus(1);
+    await disp.dispatchOnce(deps({ reminders: true, now: at(`${dayBefore}T08:59:00Z`) })); // 15:59 WIB
+    expect(sentTo(ADMIN)).toEqual([]);
+    await disp.dispatchOnce(deps({ reminders: true, now: at(`${dayBefore}T09:01:00Z`) })); // 16:01 WIB
+    for (const n of [ADMIN, REP]) {
+      const r = sentTo(n).filter((m) => m.text.includes("Permintaan ubah jadwal"));
+      expect(r).toHaveLength(1);
+      expect(r[0]!.text).toContain(`DO KP/DO-${P}-h6 belum ditindaklanjuti`);
+      expect(r[0]!.text).toContain(`diminta: ${formatDateId(plus(5))}`);
+    }
+    await disp.dispatchOnce(deps({ reminders: true, now: at(`${dayBefore}T10:00:00Z`) }));
+    expect(sentTo(ADMIN).filter((m) => m.text.includes("Permintaan ubah jadwal"))).toHaveLength(1);
+  });
+
+  it("a DO cancelled and re-issued within 7 days: the new DO says the schedule changed, not a fresh 'dijadwalkan'", async () => {
+    const o = await seed("h7", plus(1));
+    await disp.dispatchOnce(deps());
+    expect(sentTo(o.phone)[0]!.text).toContain("telah dijadwalkan untuk dikirim");
+    await db`update erp_do_header set cancel_order = 'Yes', erp_updated_at = now() + interval '7 hours' where id = ${o.doId}`;
+    await store.deriveForTouched(db, { ...lane.emptyTouched(), do_header: [o.doId] });
+    const newDo = `${P}-d-h7b`;
+    await db`
+      insert into erp_do_header (id, so_no, no_sj, sj_date, cara_kirim, cancel_order, do_created_at, erp_updated_at)
+      values (${newDo}, ${o.so}, ${`KP/DO-${P}-h7b`}, ${plus(3)}::date, ${"di Antar"}, ${"No"}, now() + interval '7 hours', now())`;
+    await store.deriveForTouched(db, { ...lane.emptyTouched(), do_header: [newDo] });
+    await disp.dispatchOnce(deps());
+    const msgs = sentTo(o.phone);
+    expect(msgs).toHaveLength(2);
+    expect(msgs[1]!.text).toContain(`yang dijadwalkan ${formatDateId(plus(1))} *tertunda*`);
+    expect(msgs[1]!.text).toContain(`No. surat jalan: KP/DO-${P}-h7b\nJadwal baru: ${formatDateId(plus(3))}`);
   });
 });

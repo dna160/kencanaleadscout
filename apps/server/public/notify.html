@@ -1189,6 +1189,7 @@
         <div class="sub"><b>${esc(r.customer || "–")}</b>${r.address ? " — " + esc(r.address) : ""}</div>
         <div class="sub">Jadwal: ${r.tbd ? "belum pasti" : esc(shipDay(r.eff_date))}${moved}${r.sales ? " · Sales: " + esc(r.sales) : ""}${r.last_at ? " · " + esc(fmtTime(r.last_at)) : ""}</div>
         ${line ? `<div class="sub muted">${esc(line)}</div>` : ""}
+        ${r.hold_id ? `<div class="sub" style="color:#9a3412;font-weight:600">⚠ Pelanggan minta ubah jadwal${r.hold_requested ? " ke " + esc(shipDay(r.hold_requested)) : ""}: pesan jadwal ditahan sampai tanggal DO diubah (XTable / Tunda) atau "Tetap sesuai jadwal" di Pesan.</div>` : ""}
       </div>
       <div class="acts">
         ${canDelay ? `<button class="btn ghost sm" type="button" data-delay="${esc(r.do_id)}">Tunda…</button>` : ""}

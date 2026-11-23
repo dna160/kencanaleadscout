@@ -198,7 +198,7 @@ export function renderCustomerMessage(m: Milestone, ctx: OrderContext, opts: Ren
     parts.push(`Pesanan Anda nomor *${ctx.soNo}* sudah kami konfirmasi dan saat ini sedang kami proses.`);
     parts.push(`Item yang dipesan:\n${formatItemsNumbered(ctx.items)}`);
     parts.push("Kami akan mengabari Anda kembali saat jadwal pengiriman sudah ditetapkan.");
-  } else if (m === "delivery_changed") {
+  } else if (m === "delivery_changed" || (m === "delivery_scheduled" && opts.change)) {
     const d = ctx.delivery;
     const change = opts.change ?? { from: d?.sjDate ?? null, to: d?.sjDate ? addDaysIso(d.sjDate, 1) : null, told: true };
     parts.push(...deliveryChanged(ctx, change));
@@ -400,5 +400,14 @@ export function renderDispatchReminder(
     `Surat jalan berikut dijadwalkan dikirim hari ini (${formatDateId(dateIso)}), tetapi No. kendaraan / sopir belum diisi di XTable:`,
     lines.join("\n"),
     "Pelanggan belum menerima kabar \"sedang dikirim\". Bila truk sudah berangkat, mohon isi No. kendaraan dan sopir pada DO di XTable. Bila jadwalnya bergeser, ubah tanggal DO di XTable atau tandai Tunda di LeadScout › Kabar Pesanan › Pengiriman.",
+  ].join("\n\n");
+}
+
+/** To the rep and Sales Admin: a customer asked to move a delivery and nobody has answered (PRD §21.5). */
+export function renderHoldReminder(customer: string, sjNo: string, current: string | null, requested: string | null, shadow: boolean): string {
+  return [
+    `${shadow ? "[SHADOW] " : ""}⏰ *Kabar Pesanan* — Permintaan ubah jadwal ${customer} · DO ${sjNo} belum ditindaklanjuti`,
+    `Jadwal sekarang: ${current ? formatDateId(current) : "belum pasti"} · diminta: ${requested ? formatDateId(requested) : "tidak disebut"}.`,
+    "Pesan jadwal untuk DO ini ditahan sampai ada keputusan. Ubah tanggal DO di XTable (atau tandai Tunda di LeadScout), atau pilih \"Tetap sesuai jadwal\" di Kabar Pesanan › Pesan, lalu kabari pelanggan.",
   ].join("\n\n");
 }

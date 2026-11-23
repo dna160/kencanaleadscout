@@ -28,6 +28,9 @@ export const DO_MILESTONES: readonly string[] = ["delivery_scheduled", "delivery
 /** Rep reminder of today's unmarked surat jalan (internal, like the DO-cancelled notice). */
 export const DISPATCH_REMINDER = "dispatch_reminder";
 
+/** Rep / Sales Admin reminder of an unanswered reschedule request (PRD §21.5). */
+export const HOLD_REMINDER = "hold_reminder";
+
 /** WIB calendar date (YYYY-MM-DD) of a real instant. */
 export function wibDate(now: Date): string {
   return new Date(now.getTime() + 7 * 3_600_000).toISOString().slice(0, 10);

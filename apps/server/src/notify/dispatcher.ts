@@ -37,6 +37,7 @@ import {
   MILESTONES,
   renderCustomerMessage,
   renderDispatchReminder,
+  renderHoldReminder,
   renderDoCancelledNotice,
   renderSalesCc,
   renderShadow,
@@ -45,6 +46,7 @@ import {
 } from "./messages.js";
 import {
   DISPATCH_REMINDER,
+  HOLD_REMINDER,
   DO_CANCELLED_NOTICE,
   DO_MILESTONES,
   erpAgeHours,
@@ -428,6 +430,25 @@ async function processCustomer(deps: DispatchDeps, row: LedgerRow): Promise<void
     const xtable = row.meta["source"] === "xtable";
     if (m === "delivery_scheduled") {
       if (ds?.last_mark_id) return finish(deps, row, { status: "cancelled", cancel_reason: "superseded" });
+      // PRD §21.5: the customer asked to move this delivery; the schedule waits for the answer.
+      const [hold] = await db<{ id: string }[]>`
+        select id::text from notify_do_holds where do_id = ${row.subject_ref} and resolved_at is null limit 1`;
+      if (hold) return defer(deps, row, new Date(deps.now().getTime() + 15 * 60_000), "reschedule_hold");
+      // PRD §21.5 (4): this DO re-issues one cancelled in the last 7 days whose date the
+      // customer was given: say the schedule CHANGED, not a fresh "dijadwalkan".
+      const [prev] = await db<{ sj_date: string | null }[]>`
+        select to_char(o.sj_date, 'YYYY-MM-DD') as sj_date
+          from erp_do_header o
+         where o.so_no = ${row.so_no} and o.id <> ${row.subject_ref}
+           and (o.deleted_at is not null or lower(coalesce(o.cancel_order, '')) = 'yes')
+           and coalesce(o.deleted_at, o.erp_updated_at) >= ${new Date(deps.now().getTime() - 7 * 86_400_000 + 7 * 3_600_000)}
+           and exists (select 1 from notify_ledger l where l.mode = ${lmode} and l.subject_ref = o.id
+                        and l.recipient_role = 'customer' and l.milestone in ('delivery_scheduled', 'delivery_changed')
+                        and l.status = any(${SENT}))
+         order by coalesce(o.deleted_at, o.erp_updated_at) desc limit 1`;
+      if (prev?.sj_date && ctx.delivery && prev.sj_date !== ctx.delivery.sjDate) {
+        change = { from: prev.sj_date, to: ctx.delivery.sjDate, told: true };
+      }
     } else if (m === "delivery_today") {
       const why = await morningNoticeBlocked(db, row, wibDate(deps.now()));
       if (why) return finish(deps, row, { status: "cancelled", cancel_reason: why });
@@ -667,6 +688,73 @@ async function morningNoticeBlocked(db: AnySql, row: LedgerRow, today: string): 
   return null;
 }
 
+// ── Reschedule requests nobody answered (PRD §21.5) ─────────────────────────
+
+/**
+ * At 16:00 WIB the day before the DO's current date (or at once if the
+ * request came in later than that), the rep and Sales Admin are reminded of
+ * an open reschedule request. Once per hold. The hold stays on.
+ */
+export async function planHoldReminders(deps: DispatchDeps): Promise<number> {
+  const { db, mode } = deps;
+  if (mode === "off" || !deps.reminders) return 0;
+  const now = deps.now();
+  const holds = await db<{ id: string; do_id: string; so_no: string | null; no_sj: string | null; eff: string | null; requested: string | null }[]>`
+    select o.id::text, o.do_id, coalesce(o.so_no, d.so_no) as so_no, d.no_sj,
+           to_char(case when s.do_id is null then d.sj_date when s.tbd then null else s.sched_date end, 'YYYY-MM-DD') as eff,
+           to_char(o.requested_date, 'YYYY-MM-DD') as requested
+      from notify_do_holds o
+      join erp_do_header d on d.id = o.do_id
+      left join notify_dispatch s on s.do_id = d.id
+     where o.resolved_at is null and o.reminded_at is null`;
+  const [st] = await db<{ admin: string | null }[]>`select sales_admin_number as admin from notify_settings where id = 1`;
+  const lmode = ledgerMode(mode);
+  let n = 0;
+  for (const h of holds) {
+    // 16:00 WIB on the day before = 09:00 UTC that day.
+    const due = h.eff ? new Date(`${h.eff}T09:00:00Z`).getTime() - 86_400_000 : now.getTime();
+    if (now.getTime() < due) continue;
+    const header = h.so_no ? await loadHeader(db, h.so_no) : null;
+    const rep = header ? await loadRep(db, header) : null;
+    const to = [...new Set([rep?.phone, st?.admin].filter((x): x is string => Boolean(x)))];
+    const body = renderHoldReminder(header?.customer_name_text ?? "Pelanggan", h.no_sj ?? h.do_id, h.eff, h.requested, mode === "shadow");
+    const rows = to.map((phone) => ({
+      mode: lmode,
+      milestone: HOLD_REMINDER,
+      so_no: h.so_no,
+      recipient_role: "sales_cc",
+      to_number: phone,
+      body,
+      status: "pending",
+      idempotency_key: outboxKey(mode, HOLD_REMINDER, `${h.id}:${phone}`, "sales_cc"),
+      subject_ref: h.do_id,
+      due_at: now,
+      channel: deps.channel.mode,
+      context_source: "erp",
+      meta: db.json({ hold_id: h.id }),
+    }));
+    if (rows.length) {
+      await db`
+        insert into notify_ledger ${db(rows, "mode", "milestone", "so_no", "recipient_role", "to_number", "body", "status",
+          "idempotency_key", "subject_ref", "due_at", "channel", "context_source", "meta")}
+        on conflict (idempotency_key) do nothing`;
+    }
+    await db`update notify_do_holds set reminded_at = ${now} where id = ${h.id}`;
+    n += rows.length;
+  }
+  return n;
+}
+
+async function processHoldReminder(deps: DispatchDeps, row: LedgerRow): Promise<void> {
+  const [h] = await deps.db<{ open: boolean }[]>`
+    select resolved_at is null as open from notify_do_holds where id = ${String(row.meta["hold_id"] ?? "0")}`;
+  if (!h?.open) return finish(deps, row, { status: "cancelled", cancel_reason: "hold_resolved" });
+  if (!row.to_number || !row.body) return finish(deps, row, { status: "cancelled", cancel_reason: "unreachable" });
+  const wait = nextSendWindow(deps.now(), deps.fromHour, deps.untilHour);
+  if (wait) return defer(deps, row, wait, "quiet_hours");
+  await send(deps, row, row.to_number, row.body);
+}
+
 // ── Afternoon reminder of unmarked deliveries (PRD §20) ─────────────────────
 
 /**
@@ -746,6 +834,7 @@ async function processRow(deps: DispatchDeps, row: LedgerRow): Promise<void> {
     if (cur?.status !== "sending") return;
     if (row.milestone === DO_CANCELLED_NOTICE) return await processNotice(deps, row);
     if (row.milestone === DISPATCH_REMINDER) return await processReminder(deps, row);
+    if (row.milestone === HOLD_REMINDER) return await processHoldReminder(deps, row);
     if (!isMilestone(row.milestone)) return await finish(deps, row, { status: "cancelled", cancel_reason: "unknown_milestone" });
     if (row.recipient_role === "sales_cc") return await processCc(deps, row);
     return await processCustomer(deps, row);
@@ -765,7 +854,8 @@ async function processRow(deps: DispatchDeps, row: LedgerRow): Promise<void> {
 export async function dispatchOnce(deps: DispatchDeps): Promise<DispatchResult> {
   if (deps.mode === "off") return { paused: "off", planned: 0, processed: 0 };
   await syncMode(deps.db, deps.mode, deps.now());
-  const planned = (await planEvents(deps)) + (await planMorningNotices(deps)) + (await planReminders(deps));
+  const planned =
+    (await planEvents(deps)) + (await planMorningNotices(deps)) + (await planReminders(deps)) + (await planHoldReminders(deps));
   const [ks] = await deps.db<{ kill_switch: boolean }[]>`select kill_switch from notify_settings where id = 1`;
   const paused = ks?.kill_switch ? "kill_switch" : await deps.pauseReason(deps.db, deps.channel);
   if (paused) return { paused, planned, processed: 0 };
