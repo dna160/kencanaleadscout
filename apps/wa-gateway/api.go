@@ -79,6 +79,11 @@ type sendReq struct {
 	// Optional image: base64 bytes + declared type. Text becomes its caption.
 	ImageB64 string `json:"image_b64,omitempty"`
 	Mime     string `json:"mime,omitempty"`
+	// Optional contact card (PRD §21.4), sent on its own; text is ignored.
+	Contact *struct {
+		Name  string `json:"name"`
+		Phone string `json:"phone"`
+	} `json:"contact,omitempty"`
 }
 
 func (a *API) send(w http.ResponseWriter, r *http.Request) {
@@ -93,7 +98,18 @@ func (a *API) send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var media []byte
-	if req.ImageB64 != "" {
+	if req.Contact != nil {
+		if req.ImageB64 != "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "send a contact or an image, not both"})
+			return
+		}
+		card, err := BuildVCard(req.Contact.Name, req.Contact.Phone)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		media, req.Mime, req.Text = []byte(card), VCardMime, strings.TrimSpace(req.Contact.Name)
+	} else if req.ImageB64 != "" {
 		b, err := base64.StdEncoding.DecodeString(req.ImageB64)
 		if err != nil || len(b) == 0 || len(b) > MaxOutboundImageBytes {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "image_b64 must be base64, at most 15 MB"})

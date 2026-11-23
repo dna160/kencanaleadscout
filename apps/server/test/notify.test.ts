@@ -261,6 +261,21 @@ describe("GatewayChannel", () => {
     expect((calls[0]!.init.headers as Record<string, string>)["x-gateway-secret"]).toBe("gw");
     expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ to_pn: "+6281234567890", text: "hi", idempotency_key: "k1" });
   });
+  it("sends a contact card as {contact: {name, phone}} (PRD §21.4); the stub records it", async () => {
+    const calls: { init: RequestInit }[] = [];
+    const ch = new GatewayChannel("http://wa-gateway:8080", "gw", async (_u: string, init: RequestInit) => {
+      calls.push({ init });
+      return new Response(JSON.stringify({ message_id: "3EB0CARD", queued: true }), { status: 200 });
+    });
+    const r = await ch.sendContact({ to: "+6281234567890", name: "Free Antony", phone: "+6281377700001", idempotencyKey: "c1" });
+    expect(r).toEqual({ status: "queued", providerMessageId: "3EB0CARD", error: null });
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
+      to_pn: "+6281234567890",
+      idempotency_key: "c1",
+      contact: { name: "Free Antony", phone: "+6281377700001" },
+    });
+    expect((await new StubChannel().sendContact({ to: "+62812", name: "X", phone: "+62813", idempotencyKey: "s" })).status).toBe("stubbed");
+  });
   it("reports failure without throwing", async () => {
     const ch = new GatewayChannel("http://x", "gw", async () => { throw new Error("ECONNREFUSED"); });
     const r = await ch.send({ to: "+6281234567890", text: "hi", idempotencyKey: "k" });

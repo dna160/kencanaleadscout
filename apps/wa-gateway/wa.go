@@ -49,6 +49,8 @@ type WA interface {
 	// SendImage uploads the image to WhatsApp's media servers and sends it with
 	// an optional caption.
 	SendImage(ctx context.Context, toPN, caption, mime string, data []byte, messageID string) error
+	// SendContact sends a vCard as a contact card (PRD §21.4).
+	SendContact(ctx context.Context, toPN, displayName, vcard, messageID string) error
 	Check(ctx context.Context, pns []string) ([]CheckResult, error)
 	Pair(ctx context.Context) PairState
 	PairPhone(ctx context.Context, phone string) (string, error)
@@ -212,6 +214,22 @@ func (w *MeowWA) SendImage(ctx context.Context, toPN, caption, mime string, data
 		FileEncSHA256: up.FileEncSHA256,
 		FileSHA256:    up.FileSHA256,
 		FileLength:    proto.Uint64(up.FileLength),
+	}}
+	_, err = w.client.SendMessage(ctx, jid, msg, whatsmeow.SendRequestExtra{ID: types.MessageID(messageID)})
+	if errors.Is(err, whatsmeow.ErrRecipientNotOnWhatsApp) {
+		return ErrNotOnWhatsApp
+	}
+	return err
+}
+
+func (w *MeowWA) SendContact(ctx context.Context, toPN, displayName, vcard, messageID string) error {
+	jid, err := pnJID(toPN)
+	if err != nil {
+		return err
+	}
+	msg := &waE2E.Message{ContactMessage: &waE2E.ContactMessage{
+		DisplayName: proto.String(displayName),
+		Vcard:       proto.String(vcard),
 	}}
 	_, err = w.client.SendMessage(ctx, jid, msg, whatsmeow.SendRequestExtra{ID: types.MessageID(messageID)})
 	if errors.Is(err, whatsmeow.ErrRecipientNotOnWhatsApp) {

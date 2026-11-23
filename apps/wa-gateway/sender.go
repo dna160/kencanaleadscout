@@ -192,7 +192,9 @@ func (s *Sender) Step(ctx context.Context) (time.Duration, bool) {
 		_ = s.store.MarkRetry(context.Background(), it.Key, "interrupted")
 		return 0, false
 	}
-	if len(it.Media) > 0 {
+	if it.MediaMime == VCardMime {
+		err = s.wa.SendContact(ctx, it.ToPN, it.Body, string(it.Media), it.MessageID)
+	} else if len(it.Media) > 0 {
 		err = s.wa.SendImage(ctx, it.ToPN, it.Body, it.MediaMime, it.Media, it.MessageID)
 	} else {
 		err = s.wa.Send(ctx, it.ToPN, it.Body, it.MessageID)

@@ -95,6 +95,10 @@ class RecordingChannel implements Channel {
     this.sent.push(m);
     return { status: "sent", providerMessageId: `p-${this.sent.length}`, error: null };
   }
+  async sendContact(c: { to: string; name: string; phone: string; idempotencyKey: string }): Promise<SendResult> {
+    this.sent.push({ to: c.to, text: `[KARTU] ${c.name} ${c.phone}`, idempotencyKey: c.idempotencyKey });
+    return { status: "sent", providerMessageId: `p-${this.sent.length}`, error: null };
+  }
   async health() {
     return { connected: true, detail: "" };
   }

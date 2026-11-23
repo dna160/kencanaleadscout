@@ -62,6 +62,15 @@ func (f *fakeWA) SendImage(_ context.Context, to, caption, mime string, data []b
 	f.sent = append(f.sent, fmt.Sprintf("IMG %s|%s|%s|%d|%s", to, caption, mime, len(data), id))
 	return nil
 }
+func (f *fakeWA) SendContact(_ context.Context, to, name, vcard, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.sendErr != nil {
+		return f.sendErr
+	}
+	f.sent = append(f.sent, "CARD "+to+"|"+name+"|"+vcard+"|"+id)
+	return nil
+}
 func (f *fakeWA) Check(_ context.Context, pns []string) ([]CheckResult, error) {
 	out := []CheckResult{}
 	for _, p := range pns {
@@ -465,5 +474,55 @@ func TestInboundImageOnlyInDirectChats(t *testing.T) {
 	}
 	if _, ok := Inbound(mk(false, false)); ok {
 		t.Fatal("a photo is not a text message")
+	}
+}
+
+func TestVCardHasWaidAndEscapes(t *testing.T) {
+	card, err := BuildVCard("Free Antony; Sales, Retail", "+6281377700001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(card, "\r\n")
+	want := []string{
+		"BEGIN:VCARD", "VERSION:3.0", `N:;Free Antony\; Sales\, Retail;;;`, `FN:Free Antony\; Sales\, Retail`,
+		"TEL;type=CELL;type=VOICE;waid=6281377700001:+62 81377700001", "END:VCARD",
+	}
+	if strings.Join(lines, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("vcard:\n%s", card)
+	}
+	for _, bad := range [][2]string{{"", "+6281377700001"}, {"Rina", "081377700001"}, {"Rina", "+62abc"}} {
+		if _, err := BuildVCard(bad[0], bad[1]); err == nil {
+			t.Fatalf("%v: want an error", bad)
+		}
+	}
+}
+
+func TestSendContactCardIsQueuedAndSentAsACard(t *testing.T) {
+	st := NewMemStore()
+	srv := newAPI(&fakeWA{}, st)
+	defer srv.Close()
+	body := map[string]any{"to_pn": "+6281234567890", "idempotency_key": "card1",
+		"contact": map[string]string{"name": "Free Antony", "phone": "+6281377700001"}}
+	if code, out := post(t, srv, "/send", body, true); code != 200 || out["queued"] != true {
+		t.Fatalf("contact send: %d %v", code, out)
+	}
+	it := st.Get("card1")
+	if it.MediaMime != VCardMime || it.Body != "Free Antony" || !strings.Contains(string(it.Media), "waid=6281377700001") {
+		t.Fatalf("stored card: %+v", it)
+	}
+	for _, bad := range []map[string]any{
+		{"to_pn": "+6281234567890", "idempotency_key": "c2", "contact": map[string]string{"name": "", "phone": "+6281377700001"}},
+		{"to_pn": "+6281234567890", "idempotency_key": "c3", "contact": map[string]string{"name": "X", "phone": "0813"}},
+		{"to_pn": "+6281234567890", "idempotency_key": "c4", "contact": map[string]string{"name": "X", "phone": "+6281377700001"},
+			"image_b64": base64.StdEncoding.EncodeToString(tinyPNG)},
+	} {
+		if code, _ := post(t, srv, "/send", bad, true); code != http.StatusBadRequest {
+			t.Fatalf("%v: want 400, got %d", bad["idempotency_key"], code)
+		}
+	}
+	wa := &fakeWA{connected: true, loggedIn: true}
+	newSender(wa, st, &recNotifier{}, SenderConfig{Idle: time.Second, MaxAttempts: 3}).Step(context.Background())
+	if len(wa.sent) != 1 || !strings.HasPrefix(wa.sent[0], "CARD +6281234567890|Free Antony|BEGIN:VCARD") {
+		t.Fatalf("sent %v", wa.sent)
 	}
 }

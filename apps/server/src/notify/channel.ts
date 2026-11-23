@@ -37,9 +37,19 @@ export interface ChannelHealth {
   detail: string;
 }
 
+/** A contact card (PRD §21.4): the rep's name and WhatsApp number, E.164. */
+export interface ContactCard {
+  to: string;
+  name: string;
+  phone: string;
+  idempotencyKey: string;
+}
+
 export interface Channel {
   readonly mode: "stub" | "gateway";
   send(msg: OutboundMessage): Promise<SendResult>;
+  /** Send a tappable contact card (vCard with the WhatsApp id). */
+  sendContact(card: ContactCard): Promise<SendResult>;
   health(): Promise<ChannelHealth>;
 }
 
@@ -49,6 +59,10 @@ export class StubChannel implements Channel {
   async send(_msg: OutboundMessage): Promise<SendResult> {
     this.seq += 1;
     return { status: "stubbed", providerMessageId: `stub-${Date.now()}-${this.seq}`, error: null };
+  }
+  async sendContact(_card: ContactCard): Promise<SendResult> {
+    this.seq += 1;
+    return { status: "stubbed", providerMessageId: `stub-card-${Date.now()}-${this.seq}`, error: null };
   }
   async health(): Promise<ChannelHealth> {
     return {
@@ -74,17 +88,29 @@ export class GatewayChannel implements Channel {
   }
 
   async send(msg: OutboundMessage): Promise<SendResult> {
+    return this.post({
+      to_pn: msg.to,
+      text: msg.text,
+      idempotency_key: msg.idempotencyKey,
+      ...(msg.media ? { image_b64: msg.media.dataB64, mime: msg.media.mime } : {}),
+    });
+  }
+
+  async sendContact(card: ContactCard): Promise<SendResult> {
+    return this.post({
+      to_pn: card.to,
+      idempotency_key: card.idempotencyKey,
+      contact: { name: card.name, phone: card.phone },
+    });
+  }
+
+  private async post(payload: Record<string, unknown>): Promise<SendResult> {
     if (!this.baseUrl) return { status: "failed", providerMessageId: null, error: "WA_GATEWAY_URL belum diisi." };
     try {
       const res = await this.fetchImpl(this.url("/send"), {
         method: "POST",
         headers: { "content-type": "application/json", "x-gateway-secret": this.secret },
-        body: JSON.stringify({
-          to_pn: msg.to,
-          text: msg.text,
-          idempotency_key: msg.idempotencyKey,
-          ...(msg.media ? { image_b64: msg.media.dataB64, mime: msg.media.mime } : {}),
-        }),
+        body: JSON.stringify(payload),
         signal: AbortSignal.timeout(this.timeoutMs),
       });
       const body = (await res.json().catch(() => ({}))) as { message_id?: string; error?: string; queued?: boolean };
