@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | **v1.1.** Phase 1 (§14, WP-0…6), the Pesan tab and dispatch marks (§20) are **built**. **§21 (owner review 2026-11-23) is specified, not built, and overrides earlier sections where they conflict:** MV1 on Finance approval, production removed, "sedang dikirim" from XTable instead of the Berangkat button, agent-routed customer replies, reschedule requests. |
+| **Status** | **v1.1.** Phase 1 (§14, WP-0…6), the Pesan tab and dispatch marks (§20) are **built**. **§21 (owner review 2026-11-23) is built (WP 7a–7f, §21.7) and overrides earlier sections where they conflict:** MV1 on Finance approval, production removed, "sedang dikirim" from XTable instead of the Berangkat button, agent-routed customer replies, reschedule requests. |
 | **Date** | 2026-11-10 (v1.0) · 2026-11-23 (v1.1, §21) |
 | **Owner** | Mechashock (product) · Claude (spec) |
 | **Product** | LeadScout (`dna160/kencanaleadscout`, `apps/server`) |
@@ -560,7 +560,9 @@ Everything needed to configure, deploy, test and operate Phase 1. Setting names 
 |---|---|---|
 | `NOTIFY_LIVE` | `off` | `off`: record events, send nothing. `shadow`: everything goes only to the SO's rep, marked [SHADOW]. `on`: customers plus the rep CC. **Any change starts afresh from that moment**: earlier events are never sent, and pending rows of the old mode are cancelled. |
 | `NOTIFY_DISPATCH_INTERVAL_MS` | 15000 | Dispatcher tick; up to 20 messages per tick |
-| `NOTIFY_HOLD_MV1_MIN` / `_MV2_MIN` / `_MV3_MIN` | 10 / 0 / 0 | Hold before sending, per step |
+| `NOTIFY_HOLD_MV1_MIN` / `_MV3_MIN` | 10 / 0 | Hold before sending, per step (`_MV2_MIN` is gone with production, §21.2) |
+| `ANTHROPIC_API_KEY` | — | The reply agent's model key (§21.4). Without it, replies are forwarded as before. **Secret.** |
+| `NOTIFY_REPLY_MODEL` | `claude-haiku-5-5` | Model for the reply agent: small and fast by owner decision |
 | `NOTIFY_SEND_FROM_HOUR` / `NOTIFY_SEND_UNTIL_HOUR` | 7 / 20 | Sending window, WIB. Outside it, messages wait. |
 | `NOTIFY_DAILY_CAP_PER_PHONE` | 3 | Order messages per customer number per WIB day; the rest wait for tomorrow |
 | `NOTIFY_MAX_EVENT_AGE_HOURS` | 24 | Movements older than this are skipped (no catch-up blast after an outage) |
@@ -650,13 +652,14 @@ DATABASE_URL=postgres://$USER@localhost:55432/leadscout_test npx vitest run
 | `soKey.test.ts` | WP-1 `po_no` join; duplicate headers; one-time re-pull |
 | `orderLane.test.ts` | Order lane: cursors, paging, failure isolation, lease, deleted rows; webhook (HMAC, re-read) |
 | `events.test.ts` | Each event rule, replay-safety, horizon, sweep, `so.late`, poll vs. webhook source |
-| `dispatchMarks.test.ts` | §20 wording (departed, delayed with/without date, earlier, never-told, pickup, reminder); Berangkat on the day only, no CC, refused early / recorded-only late / refused for pickups; dropped if still unsent next day; Tunda with CC; latest mark wins; a mark replaces an unsent step 3; undo before/after sending; Selaras `sj_date` edit (and one matching a staff delay ignored, sweep idempotent); afternoon reminder to rep and logistics, once a day |
+| `dispatchMarks.test.ts` | Wording (departed with vehicle/driver, 08:00 notice, delayed with/without date, earlier, never-told, pickup, reminder); XTable departure: once per DO, no CC, re-edit never resends, backfill recorded only, pickups / cancelled never, source switch; dropped if still unsent next day; 08:00 notice once, skipped if departed / moved / on hold; Tunda with CC; latest mark wins; a mark replaces an unsent step 1; undo before/after sending; XTable `sj_date` edit (and one matching a Tunda ignored, sweep idempotent); 13:00 reminder to Sales Admin and warehouse; §21.5 holds: MV3 waits, closed by Tunda / XTable edit / "Tetap sesuai jadwal" / cancelled DO, departure not held, 16:00 reminder timing, re-issued DO wording |
+| `replyAgent.test.ts` | §21.4: sanitizing the model's answer; picking the DO; customer notice and rep message wording; the 90 s burst wait and one call per burst (context: thread, open orders, never the number); one fixture per category (rep header, escalation for komplain, Sales Admin for ubah_jadwal, notice + card); photos forwarded as photos; ack logged only; 24 h window with the komplain/ubah_jadwal override; hold opened; fail-open; no rep → Sales Admin, no card; agent off = forward as before; Pesan chip and Ditangani |
 | `dispatcher.test.ts` | On / shadow / off; merge; DO cancelled before and after sending; unreachable; opt-out; shared number; exclusions; window; daily cap; stale events; mode change; retries; pause; kill switch; step off; release |
 | `waEvents.test.ts` | Receipts; STOP/MULAI; LID learning; shadow grading; reply forwarding; gateway state; pairing proxy; inbound photos (stored with the sniffed type, forwarded to the rep as a photo, dedupe on retry, "STOP" caption ignored, fake images refused) |
 | `notifyAdmin.test.ts` | Switches; outbox actions; overrides; shadow summary; pairing QR |
 | `notifyChat.test.ts` | Pesan tab: list, unread/read, search, thread order, reply and its guards (token, never wrote in, opted out, kill switch); photos in list/thread; media route (type, headers, bad/unknown ids) |
 | `atp.test.ts` | Includes an assertion that the WP-1 re-keying leaves ATP unchanged |
-| `apps/wa-gateway` | API auth and validation; idempotency; pacing; caps; retries; `not_on_whatsapp`; inbound filtering (text and photos); image sends; callbacks; Postgres outbox incl. images |
+| `apps/wa-gateway` | API auth and validation; idempotency; pacing; caps; retries; `not_on_whatsapp`; inbound filtering (text and photos); image sends; contact cards (vCard with `waid`, escaping, validation, sent as a card); callbacks; Postgres outbox incl. images |
 
 **Isolation rules, for anyone adding tests:**
 - Database suites run in parallel on one database, so every suite prefixes its rows (`wp4disp`, `wp5in`, …) and deletes only its own.
@@ -665,7 +668,7 @@ DATABASE_URL=postgres://$USER@localhost:55432/leadscout_test npx vitest run
 
 - Before merging, run the suite once against a **freshly created** database as well as a long-lived one. Row order and first-time migrations differ. The dispatcher's processing-order bug (fixed in `6d7d707`) failed only on a fresh database.
 
-Last full run (2026-11-17): 621 passed on fresh and long-lived databases (Postgres 16); 253 passed without a database; 16 gateway tests passed with the race detector.
+Last full run (2026-11-23): 652 passed on fresh and long-lived databases (Postgres 16); 259 passed without a database; 18 gateway tests passed with the race detector (Postgres outbox included). The reply agent's real model call was not exercised (no API key in the test environment); its JSON schema was checked.
 
 ### 19.6 Manual checks
 
@@ -707,7 +710,13 @@ Last full run (2026-11-17): 621 passed on fresh and long-lived databases (Postgr
 | Pengiriman: "Pesan tidak dikirim: diganti tanda yang lebih baru" | A newer mark on the same DO replaced it before sending (`superseded`) | Expected; only the latest mark is sent |
 | Pengiriman: `stale_departure` | A Berangkat message was still waiting at the end of its day (gateway down, quiet hours, daily cap) | Nothing to do; "sedang dalam perjalanan" would no longer be true |
 | Pengiriman: "Dicatat saja" | Berangkat was marked after the delivery day | By design: recorded, the customer is not messaged |
-| Reminder not received | Reminders follow the live mode (none when `off`), go once per WIB day, and only to reps with a number | Check Konfigurasi → Pengingat pengiriman and Sales CC |
+| Reminder not received | Reminders follow the live mode (none when `off`), go once per WIB day, and only to the numbers set | Check Konfigurasi → Pengiriman & balasan |
+| Step-1 delivery row `pending`, deferred `awaiting_confirmation` | The SO's confirmation (step 0) is still waiting (hold / window / cap) | Expected: it follows 60 s after the confirmation |
+| Step-1 delivery row deferred `reschedule_hold` | The customer asked to move this DO (§21.5) | Change the date in XTable, Tunda, or "Tetap sesuai jadwal" in Pesan |
+| Departure row `skipped: backfill` / `source_off` | Vehicle / driver filled after the delivery day / XTable source switched off | By design |
+| 08:00 row `cancelled: date_moved` / `already_departed` / `reschedule_hold` | Re-checked at send time | By design |
+| Pesan: "Agen tidak tersedia" / case `fallback` | The model call failed or timed out; the originals were forwarded as `lainnya` | Check `ANTHROPIC_API_KEY`; nothing was lost |
+| Pesan: inbound "Menunggu agen…" for minutes | The agent waits until the conversation is quiet for the debounce (90 s); a worker that died gives the rows back after 5 min | Check the agent is on and the key is set |
 
 ---
 
@@ -751,7 +760,7 @@ Last full run (2026-11-17): 621 passed on fresh and long-lived databases (Postgr
 
 ---
 
-## 21. Owner review 2026-11-23: confirm on approval, two-step delivery from XTable, no production, issue routing, reschedule requests (specified, not built)
+## 21. Owner review 2026-11-23: confirm on approval, two-step delivery from XTable, no production, issue routing, reschedule requests (built 2026-11-23, §21.7)
 
 Five changes from the owner's review. Each one says what main does today (HEAD `8cab0ef`) and what changes.
 
@@ -947,6 +956,18 @@ A DO exists (step 1 has gone out) and the customer writes in asking to move the 
 
 Order: 7b → 7a → 7e → 7c → 7d → 7f. Before 7e and 7f, run the test-DO checks in §21.3 and §21.5. Ship each with `NOTIFY_LIVE=shadow` first; run 7a in shadow for one week and compare confirmation timing against approval timestamps.
 
+### 21.7 Build status (2026-11-23)
+
+All six work packages are built and on main, in the order above (commits `5002943` 7b+7a, `c7afb8f` 7e, `6b64f5e` 7c, `ad8dad2` 7d, `cf464dd` 7f). Decisions and details the spec left open:
+
+- **7a.** The switch-over instant is `order_event_state.confirmed_since`, stamped on the first boot with this code. Step 1 of delivery no longer merges into the confirmation ("diterima & dijadwalkan"); it waits 60 s behind it. The approval event is aged from the header's last edit, so a confirmation is not skipped as stale when approval comes days after entry. Items show as "{produk} {tebal} {warna}" from the SO line (panel mm from `total_thickness_acp`, skin from `th_alu_skin`); CLAUDE.md is not in the repo, so the existing correction in `context.ts` / `erpLookup.ts` is the one used.
+- **7e.** Built before the owner's three test-DO checks (§21.3). The code is safe either way: it only fires when the fields fill. Both departure sources are on by default (XTable, and the 08:00 notice at 08:00); switch them in Konfigurasi → Pengiriman & balasan. The 13:00 reminder now goes to Sales Admin and the warehouse contact (plus any extra numbers), no longer to reps. `delivery_date` is stored as a timestamp whatever the field holds. Old Berangkat marks stay as history; the mark API answers `departed` with a pointer to XTable.
+- **7c.** Cards travel through the gateway outbox in the media columns (type `text/vcard`), so the outbox needed no schema change.
+- **7d.** Model `claude-haiku-5-5` (configurable), effort low, structured outputs, 20 s timeout, 1 retry. The agent is on by default in Konfigurasi but inactive until `ANTHROPIC_API_KEY` is set; Konfigurasi says so. Only an SO / DO number the customer actually has is kept from the model's answer. Photos are forwarded to every recipient of the case. Verdicts live in `notify_reply_cases`. An `ack` case is closed automatically.
+- **7f.** Built before the owner's `sj_date` edit check (§21.5); if the field turns out locked, Tunda is the path. Holds are opened by the agent (`ubah_jadwal`); there is no manual "open a hold" button yet. A departure does not close a hold (the rep closes it).
+
+**Still with the owner:** the test-DO checks in §21.3 and §21.5; setting `ANTHROPIC_API_KEY` on Railway; filling the Sales Admin, warehouse and escalation numbers; then a week of 7a in shadow.
+
 ---
 
 ## Appendix A — Selaras field reference (verified 2026-11-10)
@@ -998,11 +1019,11 @@ Moved to §19.1–19.3, so there is one table to keep current.
 | Live and outbox (WP-6) | `GET/PUT /api/notify/live` [PUT: token], `GET /api/notify/outbox?view=pending\|held\|problems\|recent`, `POST /api/notify/outbox/:id/action` (`send_now`, `release`, `cancel`, `grade`) [token] |
 | People | `GET/PUT /api/notify/sales-contacts[/:id]`, `GET/PUT /api/notify/overrides[/:customerId]`, `GET /api/notify/customers?q=` [PUT: token] |
 | Shadow, replies | `GET /api/notify/shadow?days=`, `GET /api/notify/inbound` |
-| Pesan tab | `GET /api/notify/chats?q=`, `GET /api/notify/chats/:phone`, `POST /api/notify/chats/:phone/read`, `POST /api/notify/chats/:phone/reply` [token], `GET /api/notify/media/:id` |
+| Pesan tab | `GET /api/notify/chats?q=` (with the latest agent case), `GET /api/notify/chats/:phone` (with `cases`), `POST /api/notify/chats/:phone/read`, `POST /api/notify/chats/:phone/reply` [token], `POST /api/notify/cases/:id/handled` {handled} [token], `GET /api/notify/media/:id` |
 | Gateway | `POST /api/notify/wa-events` (gateway secret); `GET /api/notify/gateway/pair`, `GET /api/notify/gateway/pair-svg`, `POST /api/notify/gateway/pair-phone` [token] |
-| Pengiriman (§20) | `GET /api/notify/dispatch?date=`, `POST /api/notify/dispatch/mark` {doIds, action: departed\|delayed, date?} [token], `POST /api/notify/dispatch/undo` {doId} [token], `PUT /api/notify/dispatch/settings` {remindHour, remindNumbers} [token] |
+| Pengiriman (§20, §21) | `GET /api/notify/dispatch?date=` (rows + settings), `POST /api/notify/dispatch/mark` {doIds, action: delayed, date?} [token], `POST /api/notify/dispatch/undo` {doId} [token], `PUT /api/notify/dispatch/settings` (partial: remindHour, remindNumbers, departFromXtable, morningNotice, morningHour, salesAdminNumber, warehouseNumber, escalationNumber, replyAgent, replyDebounceS) [token], `POST /api/notify/holds/:id/keep` [token] |
 | Order backbone | `GET /api/orders/events?so_no=&type=`, `GET /api/orders/sync-status`, `GET /api/orders/do-timing` (aggregate DO timing, counts only) [token], `POST /api/erp/webhook` (HMAC) |
-| wa-gateway | `POST /send`, `POST /check`, `GET /health`, `GET /pair`, `POST /pair/phone`, `GET /healthz` — see `apps/wa-gateway/README.md` |
+| wa-gateway | `POST /send` (text, `image_b64`, or `contact: {name, phone}`), `POST /check`, `GET /health`, `GET /pair`, `POST /pair/phone`, `GET /healthz` — see `apps/wa-gateway/README.md` |
 
 ## Appendix E — Decision log
 

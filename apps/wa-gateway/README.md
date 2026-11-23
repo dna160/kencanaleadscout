@@ -40,7 +40,7 @@ All routes need `x-gateway-secret`, except `/healthz`.
 
 | Route | Body → answer |
 |---|---|
-| `POST /send` | `{to_pn, text, idempotency_key, image_b64?, mime?}` → `{message_id, queued, status, duplicate}`. With an image, `text` is the caption (optional). The type is sniffed from the bytes: JPEG, PNG or WebP, at most 15 MB. |
+| `POST /send` | `{to_pn, text, idempotency_key, image_b64?, mime?, contact?}` → `{message_id, queued, status, duplicate}`. With an image, `text` is the caption (optional). The type is sniffed from the bytes: JPEG, PNG or WebP, at most 15 MB. Or `contact: {name, phone}` (E.164) instead of text/image: sent as a contact card (vCard 3.0 with the WhatsApp id), so one tap opens a chat with that number. |
 | `POST /check` | `{pns: [...]}` → `[{pn, on_whatsapp, jid, lid?}]` |
 | `GET /health` | → `{connected, logged_in, jid, queue_depth, sent_today, phone_last_seen}` |
 | `GET /pair` | → `{paired, jid?, qr?, expires_in?, error?}`. `qr` is the string to render as a QR code. |
