@@ -167,6 +167,14 @@
   .ci-bottom{display:flex;justify-content:space-between;gap:6px;align-items:center;margin-top:2px}
   .ci-prev{font-size:13px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .ci-unread{flex:none;min-width:20px;height:20px;border-radius:999px;background:#25d366;color:#fff;font-size:11.5px;font-weight:800;display:flex;align-items:center;justify-content:center;padding:0 6px}
+  .kc{flex:none;font-size:10.5px;font-weight:800;letter-spacing:.3px;border-radius:999px;padding:1px 7px;margin-right:6px;text-transform:uppercase;background:#e5e7eb;color:#374151}
+  .kc.komplain{background:var(--neg-bg);color:var(--neg-ink)} .kc.ubah_jadwal{background:#fde2c8;color:#9a3412}
+  .kc.pesanan{background:var(--ok-bg);color:var(--ok-ink)} .kc.status{background:var(--stub-bg);color:var(--stub-ink)}
+  .kc.dokumen_pembayaran{background:var(--warn-bg);color:var(--warn-ink)}
+  .case-bar{padding:8px 12px;background:#fff8e6;border-bottom:1px solid var(--warn-line);font-size:13px;line-height:1.45;display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap}
+  .case-bar.done{background:#f3f4f6;border-bottom-color:var(--line)}
+  .case-bar .sum{flex:1;min-width:200px}
+  .case-bar .acts{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
   .chat-pane{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden;background:var(--wa-bg)}
   .chat-head{display:flex;align-items:center;gap:10px;padding:8px 12px;background:#f0f2f5;border-bottom:1px solid var(--line);min-height:58px}
   .chat-head .back{display:none;font:inherit;font-size:20px;background:none;border:none;cursor:pointer;min-width:var(--tap);min-height:var(--tap)}
@@ -646,7 +654,8 @@
     delivery_today: "Dikirim hari ini (08:00)", delivery_changed: "Jadwal berubah", delivery_departed: "2 · Sedang dikirim",
     dispatch_reminder: "Pengingat pengiriman (ke admin)",
     do_cancelled_notice: "DO dibatalkan (ke sales)", stop_ack: "Konfirmasi STOP", start_ack: "Konfirmasi MULAI",
-    reply_forward: "Teruskan balasan", auto_reply: "Balasan otomatis", manual_reply: "Balasan admin" };
+    reply_forward: "Teruskan balasan", auto_reply: "Balasan otomatis", contact_card: "Kartu kontak sales", manual_reply: "Balasan admin",
+    hold_reminder: "Pengingat ubah jadwal" };
   const MODE_TEXT = { off: "MATI — tidak ada pesan", shadow: "SHADOW — hanya ke sales", on: "LIVE — ke pelanggan + CC sales" };
   const tokenHint = () => CFG && CFG.adminTokenRequired && !store.get("notifyToken") ? " Isi token admin di tab Konfigurasi untuk mengubah." : "";
   let LIVE = null;
@@ -797,7 +806,7 @@
     const parts = [step];
     if (m.mode === "shadow") parts.unshift("SHADOW");
     if (m.mode === "test") parts.unshift("UJI");
-    if (m.recipient_role === "sales_cc" && !/^(reply_forward|do_cancelled_notice|dispatch_reminder)$/.test(m.milestone)) parts.push("salinan sales");
+    if (m.recipient_role === "sales_cc" && !/^(reply_forward|do_cancelled_notice|dispatch_reminder|hold_reminder)$/.test(m.milestone)) parts.push("salinan sales");
     if (m.so_no) parts.push(m.so_no);
     return parts.join(" · ");
   };
@@ -834,13 +843,31 @@
     } catch (e) { $("chatItems").innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
   }
   function setChatBadge(n) { const b = $("chatBadge"); b.hidden = !n; b.textContent = n > 99 ? "99+" : String(n || ""); }
+  const CASE_LABEL = { komplain: "Komplain", ubah_jadwal: "Ubah jadwal", status: "Status", dokumen_pembayaran: "Dokumen/bayar",
+    pesanan: "Pesanan", lainnya: "Lainnya", ack: "Ok" };
+  function caseBar(t, phone) {
+    const k = (t.cases || []).find((x) => x.category !== "ack");
+    if (!k) return "";
+    const done = Boolean(k.handled_at);
+    const holdOpen = k.hold_id && !k.hold_resolved_at;
+    const dest = (k.routed_to || []).map(localNo).join(", ");
+    return `<div class="case-bar ${done ? "done" : ""}">
+      <span class="kc ${esc(k.category)}">${esc(CASE_LABEL[k.category] || k.category)}</span>
+      <span class="sum">${k.summary ? esc(k.summary) : (k.source === "fallback" ? "Agen tidak tersedia; pesan diteruskan apa adanya." : "")}
+        <span class="muted"><br>${esc(chatTime(k.at))}${k.so_no ? " · SO " + esc(k.so_no) : ""}${k.no_sj ? " · DO " + esc(k.no_sj) : ""}${k.requested_date ? " · diminta " + esc(k.requested_date) : ""}${dest ? " · diteruskan ke " + esc(dest) : " · belum ada penerima"}${holdOpen ? " · pesan jadwal ditahan" : k.hold_resolution ? " · " + esc({ sj_date_changed: "jadwal diubah di XTable", tunda: "ditunda di LeadScout", kept: "tetap sesuai jadwal", do_cancelled: "DO dibatalkan" }[k.hold_resolution] || k.hold_resolution) : ""}${done ? " · ditangani " + esc(k.handled_by || "") : ""}</span></span>
+      <span class="acts">
+        ${holdOpen ? `<button type="button" class="btn ghost sm" data-keep="${esc(k.hold_id)}">Tetap sesuai jadwal</button>` : ""}
+        <label class="chk" style="min-height:auto"><input type="checkbox" data-handled="${esc(k.id)}" ${done ? "checked" : ""} /> Ditangani</label>
+      </span>
+    </div>`;
+  }
   function renderChatList() {
     $("chatItems").innerHTML = !CHATS.length ? '<div class="empty">Belum ada percakapan.</div>' : CHATS.map((c) => `
       <button type="button" class="chat-item" role="listitem" data-chat="${esc(c.phone)}" aria-current="${c.phone === ACTIVE}">
         <span class="avatar ${c.rep_name ? "rep" : "cust"}" aria-hidden="true">${esc(initials(c.rep_name || c.customer))}</span>
         <span class="ci-main">
           <span class="ci-top"><span class="ci-name">${esc(chatName(c))}</span><span class="ci-time ${c.unread ? "unread" : ""}">${esc(chatTime(c.at))}</span></span>
-          <span class="ci-bottom"><span class="ci-prev">${c.dir === "out" ? "✓ " : ""}${c.consent === "opted_out" ? "🚫 " : ""}${c.kind === "image" ? "📷 " + (c.text ? "" : "Foto") : ""}${esc(String(c.text || "").replace(/[*_~]/g, "").replace(/\s+/g, " ").slice(0, 90))}</span>
+          <span class="ci-bottom"><span class="ci-prev">${c.case_category && c.case_category !== "ack" && !c.case_handled ? `<span class="kc ${esc(c.case_category)}">${esc(CASE_LABEL[c.case_category] || c.case_category)}</span>` : ""}${c.dir === "out" ? "✓ " : ""}${c.consent === "opted_out" ? "🚫 " : ""}${c.kind === "image" ? "📷 " + (c.text ? "" : "Foto") : ""}${esc(String(c.text || "").replace(/[*_~]/g, "").replace(/\s+/g, " ").slice(0, 90))}</span>
           ${c.unread ? `<span class="ci-unread" aria-label="${c.unread} belum dibaca">${c.unread}</span>` : ""}</span>
         </span>
       </button>`).join("");
@@ -860,7 +887,8 @@
     try { t = await api(`/api/notify/chats/${encodeURIComponent(phone)}`); }
     catch (e) { $("chatPane").innerHTML = `<div class="chat-empty">${esc(e.message)}</div>`; return; }
     if (phone !== ACTIVE) return;
-    const sig = JSON.stringify([t.messages.map((m) => [m.dir, m.id, m.status, m.delivered_at, m.read_at]), t.canReply]);
+    const sig = JSON.stringify([t.messages.map((m) => [m.dir, m.id, m.status, m.delivered_at, m.read_at]), t.canReply,
+      (t.cases || []).map((k) => [k.id, k.handled_at, k.hold_resolved_at])]);
     if (sig === THREAD_SIG) return;
     THREAD_SIG = sig;
     const c = CHATS.find((x) => x.phone === phone) || {};
@@ -874,10 +902,10 @@
       lastDay = d;
       const time = d.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
       if (m.dir === "in") {
-        const note = m.action && m.action !== "unmatched" ? `<span class="tag" style="color:#54656f">${esc({ opted_out: "STOP — berhenti", opted_in: "MULAI — aktif lagi", shadow_grade: "Penilaian shadow", forwarded: "Diteruskan ke sales", unresolved: "Nomor tidak dikenal" }[m.action] || m.action)}${m.so_no ? " · " + esc(m.so_no) : ""}</span>` : "";
+        const note = m.action && m.action !== "unmatched" ? `<span class="tag" style="color:#54656f">${esc({ opted_out: "STOP — berhenti", opted_in: "MULAI — aktif lagi", shadow_grade: "Penilaian shadow", forwarded: "Diteruskan ke sales", unresolved: "Nomor tidak dikenal", pending_agent: "Menunggu agen…", agent_claimed: "Diproses agen…", ack: "Hanya tanda terima", unrouted: "Belum ada penerima (isi nomor sales / Sales Admin)" }[m.action] || m.action)}${m.so_no ? " · " + esc(m.so_no) : ""}</span>` : "";
         return sep + `<div class="msg m-in">${note}${photo(m)}${esc(m.text)}<div class="foot">${time}</div></div>`;
       }
-      const sys = /^(stop_ack|start_ack|auto_reply|reply_forward|do_cancelled_notice)$/.test(m.milestone) || m.recipient_role === "sales_cc";
+      const sys = /^(stop_ack|start_ack|auto_reply|contact_card|reply_forward|do_cancelled_notice|dispatch_reminder|hold_reminder)$/.test(m.milestone) || m.recipient_role === "sales_cc";
       const bad = m.status === "failed" || m.status === "held";
       const why = bad && (m.error || m.cancel_reason) ? `\n— ${m.error || m.cancel_reason}` : "";
       return sep + `<div class="msg m-out ${sys ? "sys" : ""} ${bad ? "bad" : ""}"><span class="tag">${esc(tagFor(m))}</span>${photo(m)}${waFormat(m.text)}${esc(why)}<div class="foot">${time} ${ticks(m)}</div></div>`;
@@ -889,6 +917,7 @@
         <span class="avatar ${c.rep_name ? "rep" : "cust"}" aria-hidden="true">${esc(initials(c.rep_name || c.customer))}</span>
         <div class="who"><b>${esc(c.phone ? chatName(c) : localNo(phone))}</b><span>${esc(localNo(phone))}${tags ? " · " + esc(tags) : ""}</span></div>
       </div>
+      ${caseBar(t, phone)}
       <div class="chat-thread" id="chatThread">${body || '<div class="chat-empty">Belum ada pesan.</div>'}</div>
       ${t.canReply ? `
       <form class="chat-compose" id="chatForm">
@@ -896,6 +925,15 @@
         <button class="send" type="submit" aria-label="Kirim">➤</button>
       </form>` : `<div class="chat-blocked">${esc(t.replyBlockedReason || "")}</div>`}`;
     $("chatBack").addEventListener("click", () => { $("chatRoot").classList.remove("open"); ACTIVE = null; renderChatList(); });
+    $("chatPane").querySelectorAll("[data-handled]").forEach((cb) => cb.addEventListener("change", async () => {
+      try { await api(`/api/notify/cases/${cb.dataset.handled}/handled`, { method: "POST", body: JSON.stringify({ handled: cb.checked }) }); THREAD_SIG = ""; loadThread(phone, false); loadChats(); }
+      catch (e) { cb.checked = !cb.checked; toast(e.message + tokenHint()); }
+    }));
+    $("chatPane").querySelectorAll("[data-keep]").forEach((b) => b.addEventListener("click", async () => {
+      if (!confirm("Tutup permintaan ubah jadwal: jadwal tetap seperti semula? Pelanggan tidak dikirimi pesan otomatis; mohon kabari pelanggan langsung.")) return;
+      try { await api(`/api/notify/holds/${b.dataset.keep}/keep`, { method: "POST", body: "{}" }); toast("Jadwal tetap."); THREAD_SIG = ""; loadThread(phone, false); }
+      catch (e) { toast(e.message + tokenHint()); }
+    }));
     const th = $("chatThread");
     if (scrollToEnd || atBottom) {
       th.scrollTop = th.scrollHeight;

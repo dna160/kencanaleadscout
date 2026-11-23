@@ -82,10 +82,14 @@ export async function notifyChatRoutes(app: FastifyInstance): Promise<void> {
           left join notify_chat_reads r on r.phone_e164 = l.phone
           left join notify_contacts c on c.phone_e164 = l.phone
       )
-      select e.*, h.customer_name_text as customer
+      select e.*, h.customer_name_text as customer,
+             k.id as case_id, k.category as case_category, k.summary as case_summary, k.urgency as case_urgency,
+             (k.handled_at is not null) as case_handled
         from enriched e
         left join lateral (select customer_name_text from erp_so_header where po_no = e.so_no
                             order by erp_updated_at desc nulls last limit 1) h on true
+        left join lateral (select id::text, category, summary, urgency, handled_at from notify_reply_cases
+                            where phone_e164 = e.phone order by created_at desc limit 1) k on true
        where ${like}::text is null
           or (${digits}::text <> '' and e.phone like ${`%${digits}%`})
           or h.customer_name_text ilike ${like ?? ""}
@@ -106,7 +110,7 @@ export async function notifyChatRoutes(app: FastifyInstance): Promise<void> {
     if (!db) return reply.code(503).send({ error: "Database tidak tersedia." });
     const phone = phoneParam(req);
     if (!phone) return reply.code(400).send({ error: "Nomor tidak valid." });
-    const [out, inn, [contact], [ks]] = await Promise.all([
+    const [out, inn, [contact], [ks], cases] = await Promise.all([
       db`
         select id::text, mode, milestone, so_no, recipient_role, body as text, status, cancel_reason, error,
                coalesce(sent_at, created_at) as at, delivered_at, read_at, meta->>'by' as by, media_id
@@ -119,6 +123,13 @@ export async function notifyChatRoutes(app: FastifyInstance): Promise<void> {
       db<{ consent_state: string; opted_out_at: Date | null }[]>`
         select consent_state, opted_out_at from notify_contacts where phone_e164 = ${phone}`,
       db<{ kill_switch: boolean }[]>`select kill_switch from notify_settings where id = 1`,
+      // PRD §21.4 / §21.5: the agent's verdicts, newest first, with any reschedule hold.
+      db`
+        select k.id::text, k.category, k.urgency, k.summary, k.so_no, k.no_sj, to_char(k.requested_date, 'YYYY-MM-DD') as requested_date,
+               k.source, k.routed_to, k.created_at as at, k.handled_at, k.handled_by,
+               h.id::text as hold_id, h.resolved_at as hold_resolved_at, h.resolution as hold_resolution
+          from notify_reply_cases k left join notify_do_holds h on h.id = k.hold_id
+         where k.phone_e164 = ${phone} order by k.created_at desc limit 20`,
     ]);
     type Msg = Record<string, unknown> & { at: Date; dir: "in" | "out"; id: string };
     const messages: Msg[] = [
@@ -139,7 +150,24 @@ export async function notifyChatRoutes(app: FastifyInstance): Promise<void> {
             ? "Balasan hanya untuk nomor yang sudah mengirim pesan ke nomor notifikasi."
             : null,
       messages,
+      cases,
     };
+  });
+
+  /** POST /api/notify/cases/:id/handled {handled} — the "Ditangani" toggle on Pesan (PRD §21.4). [token] */
+  app.post("/api/notify/cases/:id/handled", async (req, reply) => {
+    if (!authorized(req, reply)) return;
+    const db = getSql();
+    if (!db) return reply.code(503).send({ error: "Database tidak tersedia." });
+    const id = Number((req.params as { id: string }).id);
+    const handled = (req.body as { handled?: unknown } | null)?.handled;
+    if (!Number.isInteger(id) || typeof handled !== "boolean") return reply.code(400).send({ error: "id dan handled wajib." });
+    const by = actor(req);
+    const rows = await db`
+      update notify_reply_cases set handled_at = ${handled ? new Date() : null}, handled_by = ${handled ? by : null}
+       where id = ${id} returning id`;
+    if (!rows.length) return reply.code(404).send({ error: "Kasus tidak ditemukan." });
+    return { ok: true, handled };
   });
 
   /**

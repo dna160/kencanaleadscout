@@ -135,6 +135,7 @@ export async function notifyRoutes(app: FastifyInstance): Promise<void> {
       databaseAvailable: Boolean(getSql()),
       milestones: MILESTONES.map((m) => ({ key: m, ...MILESTONE_INFO[m] })),
       live: await liveStatus(),
+      replyAgentAvailable: config.notify.replyAgentConfigured,
     };
   });
 

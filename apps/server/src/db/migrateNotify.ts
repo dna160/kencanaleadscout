@@ -241,4 +241,33 @@ export async function runNotifyMigrations(db: Sql): Promise<void> {
     )
   `;
   await db`create unique index if not exists notify_do_holds_open_idx on notify_do_holds (do_id) where resolved_at is null`;
+  await db`alter table notify_do_holds add column if not exists case_id bigint`;
+
+  // PRD §21.4: one row per routed burst of customer replies (the agent's verdict),
+  // shown as a chip + summary in Pesan, with a "Ditangani" toggle.
+  await db`
+    create table if not exists notify_reply_cases (
+      id             bigserial primary key,
+      phone_e164     text not null,
+      so_no          text,
+      do_id          text,
+      no_sj          text,
+      category       text not null,
+      urgency        text,
+      summary        text,
+      requested_date date,
+      needs_human    boolean,
+      source         text not null default 'agent' check (source in ('agent', 'fallback')),
+      error          text,
+      inbound_ids    bigint[] not null default '{}',
+      routed_to      text[] not null default '{}',
+      hold_id        bigint,
+      created_at     timestamptz not null default now(),
+      handled_at     timestamptz,
+      handled_by     text
+    )
+  `;
+  await db`create index if not exists notify_reply_cases_phone_idx on notify_reply_cases (phone_e164, created_at desc)`;
+  await db`alter table notify_inbound add column if not exists case_id          bigint`;
+  await db`alter table notify_inbound add column if not exists agent_claimed_at timestamptz`;
 }

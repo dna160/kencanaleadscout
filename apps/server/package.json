@@ -14,6 +14,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "1.6.0",
     "@fastify/multipart": "^9.0.1",
     "@fastify/static": "^8.0.1",
     "@kencana/core": "workspace:*",
@@ -22,7 +23,8 @@
     "postgres": "^3.4.5",
     "qrcode": "1.5.4",
     "undici": "^6.21.0",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@types/node": "^20.16.0",

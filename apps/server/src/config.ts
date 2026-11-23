@@ -507,6 +507,14 @@ export const config = {
      */
     live: oneOf("NOTIFY_LIVE", ["off", "shadow", "on"] as const, "off"),
     dispatchIntervalMs: int("NOTIFY_DISPATCH_INTERVAL_MS", 15_000),
+    /**
+     * PRD §21.4 reply agent: the model that sorts customer replies (komplain,
+     * ubah jadwal, …) before they go to the rep. A small, fast model by owner
+     * decision. Needs ANTHROPIC_API_KEY (read by the SDK; SECRET); without it,
+     * replies are forwarded as before.
+     */
+    replyModel: str("NOTIFY_REPLY_MODEL") || "claude-haiku-5-5",
+    replyAgentConfigured: Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN),
     /** Hold before release, minutes (PRD §5.0): absorbs SOs deleted/edited right after entry. */
     holdMinutes: {
       so_received: intOrZero("NOTIFY_HOLD_MV1_MIN", 10),

@@ -6,8 +6,9 @@
  *               / read / failed.
  *   inbound   → STOP/BERHENTI opts the number out (and says so once); MULAI
  *               opts back in; a rep's BENAR/SALAH grades their latest [SHADOW]
- *               message; any other customer reply is forwarded to the SO's rep,
- *               with at most one auto-reply per 24 h naming that rep.
+ *               message; any other customer reply goes to the reply agent
+ *               (replyAgent.ts, PRD §21.4) when it is on, else is forwarded to
+ *               the SO's rep with at most one auto-reply per 24 h naming that rep.
  *   state     → logged_out / temporary_ban / disconnected / connected recorded
  *               on notify_settings (the dispatcher already pauses on health).
  *
@@ -19,6 +20,7 @@ import type { Sql } from "../db/client.js";
 import type { Channel } from "./channel.js";
 import { loadHeader, loadRep, localDisplay } from "./context.js";
 import { TEMPLATE_VERSION } from "./messages.js";
+import { agentActive } from "./replyAgent.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type AnySql = Sql | any;
@@ -280,6 +282,9 @@ export async function handleInbound(db: AnySql, ch: Channel, e: GatewayEvent, no
      order by sent_at desc, id desc limit 1
   `;
   if (!last) return done("unmatched");
+  // PRD §21.4: with the reply agent on, wait for the burst to end; the agent
+  // (replyAgent.ts) classifies it and routes it to the rep.
+  if (await agentActive(db)) return done("pending_agent", last.so_no);
   const header = await loadHeader(db, last.so_no);
   const rep = header ? await loadRep(db, header) : null;
   if (rep?.phone) {

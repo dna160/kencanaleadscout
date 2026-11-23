@@ -53,6 +53,7 @@ import { runEventMigrations } from "./db/migrateEvents.js";
 import { startEventDeriver, stopEventDeriver } from "./events/runner.js";
 import { orderEventRoutes } from "./routes/order-events.js";
 import { startNotifyDispatcher, stopNotifyDispatcher } from "./notify/dispatcher.js";
+import { startReplyAgent, stopReplyAgent } from "./notify/replyAgent.js";
 import { waEventRoutes } from "./routes/wa-events.js";
 import { notifyAdminRoutes } from "./routes/notify-admin.js";
 import { notifyChatRoutes } from "./routes/notify-chat.js";
@@ -222,6 +223,7 @@ async function main(): Promise<void> {
   // WP-4: plan + send messages from events. NOTIFY_LIVE=off (default) records
   // the mode and sends nothing; shadow sends only to reps.
   await startNotifyDispatcher();
+  startReplyAgent();
 
   try {
     await app.listen({ host: config.host, port: config.port });
@@ -248,6 +250,7 @@ async function main(): Promise<void> {
     // operator to confirm with PPIC about an ERP that was perfectly healthy.
     // It never throws, and it releases only rows this process owns.
     await stopOrderSync();
+    stopReplyAgent();
     await stopNotifyDispatcher();
     await stopEventDeriver();
     const erp = await stopErpSync();
