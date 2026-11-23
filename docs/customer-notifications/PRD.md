@@ -1,9 +1,9 @@
-# Kabar Pesanan — Customer Order Notifications · PRD v1.0 (consolidated)
+# Kabar Pesanan — Customer Order Notifications · PRD v1.1
 
 | | |
 |---|---|
-| **Status** | **v1.0, consolidated.** Supersedes v0.1–v0.3. MVP test pipeline **built and in the repo** (stub channel); everything after Phase 1 is specified, not built. |
-| **Date** | 2026-11-10 |
+| **Status** | **v1.1.** Phase 1 (§14, WP-0…6), the Pesan tab and dispatch marks (§20) are **built**. **§21 (owner review 2026-11-23) is specified, not built, and overrides earlier sections where they conflict:** MV1 on Finance approval, production removed, "sedang dikirim" from XTable instead of the Berangkat button, agent-routed customer replies, reschedule requests. |
+| **Date** | 2026-11-10 (v1.0) · 2026-11-23 (v1.1, §21) |
 | **Owner** | Mechashock (product) · Claude (spec) |
 | **Product** | LeadScout (`dna160/kencanaleadscout`, `apps/server`) |
 | **Companion docs** | `docs/ontology/SELARAS-ONTOLOGY.md` (verified ERP map, 165 tables) · `claude/leadscout-2.0-prd.md` (master: auth, F1, F2) · `claude/stock-system-prd.md` (mirror + derived-state patterns) |
@@ -13,15 +13,14 @@
 
 ## 0. Summary
 
-**What.** When an order moves in the ERP, LeadScout sends the customer a WhatsApp message, with a copy to the sales rep. It works like RentOS: a Kencana WhatsApp number linked to a self-hosted **whatsmeow** gateway. The MVP covers three movements:
+**What.** When an order moves in the ERP, LeadScout sends the customer a WhatsApp message, with a copy to the sales rep. It works like RentOS: a Kencana WhatsApp number linked to a self-hosted **whatsmeow** gateway. The customer hears about these movements (as of v1.1, §21):
 
-1. **Pesanan diterima**: SO received.
-2. **Mulai produksi**: production started (make-to-order only).
-3. **Pengiriman dijadwalkan**: DO created, quoting its scheduled date (pickups get "siap diambil").
-4. **Jadwal kirim berubah**: a delivery is delayed or its date changes (§20).
-5. **Barang dikirim**: the goods leave the factory (§20).
+1. **Pesanan dikonfirmasi**: Finance has approved the SO. Customer name, full item list, "sedang diproses" (§21.1).
+2. **Pengiriman dijadwalkan**: a DO is created, quoting its scheduled date `sj_date` (pickups get "siap diambil").
+3. **Sedang dikirim**: the warehouse fills the plate number / driver on the DO in XTable as the truck leaves (§21.3).
+4. **Jadwal kirim berubah**: the DO's date changes in XTable, or staff mark Tunda (§20, §21.5).
 
-Steps 4 and 5 come from staff marks on the **Pengiriman** tab, because the ERP never records the truck leaving or a same-day slip (§20).
+Production is no longer messaged (§21.2). Customer replies are sorted by an agent and routed to the rep; the customer gets an automated-service notice and the rep's contact card (§21.4).
 
 Later phases add delivery confirmation, CBD/COD payment nudges, and Tempo due-date reminders once paid status is available.
 
@@ -57,6 +56,7 @@ Notifications are the first consumer. The same events later feed the customer-36
 | D7 | Deliverables are PRDs for Claude Code to execute; PPIC is a data source, never instructed. | Messages never promise dates the ERP didn't give. |
 | D8 | **Selaras is the single source of truth; send as soon as the ERP records the movement.** Webhook-driven when Selaras supports it; until then a fast poll (60 s). | §5.0. No business logic is keyed on LeadScout's retail/project/distributor verticals. |
 | D9 | **The rep is whoever Selaras puts on the SO** (`1202.sales_name` → `tbl_1130` id). One rep-phone list keyed by that Selaras ID, vertical-agnostic. | §9.4. The preferred end state is the phone stored in Selaras itself. |
+| D10 | **(2026-11-23) The first message waits for Finance approval**, for CBD, COD and Tempo alike. Replaces D2's "no Finance-approval logic". | §21.1. Wording says "dikonfirmasi", never "dibayar". |
 
 ---
 
@@ -229,6 +229,8 @@ All additive; migrations run on boot. ✅ = built.
 
 ## 7. Milestones and triggers
 
+> **Changed by §21 (2026-11-23):** MV1 fires on Finance approval (`so.confirmed`), not SO creation. MV2 (production) is removed. MV5 comes from XTable (§21.3).
+
 | # | Event | Notification | Primary signal (verified) | Hold / merge | Coverage | Phase |
 |---|---|---|---|---|---|---|
 | **MV1** | `so.created` | **Pesanan diterima** | New `1202` row (po_no), not deleted, `status_order` not cancelled | 10 min hold (configurable to 0). If a `do.created` for the SO is pending at release → **merged** "diterima & dijadwalkan" message (NTF-R2a) | All non-excluded SOs | **MVP** |
@@ -345,6 +347,8 @@ Before the first send to a number, the gateway's `/check` runs (WhatsApp `IsOnWh
 - **Escape hatch:** the provider-agnostic `Channel` means moving to Cloud API is a new adapter, not a redesign.
 
 ### 10.5 Inbound replies
+
+> **Changed by §21.4 (2026-11-23):** replies are classified by an agent (komplain, ubah jadwal, status, dokumen/pembayaran, pesanan, lainnya, ack) and routed to the rep with a summary; the customer gets an automated-service notice plus the rep's contact card. Below is the behaviour built today.
 - STOP → opt-out.
 - Anything else → forwarded to the SO's rep (WA + LeadScout feed), with at most one auto-reply per 24 h. The auto-reply names the rep and says the message was received and passed on.
 - **Admins can answer** from the `/notify` → Pesan tab (2026-11-12, owner decision; see §11). The auto-reply no longer says the number is unmonitored.
@@ -709,6 +713,8 @@ Last full run (2026-11-17): 621 passed on fresh and long-lived databases (Postgr
 
 ## 20. Dispatch: "Barang dikirim" and "Jadwal berubah" (built 2026-11-17)
 
+> **Changed by §21.3 / §21.5 (2026-11-23):** the Berangkat button is removed; "sedang dikirim" is triggered by the warehouse filling `no_kendaraan` / `driver` / `delivery_date` on the DO in XTable. Tunda stays as the reschedule fallback.
+
 **Why.** At the factory, *dijadwalkan* (scheduled) and *dikirimkan* (sent) are two phases. The schedule can be set any time; whether the truck actually goes, and when, is only known on the morning of the delivery. MV3 covers the first phase. Customers also need to hear when the goods leave, and when a delivery slips.
 
 **What the ERP can and cannot tell us** (production mirror, 17 Nov 2026, counts only, via `GET /api/orders/do-timing`):
@@ -745,6 +751,204 @@ Last full run (2026-11-17): 621 passed on fresh and long-lived databases (Postgr
 
 ---
 
+## 21. Owner review 2026-11-23: confirm on approval, two-step delivery from XTable, no production, issue routing, reschedule requests (specified, not built)
+
+Five changes from the owner's review. Each one says what main does today (HEAD `8cab0ef`) and what changes.
+
+### 21.1 The first message goes out on Finance approval, not on SO creation
+
+**Today.** `events/derive.ts` emits `so.created` when a new SO header (`po_no`) appears, not cancelled. The customer is messaged before Finance has looked at the order.
+
+**Change.** Replace `so.created` with `so.confirmed`. Key `so.confirmed:{po_no}`. It fires on whichever of these comes first:
+
+| # | Condition (mirror `erp_so_header` / `erp_do_header`) | Why |
+|---|---|---|
+| a | `approval_new` becomes **Approved** ("Approval Finance", `tbl_1203.approval` at line level) | The normal path. Finance has released the order. |
+| b | A live DO (1082/1205) appears for the SO while `approval_new` is still not Approved | Approval is not reliably recorded: in the sweep, **164 CBD SOs shipped while still "Waiting"**. Without this fallback those customers would get "dijadwalkan kirim" with no confirmation first. |
+
+Rules:
+- Cancelled SOs never fire. SOs whose header predates the switch-over never fire (same baseline guard as today).
+- If the ledger already holds a `so_received` row for the `po_no` (sent under the old trigger), do not send again.
+- When (b) fires, the confirmation is due before the MV3 message for the same SO: set MV3 `due_at` ≥ confirmation `due_at` + 60 s. The dispatcher already processes in due order (`6d7d707`).
+- The milestone id stays `so_received`, so live switches, ledger history and shadow grades carry over. Only the trigger and the template change.
+
+**What "approved" means.** Payment status is not in Selaras (it lives in Accurate). The owner confirms that Finance approval is the right "cleared" point for every term (D10):
+
+| Term | Share of SOs | What approval means |
+|---|---|---|
+| CBD | ~66% | Finance has checked the payment |
+| COD | ~13% | Released to ship; paid on delivery |
+| Tempo | ~21% | Credit limit cleared; invoice due `sj_date + top_days` |
+
+All three get the message on approval. The wording still says *dikonfirmasi dan sedang diproses*, never *pembayaran diterima*, because COD and Tempo have not paid yet.
+
+**Template (`so_received`).** Customer name (existing `greeting(ctx)`), SO number, the **full** item list, and assurance. Show up to 15 lines, then "+N item lainnya". Today `formatItems` stops at 3.
+
+```
+Halo Bapak/Ibu {nama_customer},
+
+Pesanan Anda nomor *{po_no}* sudah kami konfirmasi dan saat ini sedang kami proses.
+
+Item yang dipesan:
+1. {produk} {tebal} {warna}, {qty} lembar
+2. …
+
+Kami akan mengabari Anda kembali saat jadwal pengiriman sudah ditetapkan.
+```
+
+Use the item naming already in `messages.ts`, including the thickness-swap correction from CLAUDE.md.
+
+### 21.2 Production is removed
+
+Customers do not need to know when goods are being produced (it applies to ~4% of SOs anyway). Turning the switch off is not enough, because someone could switch it back on. Remove it:
+- `production.requested` from `derive.ts`
+- the `production_started` mapping in `rules.ts`
+- the template in `messages.ts`
+- the "Produksi dimulai" button on the test pipeline
+- the switch in `milestones_enabled`
+
+`erp_request_produksi` stays mirrored for internal use. Old ledger rows stay as history.
+
+### 21.3 Delivery is two steps, both from XTable
+
+**What XTable has, and what it lacks.** A full re-check of all 165 tables (2026-11-23) found no departure signal anywhere:
+
+| Where | What it shows |
+|---|---|
+| 1082 `sj_date` ("Do Date") | The **scheduled** date. Date only, no time. Set when the DO is created (the day before in 90%, two days before in 9%). Never edited afterwards: 0 edits across ~3,000 DOs, 12–17 Nov. |
+| 1082 `tanggal_spb` / `do_created_at` | Same as `sj_date` in 99.9% / the time the DO was made |
+| 1082 `print_status` | The surat jalan was printed, mostly 13:00–15:00 the day **before**. 35% are never marked Printed. |
+| 1082 `delivery_date`, `received_date`, `driver`, `no_kendaraan` | **Never filled (0%)** |
+| 1205 DO lines, 1179 FG Out mutations | Auto-inserted when the DO is created |
+| 1307/1308, 1338, 1277, 1310/1311 | Abandoned (≤ 15 rows, last used 2020–2021) |
+| 1203 `estimate_delivery` | Equals the order date on 99% of SOs; not a promise |
+
+**Decision.** "Sedang dikirim" must come from XTable, not from a button in LeadScout. The fields for it already exist on the DO header and are unused. The **warehouse or gate security fills `no_kendaraan` and `driver` (and `delivery_date`) on the DO when the truck leaves.** This is a process change at Kencana, not a Selaras development.
+
+| Step | Trigger (XTable) | Kencana truck or hired ekspedisi (~76% of lembar) | Customer collects (~24%) |
+|---|---|---|---|
+| **1 · Dijadwalkan** (MV3) | A live DO appears; date = `sj_date` | "Pesanan *{so}* dijadwalkan kirim pada {Hari, tgl}." | "Pesanan *{so}* siap diambil mulai {tgl}." |
+| **2 · Sedang dikirim** (MV5) | On a live, `di Antar` DO, `no_kendaraan`, `driver` or `delivery_date` goes from empty to filled | "Pesanan *{so}* sedang dalam perjalanan ke alamat Anda. Kendaraan: {no_kendaraan} · Sopir: {driver}" (each part only if filled) | No message; the customer is the one moving the goods |
+| Jadwal berubah (MV4) | `sj_date` changes in XTable, or the Tunda fallback (§21.5) | "Jadwal pengiriman pesanan *{so}* berubah ke {tgl}." | Same |
+
+**Rules for step 2:**
+- Event `do.departed`, key `do.departed:{do_id}`. It fires once per DO; later edits to the same fields do not resend.
+- If the fields are filled after the delivery day (backfill), record the event and send nothing, like §20's "Dicatat saja".
+- A cancelled DO never fires.
+- If step 2 has not fired by 13:00 WIB on `sj_date`, the existing §20 reminder goes to Sales Admin and the warehouse contact. The customer gets nothing.
+
+**Interim, until the warehouse habit sticks.** Konfigurasi gets a setting "Sumber *Sedang dikirim*":
+- `xtable` (target): step 2 as above.
+- `pagi_hari_h` (interim): at 08:00 WIB on `sj_date`, send *"Pesanan *{so}* dijadwalkan dikirim hari ini."* This never claims the truck has left. It is skipped when the DO is cancelled, when `sj_date` has moved, or when a reschedule hold is open (§21.5).
+- Both can run together during the switch-over. If step 2 fires before 08:00, the morning message is skipped.
+
+**Build changes:**
+- Mirror `driver`, `no_kendaraan`, `delivery_date` (and `received_date`, for a future "diterima") on `erp_do_header`, with an additive migration. Update the "not mirrored" note in `erp/orderTables.ts` and the dead-field lists in CLAUDE.md and the ontology: they become "filled from {go-live date}".
+- **Remove the Berangkat button** from the Pengiriman tab. Keep Tunda as the reschedule fallback (§21.5). Keep old `dispatch_marks` rows as history.
+- Pengiriman tab and test pipeline labels: "1 · Dijadwalkan", "2 · Sedang dikirim", "Jadwal berubah".
+
+**To verify on one test DO before building (owner):**
+1. The warehouse/security role can edit `no_kendaraan`, `driver` and `delivery_date` after the DO is printed.
+2. That edit bumps 1082 `updated_at`, so the 60 s order lane picks it up.
+3. Whether `delivery_date` stores a time or a date only.
+
+### 21.4 Customer issues go to the sales rep, sorted by an agent
+
+**Today (`notify/inbound.ts`):**
+- STOP/MULAI are handled.
+- Every other customer message is forwarded raw to the SO's rep.
+- The customer gets one text auto-reply per 24 h naming the rep.
+- Nothing tells a complaint apart from a "terima kasih".
+
+**New flow:**
+
+1. **Collect.** Store inbound text and photos as today (Pesan tab). Wait **90 s** after the last message in the conversation before acting, because customers send bursts.
+2. **Classify.** One model call on the burst, plus:
+   - the last 10 messages of the thread;
+   - the context of the customer's open SOs and DOs (number, items, last milestone, `sj_date`).
+
+   The model returns strict JSON: `{category, urgency, so_no, do_no, requested_date, summary, needs_human}`. The summary is 2–3 sentences in Indonesian. Use a small, fast model; the API key goes in Railway env only. Send only this conversation's data.
+
+   | Category | Examples | Rep notified | Auto-reply to customer |
+   |---|---|---|---|
+   | `komplain` | Damaged or scratched panels, wrong colour/thickness/qty, shortage, late delivery, quality | Yes, 🔴 **KOMPLAIN**; also the complaint escalation number if set | Yes, plus a complaint line |
+   | `ubah_jadwal` | "Bisa diundur ke Kamis?", "jangan kirim besok", "minta dimajukan" | Yes, 🟠 **UBAH JADWAL**; also Sales Admin. Opens a hold (§21.5) | Yes, plus a reschedule line |
+   | `status` | "Kapan dikirim?", "sudah sampai mana?" | Yes | Yes |
+   | `dokumen_pembayaran` | Invoice, faktur pajak, bank details, sends proof of transfer | Yes | Yes |
+   | `pesanan` | Reorder, change qty or address, ask for a quote | Yes, 🟢 sales opportunity | Yes |
+   | `lainnya` | Anything else that needs a person | Yes | Yes |
+   | `ack` | "Ok", "terima kasih", 👍, stickers | **No** (logged in Pesan only) | No |
+
+3. **Customer reply.** At most once per conversation per 24 h. A `komplain` or `ubah_jadwal` always gets one, even inside the 24 h window. Two messages:
+   - Text:
+     > Terima kasih, pesan Anda sudah kami terima. Nomor ini adalah **layanan otomatis** PT Kencana Panelindo dan tidak dipantau langsung. Pesan Anda sudah kami teruskan ke **{rep}**, sales yang menangani pesanan Anda. Silakan hubungi beliau melalui kontak berikut.
+
+     For `komplain`, add: *Keluhan Anda sudah kami catat dan akan segera ditindaklanjuti.*
+     For `ubah_jadwal`, add: *Permintaan perubahan jadwal Anda sudah kami teruskan dan akan dikonfirmasi oleh sales kami.*
+   - The rep's **contact card** (vCard), so the customer can tap it and chat with the rep.
+
+4. **Rep message.** One message from the notification number to the rep:
+   ```
+   🔴 KOMPLAIN · {customer} ({nomor}) · SO {po_no}
+   Ringkasan: {summary}
+   Pesan asli di bawah ini. Mohon hubungi pelanggan langsung.
+   ```
+   For `ubah_jadwal` the header also carries `DO {no_sj} · jadwal sekarang {sj_date} · diminta {requested_date or "tidak disebut"}`. Then the customer's original messages, verbatim (photos as photos, as today).
+
+5. **Fallbacks.**
+   - No rep number mapped: route to the Sales Admin number in Konfigurasi.
+   - Classifier error or timeout: treat as `lainnya` and forward. Fail open to a human; never silently drop.
+   - The agent **never answers the customer's question itself** and never agrees to anything (no dates, prices, promises or schedule changes). It only routes.
+
+6. **Pesan tab.** Show a category chip and the summary on each conversation, and add a **Ditangani** toggle so the admin can see which complaints and requests are still open.
+
+7. **Config (Konfigurasi):**
+   - Sales Admin number (fallback and reschedule CC);
+   - complaint escalation number (optional, e.g. sales supervisor);
+   - warehouse contact (for the step-2 reminder);
+   - debounce seconds;
+   - classifier on/off. Off = today's behaviour.
+
+**Gateway change (`apps/wa-gateway`).** `POST /send` gains an optional `contact: {name, phone}`. The gateway builds a vCard 3.0 with a `waid` field (`TEL;type=CELL;waid=628…:+62 8…`) and sends it as a whatsmeow `ContactMessage`. It keeps the same idempotency, outbox and receipts. The `Channel` interface and the stub channel get a matching `sendContact`. Test: a card round-trips in the stub and the vCard parses.
+
+The rep's card comes from `notify_sales_contacts` (Selaras `sales_name` → WA number), the same source as the rep CC.
+
+### 21.5 The customer asks to change the delivery date
+
+A DO exists (step 1 has gone out) and the customer writes in asking to move the date.
+
+1. **Route.** The agent classifies it as `ubah_jadwal` and matches the DO: the one named, else the customer's next undelivered DO. The customer gets the automated reply with the reschedule line and the rep's card. The rep and Sales Admin get the 🟠 message (§21.4).
+2. **Hold.** Open a hold on that DO in a new table `notify_do_holds` (`do_id`, `reason`, `requested_date`, `opened_at`, `resolved_at`, `resolved_by`, `resolution`). While it is open:
+   - the 08:00 "dijadwalkan dikirim hari ini" message (§21.3 interim) is not sent;
+   - any not-yet-sent MV3 for that DO waits.
+
+   Step 2 (`do.departed`) is **not** held: if the warehouse fills the plate number, the truck has left, and the customer is told so.
+3. **Record the new date. XTable stays the source of truth.**
+   - **Preferred:** Sales Admin edits `sj_date` on the DO in XTable. LeadScout sees the change on the next 60 s poll and sends MV4 "Jadwal pengiriman pesanan *{so}* berubah ke {tgl}". That message is the customer's confirmation. The hold closes (`resolution = 'sj_date_changed'`) and the morning-of message moves to the new date.
+   - **Fallback, if `sj_date` cannot be edited once the DO is printed:** staff tap **Tunda** on the Pengiriman tab and enter the new date. MV4 goes out the same way (`resolution = 'tunda'`). LeadScout then uses the Tunda date as the effective date for that DO.
+   - **Request declined, date unchanged:** the rep sets "Tetap sesuai jadwal" on the conversation in Pesan. The hold closes (`resolution = 'kept'`). The rep tells the customer directly; the system sends nothing.
+   - **DO cancelled:** the hold closes (`resolution = 'do_cancelled'`).
+4. **Cancel and re-issue.** If the DO is cancelled and a new DO for the same SO appears within 7 days (rare: 22 cancelled since September, 9 re-issued), the new DO's MV3 uses the "jadwal berubah ke {tgl}" wording, not a fresh "dijadwalkan", so the customer sees one consistent story.
+5. **If nobody acts.** At 16:00 WIB the day before the current `sj_date`, or at once if the request arrives later than that, the rep and Sales Admin get a reminder: "Permintaan ubah jadwal {customer} · DO {no_sj} belum ditindaklanjuti." The hold stays on, so the customer is never told something untrue.
+6. **Detection rule (derive).** A `sj_date` change on a live DO emits `do.rescheduled` (MV4) whether or not a hold exists. If a hold exists, it is resolved by the same event.
+
+**To verify on one test DO (owner):** whether Sales Admin can edit `sj_date` after the DO is created and after it is printed. "Never edited in ~3,000 DOs" could mean nobody does it, or that the field is locked.
+
+### 21.6 Work packages
+
+| WP | Scope | Tests |
+|---|---|---|
+| 7a | `so.confirmed` trigger with fallback (b); MV3 ordering; no resend after the old trigger; new `so_received` template with the full item list | derive unit tests: approval path, DO-first path, cancelled, pre-baseline, already-sent |
+| 7b | Remove production end to end | Pipeline and rules tests updated; no `production_started` left in code |
+| 7c | Gateway contact card; `Channel.sendContact` | Go test for vCard; stub test |
+| 7d | Debounce, classifier (incl. `ubah_jadwal`), routing, auto-reply with card, rep summary, Pesan chip and Ditangani, config | Classifier fixtures (one per category, plus a mixed burst); fail-open test; 24 h and komplain/ubah_jadwal override test |
+| 7e | Step 2 from XTable: mirror the four DO fields; `do.departed`; backfill rule; remove Berangkat; "Sumber *Sedang dikirim*" setting with the 08:00 interim; step labels | derive tests: first fill fires once, refill does not resend, backfill is recorded only, pickup never fires, cancelled never fires; interim skipped on hold, cancel, moved date, early departure |
+| 7f | Reschedule: `notify_do_holds`; hold effects; MV4 on `sj_date` change; Tunda fallback; "Tetap sesuai jadwal"; re-issue wording; 16:00 reminder | Hold opens on `ubah_jadwal`; each resolution path closes it; departure is not held; reminder timing |
+
+Order: 7b → 7a → 7e → 7c → 7d → 7f. Before 7e and 7f, run the test-DO checks in §21.3 and §21.5. Ship each with `NOTIFY_LIVE=shadow` first; run 7a in shadow for one week and compare confirmation timing against approval timestamps.
+
+---
+
 ## Appendix A — Selaras field reference (verified 2026-11-10)
 
 | Table | Use | Key fields |
@@ -762,6 +966,8 @@ Last full run (2026-11-17): 621 passed on fresh and long-lived databases (Postgr
 API: `GET {base}/table/{t}?col=val&col__gte=…&fields=…&order_by=…&limit=…&page=…`, headers `X-Secret-Key` / `X-Secret-Token`. Lookup columns also return `<col>_label`.
 
 ## Appendix B — Message templates (current, `messages.ts`)
+
+> **Changed by §21:** MV1 gets the confirmation template with the full item list (§21.1); MV2 is removed (§21.2); MV5 gets the XTable departure template (§21.3).
 
 - **MV1:** "Halo Bapak/Ibu {penerima}, Pesanan Anda nomor *{SO}* telah kami terima dan sedang diproses. Ringkasan: {items} … Untuk pertanyaan, silakan hubungi sales Anda, {sales} ({wa}). — PT Kencana Panelindo · _Balas STOP…_"
 - **MV2:** "…Pesanan *{SO}* saat ini sedang diproduksi di pabrik kami. Item: … Kami akan mengabari Anda kembali saat jadwal pengiriman sudah ditetapkan."
@@ -814,3 +1020,9 @@ Moved to §19.1–19.3, so there is one table to keep current.
 | 2026-11-12 | The platform receives photos: stored, shown in Pesan, forwarded to the rep as photos | Owner |
 | 2026-11-17 | "Dijadwalkan" and "dikirimkan" are separate phases. Customers are told when goods leave and when a delivery slips (MV4, MV5) | Owner |
 | 2026-11-17 | Departure and delays are marked by staff on the Pengiriman tab (the ERP has no signal, §20); unmarked deliveries only trigger a staff reminder, never a customer message | Owner |
+| 2026-11-23 | First message on Finance approval (`approval_new` = Approved), with a DO-first fallback; wording says "dikonfirmasi", never "dibayar" (§21.1) | Owner |
+| 2026-11-23 | D10: CBD, COD and Tempo all get the confirmation on approval; Finance approval is the "cleared" point | Owner |
+| 2026-11-23 | Production milestone removed (§21.2) | Owner |
+| 2026-11-23 | Delivery is two steps, both from XTable: Dijadwalkan (new DO, `sj_date`) and Sedang dikirim (warehouse fills `no_kendaraan`/`driver`/`delivery_date` at departure). Berangkat button removed; 08:00 "dikirim hari ini" as interim. Supersedes the 2026-11-17 departure row (§21.3) | Owner; warehouse process and field-edit checks pending |
+| 2026-11-23 | Customer replies are classified by an agent and routed to the rep with a summary; the customer gets an automated-service notice plus the rep's contact card; the agent never answers or agrees to anything (§21.4) | Owner |
+| 2026-11-23 | Reschedule requests: routed as `ubah_jadwal`, predictive messages held, new date confirmed only by an XTable `sj_date` edit (Tunda as fallback) (§21.5) | Owner; `sj_date` edit check pending |
