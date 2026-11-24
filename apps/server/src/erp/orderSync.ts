@@ -218,7 +218,10 @@ async function syncOne(deps: OrderSyncDeps, spec: LaneSpec, field: CursorField, 
   const [state] = await db<{ cursor_value: Date | null }[]>`
     select cursor_value from erp_order_sync_state where table_name = ${table} and cursor_field = ${field}
   `;
-  const since = state?.cursor_value ?? new Date(deps.now().getTime() - deps.backfillDays * 86_400_000);
+  // The rep master (1130, ~86 rows) is read in full: a rep not edited in the
+  // backfill window is still a rep. Order tables start ERP_ORDER_BACKFILL_DAYS back.
+  const since =
+    state?.cursor_value ?? (table === "sales" ? new Date(0) : new Date(deps.now().getTime() - deps.backfillDays * 86_400_000));
   const param = formatMirroredDatetime(new Date(since.getTime() - deps.lookbackMinutes * 60_000));
 
   let maxSeen: Date | null = null;

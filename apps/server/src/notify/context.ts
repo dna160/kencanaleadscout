@@ -41,7 +41,42 @@ export interface Rep {
   erpSalesId: string | null;
   name: string | null;
   phone: string | null;
+  /** Where the phone came from: Selaras, the Sales CC tab, or LeadScout's sales rosters (by name). */
+  phoneSource: "selaras" | "manual" | "roster" | null;
   ccEnabled: boolean;
+}
+
+/**
+ * The SQL (a union of `k, phone_e164, src` rows) over LeadScout's own sales
+ * rosters that hold WhatsApp numbers, keyed by the normalized name. Only
+ * tables that exist in this database are included (they belong to other
+ * LeadScout modules). Selaras itself has no rep phone (1202 / 1130).
+ */
+export async function rosterSql(db: AnySql): Promise<string> {
+  const [t] = await db<{ retail: boolean; dist: boolean }[]>`
+    select to_regclass('public.salespeople') is not null as retail,
+           to_regclass('public.distributor_salespeople') is not null as dist`;
+  const norm = "lower(regexp_replace(trim(full_name), '[[:space:]]+', ' ', 'g'))";
+  const parts = [
+    t?.retail ? `select ${norm} as k, phone_e164, 'Sales retail'::text as src from salespeople where active and phone_e164 is not null` : null,
+    t?.dist ? `select ${norm} as k, phone_e164, 'Sales distributor'::text as src from distributor_salespeople where active and phone_e164 is not null` : null,
+  ].filter(Boolean);
+  return parts.length ? parts.join(" union all ") : "select null::text as k, null::text as phone_e164, null::text as src where false";
+}
+
+export function normName(n: string | null | undefined): string {
+  return (n ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+/** The rep's number from LeadScout's rosters: exactly one number under that name, else none. */
+export async function rosterPhone(db: AnySql, name: string | null): Promise<string | null> {
+  const k = normName(name);
+  if (!k) return null;
+  const rows = await db.unsafe(
+    `select distinct phone_e164 from (${await rosterSql(db)}) r where r.k = $1`,
+    [k],
+  ) as { phone_e164: string }[];
+  return rows.length === 1 ? rows[0]!.phone_e164 : null;
 }
 
 export interface LiveOrder {
@@ -87,7 +122,7 @@ export async function loadDo(db: AnySql, doId: string): Promise<LiveDo | null> {
 }
 
 export async function loadRep(db: AnySql, h: Pick<LiveHeader, "sales_name_id" | "sales_name_text">): Promise<Rep> {
-  if (!h.sales_name_id) return { erpSalesId: null, name: h.sales_name_text, phone: null, ccEnabled: false };
+  if (!h.sales_name_id) return { erpSalesId: null, name: h.sales_name_text, phone: null, phoneSource: null, ccEnabled: false };
   const [r] = await db<{ es_name: string | null; es_phone: string | null; nc_name: string | null; nc_phone: string | null; cc_enabled: boolean | null }[]>`
     select es.sales_name as es_name, es.phone as es_phone,
            nc.sales_name as nc_name, nc.phone_e164 as nc_phone, nc.cc_enabled
@@ -95,12 +130,18 @@ export async function loadRep(db: AnySql, h: Pick<LiveHeader, "sales_name_id" | 
       left join erp_sales es on es.id = k.id
       left join notify_sales_contacts nc on nc.erp_sales_id = k.id
   `;
-  // A phone stored in Selaras wins once it exists (PRD §9.4 end state).
-  const phone = (r?.es_phone && normalizeNumber(r.es_phone)) || r?.nc_phone || null;
+  // SO → rep ID → phone: Selaras once it stores one (PRD §9.4 end state),
+  // else the number set on Sales CC, else LeadScout's sales rosters by name.
+  const name = r?.es_name ?? h.sales_name_text ?? r?.nc_name ?? null;
+  const selaras = (r?.es_phone && normalizeNumber(r.es_phone)) || null;
+  const manual = r?.nc_phone ?? null;
+  const roster = selaras || manual ? null : await rosterPhone(db, name);
+  const phone = selaras || manual || roster;
   return {
     erpSalesId: h.sales_name_id,
-    name: r?.es_name ?? h.sales_name_text ?? r?.nc_name ?? null,
+    name,
     phone,
+    phoneSource: selaras ? "selaras" : manual ? "manual" : roster ? "roster" : null,
     ccEnabled: r?.cc_enabled ?? true,
   };
 }

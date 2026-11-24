@@ -508,4 +508,34 @@ describe.skipIf(!hasDb)("planner + dispatcher over the real schema", async () =>
     const cfg = (await app.inject({ method: "GET", url: "/api/notify/config" })).json();
     expect(cfg.live).toHaveProperty("mode");
   });
+  it("SO → rep ID → name → LeadScout's sales roster gives the CC number; Sales CC overrides it; an ambiguous name gives none", async () => {
+    const { runMigrations } = await import("../src/db/migrate.js");
+    await runMigrations(db);
+    const ctxmod = await import("../src/notify/context.js");
+    const name = `Roster Uji ${Date.now() % 100000}`;
+    await db`insert into erp_sales (id, sales_name, active) values (${`${P}-rr`}, ${name}, ${"Yes"}), (${`${P}-rx`}, ${`${name} X`}, ${"Yes"})`;
+    await db`
+      insert into salespeople (full_name, phone_e164, active) values
+        (${`  ${name.toLowerCase()} `}, ${"+6281377700091"}, true),
+        (${`${name} X`}, ${"+6281377700092"}, true), (${`${name} X`}, ${"+6281377700093"}, true)`;
+    try {
+      const rep = await ctxmod.loadRep(db, { sales_name_id: `${P}-rr`, sales_name_text: null });
+      expect(rep).toMatchObject({ name, phone: "+6281377700091", phoneSource: "roster" });
+      expect((await ctxmod.loadRep(db, { sales_name_id: `${P}-rx`, sales_name_text: null })).phone).toBeNull();
+      await db`insert into notify_sales_contacts (erp_sales_id, phone_e164) values (${`${P}-rr`}, ${"+6281377700094"})`;
+      expect(await ctxmod.loadRep(db, { sales_name_id: `${P}-rr`, sales_name_text: null })).toMatchObject({
+        phone: "+6281377700094",
+        phoneSource: "manual",
+      });
+      const app = Fastify();
+      await app.register(routes.notifyRoutes);
+      const list = (await app.inject({ method: "GET", url: "/api/notify/sales-contacts" })).json();
+      expect(list.rows.find((r: { erp_sales_id: string }) => r.erp_sales_id === `${P}-rr`)).toMatchObject({
+        roster_phone: "+6281377700091",
+        phone_e164: "+6281377700094",
+      });
+    } finally {
+      await db`delete from salespeople where full_name ilike ${`%${name}%`}`;
+    }
+  });
 });

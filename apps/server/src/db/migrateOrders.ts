@@ -100,6 +100,14 @@ export async function runOrderMigrations(db: Sql): Promise<void> {
     )
   `;
 
+  // One-time fixes to the lane's cursors, applied once per database.
+  await db`
+    create table if not exists erp_order_lane_fixes (
+      name       text primary key,
+      applied_at timestamptz not null default now()
+    )
+  `;
+
   // One row per (table, cursor field). Kept apart from erp_sync_state so the
   // stock sync's lock, freshness alarm and reset-all paths never touch it.
   await db`
@@ -124,4 +132,13 @@ export async function runOrderMigrations(db: Sql): Promise<void> {
     )
   `;
   await db`insert into erp_order_sync_lease (id) values (1) on conflict (id) do nothing`;
+  // 2026-11-24: the rep master was started at the 60-day backfill like the
+  // order tables, so only reps edited recently were mirrored (2 of ~86). Drop
+  // its cursor once so the next slow tick reads all of 1130.
+  const fix = await db`
+    insert into erp_order_lane_fixes (name) values ('sales_full_pull_2026_11_24')
+    on conflict (name) do nothing returning name`;
+  if (fix.length) {
+    await db`delete from erp_order_sync_state where table_name = 'sales'`;
+  }
 }

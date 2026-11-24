@@ -1065,14 +1065,16 @@
   function renderSales() {
     const q = $("salesFilter").value.trim().toLowerCase();
     const rows = SALES.filter((r) => !q || (r.sales_name || "").toLowerCase().includes(q));
-    const missing = SALES.filter((r) => !r.phone_e164 && !r.selaras_phone && /^(yes|active|1|true)$/i.test(r.active || "")).length;
+    const missing = SALES.filter((r) => !r.phone_e164 && !r.selaras_phone && !r.roster_phone && /^(yes|active|1|true)$/i.test(r.active || "")).length;
+    const auto = SALES.filter((r) => !r.phone_e164 && !r.selaras_phone && r.roster_phone).length;
     $("salesBody").innerHTML = !SALES.length ? '<div class="empty">Belum ada daftar sales dari Selaras (jalur pesanan membaca tbl_1130 setiap 30 menit).</div>'
-      : `<p class="muted" style="margin:0;padding:0 14px 8px">${missing} sales aktif belum punya nomor ("CC belum aktif").</p>
+      : `<p class="muted" style="margin:0;padding:0 14px 8px">SO → ID sales di Selaras → nama → nomor dari daftar sales LeadScout (Sales retail / distributor, nama harus sama persis). ${auto} sales memakai nomor otomatis ini; isi kolom untuk menggantinya. ${missing} sales aktif belum punya nomor ("CC belum aktif").</p>
       <table><thead><tr><th>Sales</th><th>Nomor WA</th><th>CC</th></tr></thead><tbody>${rows.map((r) => `
-        <tr><td>${esc(r.sales_name || "(tanpa nama)")}<br><span class="muted">ID ${esc(r.erp_sales_id)}${r.department ? " · " + esc(r.department) : ""}${r.active ? " · " + esc(r.active) : ""}</span></td>
+        <tr><td>${esc(r.sales_name || "(tanpa nama)")}<br><span class="muted">ID ${esc(r.erp_sales_id)}${r.department ? " · " + esc(r.department) : ""}${r.active ? " · " + esc(r.active) : ""} · ${esc(r.so_60d || 0)} SO / 60 hari</span></td>
         <td>${r.selaras_phone ? `${esc(r.selaras_phone)}<br><span class="muted">dari Selaras</span>` :
           `<input type="tel" inputmode="tel" data-phone="${esc(r.erp_sales_id)}" value="${esc(r.phone_e164 || "")}" placeholder="0813-…" aria-label="Nomor ${esc(r.sales_name || "")}" style="min-width:150px" />`}
-          ${!r.phone_e164 && !r.selaras_phone ? '<br><span class="chip pending">CC belum aktif</span>' : ""}</td>
+          ${!r.phone_e164 && !r.selaras_phone && r.roster_phone ? `<br><span class="chip sent">Otomatis</span> <span class="muted">${esc(localNo(r.roster_phone))} · ${esc(r.roster_from)}</span>` : ""}
+          ${!r.phone_e164 && !r.selaras_phone && !r.roster_phone ? '<br><span class="chip pending">CC belum aktif</span>' : ""}</td>
         <td><label class="toggle"><input type="checkbox" data-cc="${esc(r.erp_sales_id)}" ${r.cc_enabled ? "checked" : ""} aria-label="CC ${esc(r.sales_name || "")}" /><span></span></label></td></tr>`).join("")}</tbody></table>`;
     const save = async (id) => {
       const phoneEl = document.querySelector(`[data-phone="${CSS.escape(id)}"]`);

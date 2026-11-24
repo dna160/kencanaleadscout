@@ -18,7 +18,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { normalizeNumber } from "@kencana/core";
 import type { Sql } from "../db/client.js";
 import type { Channel } from "./channel.js";
-import { loadHeader, loadRep, localDisplay } from "./context.js";
+import { loadHeader, loadRep, localDisplay, rosterSql } from "./context.js";
 import { TEMPLATE_VERSION } from "./messages.js";
 import { agentActive } from "./replyAgent.js";
 
@@ -171,11 +171,13 @@ export async function applyState(db: AnySql, e: GatewayEvent): Promise<void> {
 
 /** Phone numbers of every rep LeadScout knows (the CC list, plus Selaras once it has them). */
 async function repPhones(db: AnySql): Promise<Set<string>> {
-  const rows = await db<{ phone: string | null }[]>`
+  const rows = (await db.unsafe(`
     select phone_e164 as phone from notify_sales_contacts where phone_e164 is not null
     union all
     select phone from erp_sales where phone is not null and deleted_at is null
-  `;
+    union all
+    select phone_e164 from (${await rosterSql(db)}) r
+  `)) as { phone: string | null }[];
   const out = new Set<string>();
   for (const r of rows) {
     const n = r.phone && (r.phone.startsWith("+") ? r.phone : normalizeNumber(r.phone));

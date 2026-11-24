@@ -14,6 +14,7 @@
  * stored on the SO. That number is shown masked so the tester can see who
  * would receive the message once live triggers are switched on.
  */
+import { rosterSql } from "../notify/context.js";
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { normalizeNumber } from "@kencana/core";
@@ -304,16 +305,32 @@ export async function notifyRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/notify/sales-contacts", async (_req, reply) => {
     const db = getSql();
     if (!db) return reply.code(503).send({ error: "Database tidak tersedia." });
+    // Selaras has no rep phone (1130 and the SO carry none). The SO's rep ID →
+    // name → LeadScout's own sales rosters gives the number automatically when
+    // exactly one active roster entry has that name (`roster_phone`); a number
+    // set here overrides it. `so_60d` puts the reps on the most SOs first.
     const rows = await db`
+      with roster as (${db.unsafe(await rosterSql(db))}),
+      uniq as (
+        select k, min(phone_e164) as phone, string_agg(distinct src, ', ') as src
+          from roster group by k having count(distinct phone_e164) = 1
+      ),
+      sos as (
+        select sales_name_id, count(*)::int as n from erp_so_header
+         where coalesce(erp_created_at, po_date::timestamptz) >= now() - interval '60 days' group by sales_name_id
+      )
       select coalesce(es.id, nc.erp_sales_id) as erp_sales_id,
              coalesce(es.sales_name, nc.sales_name) as sales_name,
              es.department, es.active,
              es.phone as selaras_phone, nc.phone_e164, coalesce(nc.cc_enabled, true) as cc_enabled,
-             nc.updated_at
+             nc.updated_at, coalesce(sos.n, 0) as so_60d,
+             u.phone as roster_phone, u.src as roster_from
         from erp_sales es
         full outer join notify_sales_contacts nc on nc.erp_sales_id = es.id
+        left join sos on sos.sales_name_id = coalesce(es.id, nc.erp_sales_id)
+        left join uniq u on u.k = lower(regexp_replace(trim(coalesce(es.sales_name, nc.sales_name, '')), '[[:space:]]+', ' ', 'g'))
        where es.deleted_at is null or es.id is null
-       order by (lower(coalesce(es.active, '')) in ('yes', 'active', '1', 'true')) desc, 2
+       order by (lower(coalesce(es.active, '')) in ('yes', 'active', '1', 'true')) desc, so_60d desc, 2
     `;
     return { rows };
   });
