@@ -9,6 +9,8 @@
  * Part A works with no database. Part B routes return 503 until DATABASE_URL is
  * set, so the whole app always boots and stays healthy on Railway.
  */
+// First import: connection defaults must be set before anything connects.
+import "./netDefaults.js";
 import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 import fastifyMultipart from "@fastify/multipart";
